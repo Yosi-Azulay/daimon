@@ -1,0 +1,115 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import fg from 'fast-glob';
+import type { AppmanConfig, DiscoveredApp } from './types.js';
+
+function readJson(p: string): any | null {
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function hasServeTarget(projectJson: any): boolean {
+  if (!projectJson || typeof projectJson !== 'object') return false;
+  if (projectJson.targets?.serve) return true;
+  if (projectJson.architect?.serve) return true;
+  return false;
+}
+
+function toFgPath(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
+  const found = new Map<string, DiscoveredApp>();
+  const warnings: string[] = [];
+
+  for (const rootRaw of config.searchRoots) {
+    const root = path.resolve(rootRaw);
+    if (!fs.existsSync(root)) {
+      warnings.push(`searchRoot does not exist: ${root}`);
+      continue;
+    }
+
+    const nxJson = path.join(root, 'nx.json');
+    const angularJson = path.join(root, 'angular.json');
+
+    if (fs.existsSync(nxJson)) {
+      const projectFiles = fg.sync('**/project.json', {
+        cwd: toFgPath(root),
+        ignore: ['**/node_modules/**', '**/dist/**', '**/.nx/**', '**/.git/**'],
+        absolute: true,
+        dot: false,
+      });
+
+      for (const pf of projectFiles) {
+        const pj = readJson(pf);
+        if (!pj || !hasServeTarget(pj)) continue;
+        const name: string | undefined = pj.name || path.basename(path.dirname(pf));
+        if (!name) continue;
+        if (found.has(name)) {
+          warnings.push(`duplicate project name "${name}" — keeping first`);
+          continue;
+        }
+        found.set(name, {
+          name,
+          workspaceRoot: root,
+          workspaceType: 'nx',
+          command: `npx nx serve ${name}`,
+          hidden: false,
+        });
+      }
+      continue;
+    }
+
+    if (fs.existsSync(angularJson)) {
+      const ng = readJson(angularJson);
+      const projects = ng?.projects || {};
+      for (const [name, p] of Object.entries<any>(projects)) {
+        if (!hasServeTarget(p)) continue;
+        if (found.has(name)) {
+          warnings.push(`duplicate project name "${name}" — keeping first`);
+          continue;
+        }
+        found.set(name, {
+          name,
+          workspaceRoot: root,
+          workspaceType: 'angular',
+          command: `npx ng serve ${name}`,
+          hidden: false,
+        });
+      }
+      continue;
+    }
+
+    warnings.push(`searchRoot has neither nx.json nor angular.json: ${root}`);
+  }
+
+  for (const [name, ov] of Object.entries(config.overrides || {})) {
+    const existing = found.get(name);
+    if (existing) {
+      if (ov.command) existing.command = ov.command;
+      if (typeof ov.hidden === 'boolean') existing.hidden = ov.hidden;
+      if (typeof ov.port === 'number') existing.pinnedPort = ov.port;
+    } else if (ov.command) {
+      found.set(name, {
+        name,
+        workspaceRoot: process.cwd(),
+        workspaceType: 'nx',
+        command: ov.command,
+        hidden: ov.hidden ?? false,
+        pinnedPort: ov.port,
+      });
+    }
+  }
+
+  if (warnings.length) {
+    for (const w of warnings) {
+      process.stderr.write(`[appman] warning: ${w}\n`);
+    }
+  }
+
+  return [...found.values()].filter(a => !a.hidden);
+}

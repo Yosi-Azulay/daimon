@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>appman</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; letter-spacing: 0.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #232730; }
+  th { color: #9aa3b2; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 500; }
+  .s-stopped { background: #2b2f38; color: #9aa3b2; }
+  .s-starting, .s-compiling { background: #423a17; color: #e0c060; }
+  .s-serving { background: #19402a; color: #62d28a; }
+  .s-error { background: #4a1f23; color: #ef6f74; }
+  a { color: #8ab4ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .err { color: #ef6f74; }
+  .meta { color: #8a93a2; font-size: 12px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<h1>appman</h1>
+<div class="meta" id="meta">loading…</div>
+<table>
+  <thead>
+    <tr><th>name</th><th>status</th><th>port</th><th>url</th><th>errors</th><th>uptime</th></tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<script>
+function fmtUptime(ms) {
+  if (ms == null) return '';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + (s % 60) + 's';
+  const h = Math.floor(m / 60);
+  return h + 'h ' + (m % 60) + 'm';
+}
+async function tick() {
+  try {
+    const res = await fetch('/api/apps');
+    const apps = await res.json();
+    const tbody = document.getElementById('rows');
+    tbody.innerHTML = apps.map(a => `
+      <tr>
+        <td>${a.name}</td>
+        <td><span class="badge s-${a.status}">${a.status}</span></td>
+        <td>${a.port ?? ''}</td>
+        <td>${a.url ? `<a href="${a.url}" target="_blank">${a.url}</a>` : ''}</td>
+        <td class="${a.errorCount ? 'err' : ''}">${a.errorCount}</td>
+        <td>${fmtUptime(a.uptimeMs)}</td>
+      </tr>`).join('');
+    document.getElementById('meta').textContent = apps.length + ' app' + (apps.length === 1 ? '' : 's') + ' — last updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('meta').textContent = 'error: ' + e.message;
+  }
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>
