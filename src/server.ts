@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Registry } from './registry.js';
+import { Cursors } from './cursors.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,7 +25,7 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
   res.end(body);
 }
 
-function parseSince(s: string | null): number | undefined {
+function parseDuration(s: string | null): number | undefined {
   if (!s) return undefined;
   const m = s.match(/^(\d+)(ms|s|m|h)?$/);
   if (!m) return undefined;
@@ -38,7 +39,17 @@ function parseSince(s: string | null): number | undefined {
   return undefined;
 }
 
+function parseSinceParam(s: string | null): { sinceMs?: number; sinceTs?: number } {
+  if (!s) return {};
+  if (/^\d{10,}$/.test(s)) return { sinceTs: Number(s) };
+  const dur = parseDuration(s);
+  if (dur != null) return { sinceMs: dur };
+  return {};
+}
+
 export function startServer(registry: Registry, port: number): http.Server {
+  const cursors = new Cursors();
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -60,6 +71,14 @@ export function startServer(registry: Registry, port: number): http.Server {
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'events' && parts.length === 2) {
+        if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+        const sinceMs = parseDuration(url.searchParams.get('since'));
+        const app = url.searchParams.get('app') || undefined;
+        sendJson(res, 200, registry.events({ sinceMs, app }));
+        return;
+      }
+
       if (parts[0] !== 'api' || parts[1] !== 'apps') {
         sendJson(res, 404, { error: 'not found' });
         return;
@@ -76,6 +95,7 @@ export function startServer(registry: Registry, port: number): http.Server {
 
       const name = decodeURIComponent(parts[2]);
       const sub = parts[3];
+      const sub2 = parts[4];
 
       if (!sub) {
         if (method !== 'GET') {
@@ -91,23 +111,61 @@ export function startServer(registry: Registry, port: number): http.Server {
         return;
       }
 
-      if (sub === 'errors' && method === 'GET') {
+      if (sub === 'errors' && sub2 === 'since-last' && method === 'GET') {
+        const client = url.searchParams.get('client') || 'default';
+        const cursor = cursors.getErrorCursor(client, name);
+        const errs = registry.errorsSince(name, cursor);
+        if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const newest = errs.reduce((acc, e) => Math.max(acc, e.lastSeen), cursor);
+        if (newest > cursor) cursors.setErrorCursor(client, name, newest);
+        sendJson(res, 200, errs);
+        return;
+      }
+
+      if (sub === 'errors' && !sub2 && method === 'GET') {
+        const sinceRaw = url.searchParams.get('since');
+        if (sinceRaw) {
+          const { sinceMs, sinceTs } = parseSinceParam(sinceRaw);
+          const cutoff = sinceTs ?? (sinceMs != null ? Date.now() - sinceMs : 0);
+          const errs = registry.errorsSince(name, cutoff);
+          if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+          sendJson(res, 200, errs);
+          return;
+        }
         const errs = registry.errors(name);
         if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
         sendJson(res, 200, errs);
         return;
       }
+
       if (sub === 'logs' && method === 'GET') {
         const tail = url.searchParams.get('tail');
         const since = url.searchParams.get('since');
         const lines = registry.logs(name, {
           tail: tail ? Number(tail) : undefined,
-          sinceMs: parseSince(since),
+          sinceMs: parseDuration(since),
         });
         if (lines == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
         sendJson(res, 200, { lines });
         return;
       }
+
+      if (sub === 'wait' && method === 'GET') {
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const untilRaw = (url.searchParams.get('until') || 'serving').toLowerCase();
+        if (!['serving', 'healthy', 'stopped', 'error'].includes(untilRaw)) {
+          sendJson(res, 400, { error: 'until must be one of serving|healthy|stopped|error' });
+          return;
+        }
+        const timeoutSecRaw = url.searchParams.get('timeout');
+        let timeoutSec = timeoutSecRaw ? Number(timeoutSecRaw) : 120;
+        if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) timeoutSec = 120;
+        timeoutSec = Math.min(timeoutSec, 600);
+        const result = await registry.waitFor(name, untilRaw as any, timeoutSec * 1000);
+        sendJson(res, 200, result);
+        return;
+      }
+
       if (sub === 'start' && method === 'POST') {
         const r = await registry.start(name);
         sendJson(res, r.ok ? 200 : 400, r);

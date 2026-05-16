@@ -26,6 +26,12 @@ function defaultConfig(): AppmanConfig {
     portRange: [4200, 4299],
     apiPort: 4999,
     overrides: {},
+    autoStart: [],
+    profiles: {},
+    tags: {},
+    autoRestart: { enabled: false, maxAttempts: 5, windowMs: 300000 },
+    healthProbe: { enabled: true, intervalMs: 30000, timeoutMs: 2000, path: '/' },
+    logs: { enabled: false, dir: path.join(os.homedir(), '.appman', 'logs'), maxFiles: 5, maxBytesPerFile: 10000000 },
   };
 }
 
@@ -68,6 +74,45 @@ function validate(raw: unknown, source: string): AppmanConfig {
       throw new Error(`Config "overrides" must be an object (${source})`);
     }
     cfg.overrides = obj.overrides as AppmanConfig['overrides'];
+  }
+
+  if (obj.autoStart !== undefined) {
+    if (!Array.isArray(obj.autoStart) || !obj.autoStart.every(s => typeof s === 'string')) {
+      throw new Error(`Config "autoStart" must be an array of strings (${source})`);
+    }
+    cfg.autoStart = obj.autoStart as string[];
+  }
+
+  if (obj.profiles !== undefined) {
+    if (typeof obj.profiles !== 'object' || obj.profiles === null || Array.isArray(obj.profiles)) {
+      throw new Error(`Config "profiles" must be an object (${source})`);
+    }
+    for (const [k, v] of Object.entries(obj.profiles as object)) {
+      if (!Array.isArray(v) || !v.every(s => typeof s === 'string')) {
+        throw new Error(`Config "profiles.${k}" must be an array of strings (${source})`);
+      }
+    }
+    cfg.profiles = obj.profiles as Record<string, string[]>;
+  }
+
+  if (obj.tags !== undefined) {
+    if (typeof obj.tags !== 'object' || obj.tags === null || Array.isArray(obj.tags)) {
+      throw new Error(`Config "tags" must be an object (${source})`);
+    }
+    cfg.tags = obj.tags as Record<string, string[]>;
+  }
+
+  if (obj.autoRestart && typeof obj.autoRestart === 'object') {
+    cfg.autoRestart = { ...cfg.autoRestart, ...(obj.autoRestart as Partial<AppmanConfig['autoRestart']>) };
+  }
+  if (obj.healthProbe && typeof obj.healthProbe === 'object') {
+    cfg.healthProbe = { ...cfg.healthProbe, ...(obj.healthProbe as Partial<AppmanConfig['healthProbe']>) };
+  }
+  if (obj.logs && typeof obj.logs === 'object') {
+    cfg.logs = { ...cfg.logs, ...(obj.logs as Partial<AppmanConfig['logs']>) };
+    if (cfg.logs.dir.startsWith('~')) {
+      cfg.logs.dir = path.join(os.homedir(), cfg.logs.dir.slice(cfg.logs.dir.startsWith('~/') || cfg.logs.dir.startsWith('~\\') ? 2 : 1));
+    }
   }
 
   return cfg;

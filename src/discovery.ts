@@ -59,6 +59,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           workspaceType: 'nx',
           command: `npx nx serve ${name}`,
           hidden: false,
+          tags: [],
         });
       }
       continue;
@@ -79,6 +80,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           workspaceType: 'angular',
           command: `npx ng serve ${name}`,
           hidden: false,
+          tags: [],
         });
       }
       continue;
@@ -93,6 +95,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
       if (ov.command) existing.command = ov.command;
       if (typeof ov.hidden === 'boolean') existing.hidden = ov.hidden;
       if (typeof ov.port === 'number') existing.pinnedPort = ov.port;
+      if (ov.env) existing.env = ov.env;
     } else if (ov.command) {
       found.set(name, {
         name,
@@ -101,8 +104,14 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
         command: ov.command,
         hidden: ov.hidden ?? false,
         pinnedPort: ov.port,
+        env: ov.env,
+        tags: [],
       });
     }
+  }
+
+  for (const a of found.values()) {
+    a.tags = config.tags?.[a.name] ?? [];
   }
 
   if (warnings.length) {

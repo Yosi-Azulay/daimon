@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import treeKill from 'tree-kill';
 import stripAnsi from 'strip-ansi';
-import type { AppState, DiscoveredApp } from './types.js';
+import type { AppState, AppStatus, DiscoveredApp, ErrorEntry } from './types.js';
 import { parseLine } from './parser.js';
 
 const LOG_BUFFER_MAX = 500;
@@ -11,6 +11,9 @@ export interface AppProcessDeps {
   app: DiscoveredApp;
   port: number;
   onStateChange: () => void;
+  onStatusChange?: (from: AppStatus, to: AppStatus, message?: string) => void;
+  onErrorRecorded?: (entry: ErrorEntry, isNew: boolean) => void;
+  onExit?: (code: number | null, signal: NodeJS.Signals | null, stopping: boolean) => void;
 }
 
 export class AppProcess {
@@ -43,10 +46,11 @@ export class AppProcess {
     state.lastStatusMessage = undefined;
 
     const fullCmd = `${app.command} --port ${port}`;
+    const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...(app.env || {}), PORT: String(port), FORCE_COLOR: '0' };
     const child = spawn(fullCmd, [], {
       cwd: app.workspaceRoot,
       shell: true,
-      env: { ...process.env, PORT: String(port), FORCE_COLOR: '0' },
+      env: mergedEnv,
       windowsHide: true,
     });
 
@@ -58,7 +62,9 @@ export class AppProcess {
     child.stderr?.on('data', (chunk: Buffer) => this.handleChunk(chunk, 'stderr'));
 
     child.on('exit', (code, signal) => {
-      if (this.stopping) {
+      const prevStatus = state.status;
+      const wasStopping = this.stopping;
+      if (wasStopping) {
         state.status = 'stopped';
         state.lastStatusMessage = `stopped (code=${code ?? 'null'}${signal ? `, ${signal}` : ''})`;
       } else if (code !== 0) {
@@ -68,8 +74,13 @@ export class AppProcess {
         state.status = 'stopped';
       }
       state.pid = null;
+      state.health = 'unknown';
       this.child = null;
       this.stopping = false;
+      if (prevStatus !== state.status) {
+        this.deps.onStatusChange?.(prevStatus, state.status, state.lastStatusMessage);
+      }
+      this.deps.onExit?.(code, signal, wasStopping);
       this.deps.onStateChange();
     });
 
@@ -101,8 +112,15 @@ export class AppProcess {
       if (state.logBuffer.length > LOG_BUFFER_MAX) {
         state.logBuffer.splice(0, state.logBuffer.length - LOG_BUFFER_MAX);
       }
-      const status = parseLine(state, clean);
-      if (status) changed = true;
+      const prev = state.status;
+      const r = parseLine(state, clean);
+      if (r?.statusChanged) {
+        changed = true;
+        this.deps.onStatusChange?.(prev, state.status);
+      }
+      if (r?.error) {
+        this.deps.onErrorRecorded?.(r.error.entry, r.error.isNew);
+      }
     }
     if (changed || complete.length > 0) this.deps.onStateChange();
   }
