@@ -4,6 +4,7 @@ import { loadConfig, configLookupPaths } from './config.js';
 import { discoverApps } from './discovery.js';
 import { Registry } from './registry.js';
 import { startServer } from './server.js';
+import { HealthMonitor } from './health.js';
 import App from './tui/App.js';
 
 async function main() {
@@ -32,6 +33,7 @@ async function main() {
   }
 
   const registry = new Registry(config, apps);
+  const health = new HealthMonitor(registry, config.healthProbe);
 
   const server = startServer(registry, config.apiPort);
   process.stdout.write(`[appman] api: http://127.0.0.1:${config.apiPort}\n`);
@@ -40,6 +42,7 @@ async function main() {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    try { health.stop(); } catch {}
     try {
       await registry.stopAll(3000);
     } catch {}

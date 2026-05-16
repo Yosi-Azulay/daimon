@@ -7,17 +7,25 @@
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
   h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; letter-spacing: 0.5px; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #232730; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #232730; vertical-align: middle; }
   th { color: #9aa3b2; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 500; }
   .s-stopped { background: #2b2f38; color: #9aa3b2; }
   .s-starting, .s-compiling { background: #423a17; color: #e0c060; }
   .s-serving { background: #19402a; color: #62d28a; }
   .s-error { background: #4a1f23; color: #ef6f74; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .h-healthy { background: #62d28a; }
+  .h-unhealthy { background: #ef6f74; }
+  .h-unknown { background: #555a66; }
   a { color: #8ab4ff; text-decoration: none; }
   a:hover { text-decoration: underline; }
   .err { color: #ef6f74; }
   .meta { color: #8a93a2; font-size: 12px; margin-bottom: 12px; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; color: #c8cdd6; }
+  button { background: #232730; color: #e6e6e6; border: 1px solid #353a45; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; margin-right: 4px; }
+  button:hover:not(:disabled) { background: #2c313b; }
+  button:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -25,7 +33,11 @@
 <div class="meta" id="meta">loading…</div>
 <table>
   <thead>
-    <tr><th>name</th><th>status</th><th>port</th><th>url</th><th>errors</th><th>uptime</th></tr>
+    <tr>
+      <th>name</th><th>status</th><th>health</th><th>port</th><th>url</th>
+      <th>errors</th><th>uptime</th><th class="num">cpu%</th><th class="num">mem MB</th>
+      <th>recent compile</th><th>actions</th>
+    </tr>
   </thead>
   <tbody id="rows"></tbody>
 </table>
@@ -39,6 +51,22 @@ function fmtUptime(ms) {
   const h = Math.floor(m / 60);
   return h + 'h ' + (m % 60) + 'm';
 }
+function sparkline(values) {
+  if (!values || !values.length) return '';
+  const w = 60, h = 16, max = Math.max(...values, 1);
+  const step = values.length > 1 ? w / (values.length - 1) : 0;
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - (v / max) * (h - 2) - 1).toFixed(1)}`).join(' ');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#8ab4ff" stroke-width="1.2" points="${pts}"/></svg>`;
+}
+async function action(name, kind, btn) {
+  const buttons = btn.parentNode.querySelectorAll('button');
+  buttons.forEach(b => b.disabled = true);
+  try {
+    await fetch('/api/apps/' + encodeURIComponent(name) + '/' + kind, { method: 'POST' });
+  } catch {}
+  tick();
+}
+window.action = action;
 async function tick() {
   try {
     const res = await fetch('/api/apps');
@@ -48,10 +76,19 @@ async function tick() {
       <tr>
         <td>${a.name}</td>
         <td><span class="badge s-${a.status}">${a.status}</span></td>
+        <td><span class="dot h-${a.health || 'unknown'}"></span>${a.health || 'unknown'}</td>
         <td>${a.port ?? ''}</td>
         <td>${a.url ? `<a href="${a.url}" target="_blank">${a.url}</a>` : ''}</td>
         <td class="${a.errorCount ? 'err' : ''}">${a.errorCount}</td>
         <td>${fmtUptime(a.uptimeMs)}</td>
+        <td class="num">${a.cpu == null ? '' : a.cpu.toFixed ? a.cpu.toFixed(1) : a.cpu}</td>
+        <td class="num">${a.memMB == null ? '' : a.memMB}</td>
+        <td>${sparkline((a.compileHistoryMs || []).slice(-10))}</td>
+        <td>
+          <button onclick="action('${a.name}','start',this)">start</button>
+          <button onclick="action('${a.name}','stop',this)">stop</button>
+          <button onclick="action('${a.name}','restart',this)">restart</button>
+        </td>
       </tr>`).join('');
     document.getElementById('meta').textContent = apps.length + ' app' + (apps.length === 1 ? '' : 's') + ' — last updated ' + new Date().toLocaleTimeString();
   } catch (e) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import type { Registry } from '../registry.js';
-import type { AppSummary, AppStatus } from '../types.js';
+import type { AppHealth, AppSummary, AppStatus } from '../types.js';
 
 interface Props {
   registry: Registry;
@@ -15,6 +15,12 @@ const STATUS_COLORS: Record<AppStatus, string> = {
   compiling: 'yellow',
   serving: 'green',
   error: 'red',
+};
+
+const HEALTH_COLORS: Record<AppHealth, string> = {
+  healthy: 'green',
+  unhealthy: 'red',
+  unknown: 'gray',
 };
 
 function fmtUptime(ms: number | null): string {
@@ -109,7 +115,8 @@ export default function App({ registry, apiPort, onQuit }: Props) {
                 <Text color={sel ? 'cyan' : undefined}>{sel ? '▸ ' : '  '}</Text>
                 <Text color={sel ? 'cyan' : undefined}>{a.name.padEnd(20).slice(0, 20)}</Text>
                 <Text color={STATUS_COLORS[a.status]}> {a.status.padEnd(9)}</Text>
-                <Text dimColor>{a.port ? `:${a.port}` : ''}</Text>
+                <Text color={HEALTH_COLORS[a.health]}>{a.status === 'serving' ? '●' : ' '}</Text>
+                <Text dimColor>{a.port ? ` :${a.port}` : ''}</Text>
               </Box>
             );
           })}
@@ -119,7 +126,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
           {current && state ? (
             <>
               <Text>Selected: <Text bold>{current.name}</Text></Text>
-              <Text>Status:   <Text color={STATUS_COLORS[current.status]}>{current.status}</Text></Text>
+              <Text>Status:   <Text color={STATUS_COLORS[current.status]}>{current.status}</Text> <Text color={HEALTH_COLORS[current.health]}>●</Text> <Text dimColor>{current.health}</Text></Text>
               <Text>Port:     {current.port ?? '-'}</Text>
               <Text>URL:      {current.url ?? '-'}</Text>
               <Text>Errors:   <Text color={current.errorCount ? 'red' : undefined}>{current.errorCount}</Text></Text>
