@@ -131,6 +131,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
                 <Text color={STATUS_COLORS[a.status]}> {a.status.padEnd(9)}</Text>
                 <Text color={HEALTH_COLORS[a.health]}>{a.status === 'serving' ? '●' : ' '}</Text>
                 <Text dimColor>{a.port ? ` :${a.port}` : ''}</Text>
+                {cols >= 100 && a.cpu != null ? <Text dimColor>  {String(a.cpu).padStart(5)}% {String(a.memMB ?? 0).padStart(5)}MB</Text> : null}
               </Box>
             );
           })}
@@ -145,6 +146,9 @@ export default function App({ registry, apiPort, onQuit }: Props) {
               <Text>URL:      {current.url ?? '-'}</Text>
               <Text>Errors:   <Text color={current.errorCount ? 'red' : undefined}>{current.errorCount}</Text></Text>
               <Text>Uptime:   {fmtUptime(current.uptimeMs)}</Text>
+              {current.cpu != null || current.memMB != null ? (
+                <Text>Usage:    {current.cpu ?? '-'}%  {current.memMB ?? '-'} MB</Text>
+              ) : null}
               {state.lastStatusMessage ? <Text dimColor>Note:     {state.lastStatusMessage}</Text> : null}
               <Text>──── recent log {logFocus ? '(focused)' : ''} ────</Text>
               {recentLogs.length === 0 ? <Text dimColor>(no output yet)</Text> : recentLogs.map((line, i) => (
