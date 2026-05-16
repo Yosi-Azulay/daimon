@@ -3,8 +3,10 @@ import { render } from 'ink';
 import { loadConfig, configLookupPaths } from './config.js';
 import { discoverApps } from './discovery.js';
 import { Registry } from './registry.js';
+import { PortAllocator } from './ports.js';
 import { startServer } from './server.js';
 import { HealthMonitor } from './health.js';
+import { loadPersistedState, savePersistedState } from './stateFile.js';
 import App from './tui/App.js';
 
 async function main() {
@@ -32,8 +34,24 @@ async function main() {
     process.stdout.write(`[appman] no serveable projects discovered in: ${config.searchRoots.join(', ') || '(none)'}\n`);
   }
 
-  const registry = new Registry(config, apps);
+  const persisted = loadPersistedState();
+  const portAlloc = new PortAllocator(config.portRange, {
+    initial: persisted.ports,
+    onChange: snap => savePersistedState({ ports: snap }),
+  });
+  const registry = new Registry(config, apps, portAlloc);
   const health = new HealthMonitor(registry, config.healthProbe);
+
+  if (config.autoStart && config.autoStart.length) {
+    const known = new Set(registry.names());
+    for (const name of config.autoStart) {
+      if (!known.has(name)) {
+        process.stderr.write(`[appman] warning: autoStart references unknown app "${name}"\n`);
+        continue;
+      }
+      void registry.start(name);
+    }
+  }
 
   const server = startServer(registry, config.apiPort);
   process.stdout.write(`[appman] api: http://127.0.0.1:${config.apiPort}\n`);

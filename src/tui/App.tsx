@@ -1,7 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
+import { spawn } from 'node:child_process';
 import type { Registry } from '../registry.js';
 import type { AppHealth, AppSummary, AppStatus } from '../types.js';
+
+function openUrl(url: string): void {
+  try {
+    if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    } else if (process.platform === 'darwin') {
+      spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+    } else {
+      spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+    }
+  } catch {}
+}
 
 interface Props {
   registry: Registry;
@@ -81,6 +94,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     else if (input === 'x') void registry.stop(current.name);
     else if (input === 'r') void registry.restart(current.name);
     else if (input === 'l') setLogFocus(f => !f);
+    else if (input === 'o') { if (current.url) openUrl(current.url); }
     else if (key.pageUp) setLogScroll(s => s + 5);
     else if (key.pageDown) setLogScroll(s => Math.max(0, s - 5));
   });
@@ -144,7 +158,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
       </Box>
 
       <Box>
-        <Text dimColor>[s] start  [x] stop  [r] restart  [l] log focus  [PgUp/PgDn] scroll  [q] quit</Text>
+        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [l] log focus  [PgUp/PgDn] scroll  [q] quit</Text>
       </Box>
     </Box>
   );

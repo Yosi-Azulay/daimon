@@ -17,6 +17,14 @@ function readApiPort(): number {
   return 4999;
 }
 
+async function loadCfg(): Promise<{ config: { autoStart?: string[]; profiles?: Record<string, string[]> } }> {
+  try {
+    const r = loadConfig();
+    if (r.kind === 'loaded') return { config: r.config };
+  } catch {}
+  return { config: {} };
+}
+
 function getBaseUrl(): string {
   return `http://127.0.0.1:${readApiPort()}`;
 }
@@ -150,6 +158,44 @@ async function main() {
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
       if (r.body?.timedOut) process.exit(2);
+      return;
+    }
+    case 'up':
+    case 'down': {
+      const profile = f.positional[0];
+      const listRes = await call('/api/apps');
+      const all: any[] = Array.isArray(listRes.body) ? listRes.body : [];
+      const knownConfig = (await loadCfg()).config;
+      let targets: string[];
+      if (!profile) {
+        targets = knownConfig.autoStart || [];
+        if (cmd === 'up' && targets.length === 0) {
+          fail(JSON.stringify({ error: 'no autoStart configured and no profile given' }));
+        }
+        if (cmd === 'down' && targets.length === 0) {
+          targets = all.map(a => a.name);
+        }
+      } else {
+        const list = knownConfig.profiles?.[profile];
+        if (!list) fail(JSON.stringify({ error: `unknown profile: ${profile}` }));
+        targets = list;
+      }
+      const action = cmd === 'up' ? 'start' : 'stop';
+      await Promise.all(targets.map(n => call(`/api/apps/${encodeURIComponent(n)}/${action}`, 'POST')));
+      if (cmd === 'up') {
+        const budgetMs = 120_000;
+        const start = Date.now();
+        const perAppTimeout = () => Math.max(5, Math.floor((budgetMs - (Date.now() - start)) / 1000));
+        await Promise.all(targets.map(n => call(`/api/apps/${encodeURIComponent(n)}/wait?until=serving&timeout=${perAppTimeout()}`)));
+      } else {
+        await Promise.all(targets.map(n => call(`/api/apps/${encodeURIComponent(n)}/wait?until=stopped&timeout=10`)));
+      }
+      const finalList = await call('/api/apps');
+      const arr: any[] = Array.isArray(finalList.body) ? finalList.body : [];
+      const summary = arr
+        .filter(a => targets.includes(a.name))
+        .map(a => ({ name: a.name, status: a.status, health: a.health }));
+      out(summary);
       return;
     }
     case 'logs': {
