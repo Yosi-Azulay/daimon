@@ -20,11 +20,19 @@ export class StaleDetector {
   constructor(private readonly registry: Registry, private readonly cfg: StaleDetectConfig) {
     if (!cfg.enabled) return;
     this.timer = setInterval(() => this.tick(), CHECK_MS);
+    registry.on('compile', this.onCompile);
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    this.registry.off('compile', this.onCompile);
   }
+
+  private onCompile = (ev: { name: string }) => {
+    const app = this.registry.getApp(ev.name);
+    if (!app) return;
+    this.caches.delete(app.workspaceRoot);
+  };
 
   private tick(): void {
     for (const name of this.registry.names()) this.evaluate(name);
@@ -46,7 +54,7 @@ export class StaleDetector {
       return;
     }
     const referenceTs = s.lastCompileAt ?? s.startedAt;
-    if (this.hasSourceChange(app.workspaceRoot, referenceTs)) {
+    if (this.hasSourceChange(app.workspaceRoot, referenceTs, s.lastCompileAt)) {
       if (!s.stale) {
         this.registry.setStale(name, true);
         this.registry.recordEvent({ app: name, type: 'stale', message: `no output in ${Math.round(silentFor / 1000)}s despite source changes` });
@@ -54,9 +62,12 @@ export class StaleDetector {
     }
   }
 
-  private hasSourceChange(root: string, sinceTs: number): boolean {
+  private hasSourceChange(root: string, sinceTs: number, requireCacheAfter: number | null): boolean {
     const cached = this.caches.get(root);
-    if (!cached || Date.now() - cached.ts > GLOB_REFRESH_MS) {
+    const stale = !cached
+      || Date.now() - cached.ts > GLOB_REFRESH_MS
+      || (requireCacheAfter != null && cached.ts < requireCacheAfter);
+    if (stale) {
       const files = this.scan(root);
       this.caches.set(root, { ts: Date.now(), files });
     }
