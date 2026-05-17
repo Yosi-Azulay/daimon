@@ -111,7 +111,13 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     process.exit(0);
   };
 
-  const server = startServer(registry, apiPort, { metricsEnabled: config.metrics.enabled, requestLog, onShutdown: () => { void shutdown(); } });
+  const server = startServer(registry, apiPort, {
+    metricsEnabled: config.metrics.enabled,
+    requestLog,
+    onShutdown: () => { void shutdown(); },
+    configPath: cfgPath,
+    getConfig: () => registry.getConfig(),
+  });
   process.stdout.write(`[appman] api: http://127.0.0.1:${apiPort}\n`);
   try { writeLock(buildLockInfo(apiPort, headless)); } catch (err: any) { process.stderr.write(`[appman] warning: could not write daemon.lock: ${err?.message || err}\n`); }
 

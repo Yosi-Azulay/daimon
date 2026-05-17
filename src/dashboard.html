@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <title>appman</title>
 <style>
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
-  h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; letter-spacing: 0.5px; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 20px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; letter-spacing: 0.5px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tab { padding: 6px 12px; background: #1a1d24; color: #9aa3b2; border: 1px solid #232730; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  .tab.active { background: #2c313b; color: #e6e6e6; border-color: #353a45; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #232730; vertical-align: middle; }
   th { color: #9aa3b2; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -26,14 +29,36 @@
   button { background: #232730; color: #e6e6e6; border: 1px solid #353a45; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; margin-right: 4px; }
   button:hover:not(:disabled) { background: #2c313b; }
   button:disabled { opacity: 0.4; cursor: default; }
+  .chev { display: inline-block; width: 12px; cursor: pointer; user-select: none; color: #9aa3b2; }
+  .drawer { background: #14171d; padding: 10px 18px 12px 36px; border-bottom: 1px solid #232730; }
+  .errrow { display: grid; grid-template-columns: 12px 1fr 90px 90px auto; gap: 10px; padding: 4px 0; font-size: 13px; align-items: baseline; border-bottom: 1px solid #1a1d24; }
+  .errrow .file { color: #8ab4ff; font-family: ui-monospace, Consolas, monospace; }
+  .errrow .code { color: #d0a060; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .errrow .msg { color: #d8d8d8; }
+  .errrow .count { color: #c8cdd6; font-variant-numeric: tabular-nums; text-align: right; }
+  .errrow .seen { color: #6c757d; font-variant-numeric: tabular-nums; text-align: right; font-size: 11px; }
+  .sev { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef6f74; }
+  .errrow button { font-size: 10px; padding: 2px 6px; }
+  .panel { background: #14171d; padding: 14px; border-radius: 6px; border: 1px solid #232730; margin-top: 12px; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .toolbar input[type=text] { background: #0f1115; color: #e6e6e6; border: 1px solid #353a45; padding: 4px 8px; border-radius: 4px; font-size: 13px; min-width: 240px; }
+  .toolbar select { background: #0f1115; color: #e6e6e6; border: 1px solid #353a45; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+  .group-h { color: #9aa3b2; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 4px; }
 </style>
 </head>
 <body>
 <h1>appman</h1>
+<div class="tabs">
+  <div class="tab active" data-tab="apps">Apps</div>
+  <div class="tab" data-tab="all-errors">All errors</div>
+</div>
 <div class="meta" id="meta">loading…</div>
+
+<div id="view-apps">
 <table>
   <thead>
     <tr>
+      <th style="width:18px"></th>
       <th>name</th><th>status</th><th>health</th><th>port</th><th>url</th>
       <th>errors</th><th>uptime</th><th class="num">cpu%</th><th class="num">mem MB</th>
       <th>recent compile</th><th>bundle</th><th>actions</th>
@@ -41,7 +66,38 @@
   </thead>
   <tbody id="rows"></tbody>
 </table>
+</div>
+
+<div id="view-all-errors" style="display:none">
+  <div class="toolbar">
+    <input type="text" id="all-err-search" placeholder="search (substring)…" />
+    <label style="color:#9aa3b2;font-size:12px">group:</label>
+    <select id="all-err-group">
+      <option value="app">by app</option>
+      <option value="file">by file</option>
+      <option value="code">by code</option>
+    </select>
+    <span style="color:#6c757d;font-size:12px" id="all-err-count"></span>
+  </div>
+  <div id="all-err-body" class="panel"></div>
+</div>
+
 <script>
+let editorScheme = 'vscode';
+const expanded = new Set();
+const errorCache = new Map();
+let currentTab = 'apps';
+
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    currentTab = t.dataset.tab;
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+    document.getElementById('view-apps').style.display = currentTab === 'apps' ? '' : 'none';
+    document.getElementById('view-all-errors').style.display = currentTab === 'all-errors' ? '' : 'none';
+    tick();
+  });
+});
+
 function fmtUptime(ms) {
   if (ms == null) return '';
   const s = Math.floor(ms / 1000);
@@ -58,30 +114,115 @@ function sparkline(values) {
   const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - (v / max) * (h - 2) - 1).toFixed(1)}`).join(' ');
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#8ab4ff" stroke-width="1.2" points="${pts}"/></svg>`;
 }
+function editorUrl(file, line, col) {
+  if (!file) return '#';
+  const safe = String(file).replace(/\\/g, '/');
+  const suffix = (line ? ':' + line : '') + (col ? ':' + col : '');
+  if (editorScheme.includes('://')) return editorScheme + safe + suffix;
+  return editorScheme + '://file/' + safe + suffix;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 async function action(name, kind, btn) {
   const buttons = btn.parentNode.querySelectorAll('button');
   buttons.forEach(b => b.disabled = true);
-  try {
-    await fetch('/api/apps/' + encodeURIComponent(name) + '/' + kind, { method: 'POST' });
-  } catch {}
+  try { await fetch('/api/apps/' + encodeURIComponent(name) + '/' + kind, { method: 'POST' }); } catch {}
   tick();
 }
 window.action = action;
+async function copyError(err) {
+  const payload = { file: err.parsed?.file ?? null, line: err.parsed?.line ?? null, col: err.parsed?.col ?? null, code: err.parsed?.code ?? null, message: err.parsed?.message ?? err.message };
+  try { await navigator.clipboard.writeText(JSON.stringify(payload)); } catch {}
+}
+window.copyError = copyError;
+async function toggleDrawer(name) {
+  if (expanded.has(name)) expanded.delete(name);
+  else { expanded.add(name); await fetchErrors(name); }
+  tick();
+}
+window.toggleDrawer = toggleDrawer;
+async function fetchErrors(name) {
+  try {
+    const r = await fetch('/api/apps/' + encodeURIComponent(name) + '/errors');
+    if (r.ok) errorCache.set(name, await r.json());
+  } catch {}
+}
+function renderDrawer(name) {
+  const errs = errorCache.get(name) || [];
+  if (errs.length === 0) return '<div class="drawer" style="color:#6c757d">no errors recorded</div>';
+  const rows = errs.map((e, i) => {
+    const p = e.parsed || {};
+    const fileTxt = p.file ? `${p.file}${p.line ? ':' + p.line : ''}${p.col ? ':' + p.col : ''}` : '(unparsed)';
+    const link = p.file ? `<a href="${editorUrl(p.file, p.line, p.col)}">${escapeHtml(fileTxt)}</a>` : escapeHtml(fileTxt);
+    const code = escapeHtml(p.code || '');
+    const msg = escapeHtml((p.message || e.message || '').slice(0, 200));
+    const seen = new Date(e.lastSeen).toLocaleTimeString();
+    return `<div class="errrow"><span class="sev"></span><div><div class="file">${link}</div><div class="msg" title="${escapeHtml(e.message)}">${msg}</div></div><div class="code">${code}</div><div class="count">×${e.count}</div><div><button onclick='copyError(${JSON.stringify(JSON.stringify(e))})'>copy</button>${p.file ? `<a href="${editorUrl(p.file, p.line, p.col)}"><button>open</button></a>` : ''}<div class="seen">${seen}</div></div></div>`;
+  }).join('');
+  return `<div class="drawer">${rows}</div>`;
+}
+async function loadEditorScheme() {
+  try {
+    const r = await fetch('/api/config');
+    if (r.ok) { const cfg = await r.json(); editorScheme = cfg?.config?.editor?.scheme || 'vscode'; }
+  } catch {}
+}
+async function renderAllErrors() {
+  const r = await fetch('/api/apps');
+  if (!r.ok) return;
+  const apps = await r.json();
+  await Promise.all(apps.map(a => fetchErrors(a.name)));
+  const allRows = [];
+  for (const a of apps) {
+    const errs = errorCache.get(a.name) || [];
+    for (const e of errs) allRows.push({ app: a.name, err: e });
+  }
+  const filter = (document.getElementById('all-err-search').value || '').toLowerCase();
+  const group = document.getElementById('all-err-group').value;
+  const filtered = filter ? allRows.filter(r => (r.err.parsed?.message || r.err.message || '').toLowerCase().includes(filter) || (r.err.parsed?.file || '').toLowerCase().includes(filter)) : allRows;
+  document.getElementById('all-err-count').textContent = filtered.length + ' entr' + (filtered.length === 1 ? 'y' : 'ies');
+  const buckets = new Map();
+  for (const row of filtered) {
+    const key = group === 'app' ? row.app : group === 'file' ? (row.err.parsed?.file || '(unparsed)') : (row.err.parsed?.code || '(no code)');
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(row);
+  }
+  const html = [...buckets.entries()].map(([k, rows]) => {
+    const inner = rows.map(({ app, err }) => {
+      const p = err.parsed || {};
+      const fileTxt = p.file ? `${p.file}${p.line ? ':' + p.line : ''}${p.col ? ':' + p.col : ''}` : '(unparsed)';
+      const link = p.file ? `<a href="${editorUrl(p.file, p.line, p.col)}">${escapeHtml(fileTxt)}</a>` : escapeHtml(fileTxt);
+      const code = escapeHtml(p.code || '');
+      const msg = escapeHtml((p.message || err.message || '').slice(0, 200));
+      return `<div class="errrow"><span class="sev"></span><div><div><span style="color:#9aa3b2;font-size:11px">${escapeHtml(app)}</span> · <span class="file">${link}</span></div><div class="msg">${msg}</div></div><div class="code">${code}</div><div class="count">×${err.count}</div><div><button onclick='copyError(${JSON.stringify(JSON.stringify(err))})'>copy</button>${p.file ? `<a href="${editorUrl(p.file, p.line, p.col)}"><button>open</button></a>` : ''}</div></div>`;
+    }).join('');
+    return `<div class="group-h">${escapeHtml(k)} (${rows.length})</div>${inner}`;
+  }).join('');
+  document.getElementById('all-err-body').innerHTML = html || '<div style="color:#6c757d">no errors</div>';
+}
+
 async function tick() {
+  if (currentTab === 'all-errors') { await renderAllErrors(); document.getElementById('meta').textContent = 'all errors — last updated ' + new Date().toLocaleTimeString(); return; }
   try {
     const res = await fetch('/api/apps');
     const apps = await res.json();
     const tbody = document.getElementById('rows');
-    tbody.innerHTML = apps.map(a => `
+    const refreshDrawers = [];
+    tbody.innerHTML = apps.map(a => {
+      const isOpen = expanded.has(a.name);
+      const chev = isOpen ? '▾' : '▸';
+      const rowHtml = `
       <tr>
-        <td>${a.name}</td>
+        <td><span class="chev" onclick="toggleDrawer('${a.name}')">${chev}</span></td>
+        <td onclick="toggleDrawer('${a.name}')" style="cursor:pointer">${a.name}</td>
         <td><span class="badge s-${a.status}">${a.status}</span></td>
         <td><span class="dot h-${a.health || 'unknown'}"></span>${a.health || 'unknown'}</td>
         <td>${a.port ?? ''}</td>
         <td>${a.url ? `<a href="${a.url}" target="_blank">${a.url}</a>` : ''}</td>
         <td class="${a.errorCount ? 'err' : ''}">${a.errorCount}</td>
         <td>${fmtUptime(a.uptimeMs)}</td>
-        <td class="num">${a.cpu == null ? '' : a.cpu.toFixed ? a.cpu.toFixed(1) : a.cpu}</td>
+        <td class="num">${a.cpu == null ? '' : (a.cpu.toFixed ? a.cpu.toFixed(1) : a.cpu)}</td>
         <td class="num">${a.memMB == null ? '' : a.memMB}</td>
         <td>${sparkline((a.compileHistoryMs || []).slice(-10))}</td>
         <td>${a.bundle ? `${a.bundle.initialKB}KB initial · ${a.bundle.lazyKB}KB lazy${a.bundleRegressionPct != null && a.bundleRegressionPct > 10 ? ` <span class="err">(+${a.bundleRegressionPct}%)</span>` : ''}` : ''}</td>
@@ -90,13 +231,20 @@ async function tick() {
           <button onclick="action('${a.name}','stop',this)">stop</button>
           <button onclick="action('${a.name}','restart',this)">restart</button>
         </td>
-      </tr>`).join('');
+      </tr>`;
+      const drawer = isOpen ? `<tr><td colspan="13" style="padding:0">${renderDrawer(a.name)}</td></tr>` : '';
+      if (isOpen) refreshDrawers.push(a.name);
+      return rowHtml + drawer;
+    }).join('');
     document.getElementById('meta').textContent = apps.length + ' app' + (apps.length === 1 ? '' : 's') + ' — last updated ' + new Date().toLocaleTimeString();
+    for (const n of refreshDrawers) void fetchErrors(n);
   } catch (e) {
     document.getElementById('meta').textContent = 'error: ' + e.message;
   }
 }
-tick();
+document.getElementById('all-err-search').addEventListener('input', () => { if (currentTab === 'all-errors') renderAllErrors(); });
+document.getElementById('all-err-group').addEventListener('change', () => { if (currentTab === 'all-errors') renderAllErrors(); });
+loadEditorScheme().then(tick);
 setInterval(tick, 2000);
 </script>
 </body>

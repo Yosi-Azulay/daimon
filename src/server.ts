@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +9,7 @@ import { buildSnapshot, writeSnapshot } from './snapshot.js';
 import { executeClean, planClean } from './clean.js';
 import { exportMetrics } from './metrics.js';
 import type { RequestLog } from './requestLog.js';
+import type { AppmanConfig } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,6 +57,38 @@ export interface ServerOpts {
   metricsEnabled?: boolean;
   requestLog?: RequestLog | null;
   onShutdown?: () => void;
+  configPath?: string;
+  getConfig?: () => AppmanConfig;
+  reloadConfig?: () => Promise<{ ok: boolean; addedApps: string[]; removedApps: string[] }>;
+  patchConfig?: (patch: any) => { ok: true; applied: string[] } | { ok: false; error: string };
+}
+
+const REDACT_KEY = /key|secret|token|password|pass/i;
+
+function redactConfig(cfg: AppmanConfig): any {
+  const clone: any = JSON.parse(JSON.stringify(cfg));
+  if (clone.apiToken) clone.apiToken = '***';
+  if (clone.overrides && typeof clone.overrides === 'object') {
+    for (const name of Object.keys(clone.overrides)) {
+      const env = clone.overrides[name]?.env;
+      if (env && typeof env === 'object') {
+        for (const k of Object.keys(env)) {
+          if (REDACT_KEY.test(k)) env[k] = '***';
+        }
+      }
+    }
+  }
+  return clone;
+}
+
+function configEtag(configPath: string | undefined): string {
+  if (!configPath) return '';
+  try {
+    const buf = fs.readFileSync(configPath);
+    return crypto.createHash('sha1').update(buf).digest('hex');
+  } catch {
+    return '';
+  }
 }
 
 export function startServer(registry: Registry, port: number, opts: ServerOpts = {}): http.Server {
@@ -66,9 +100,68 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       const method = req.method || 'GET';
       const parts = url.pathname.replace(/\/$/, '').split('/').filter(Boolean);
 
+      const requireAuth = (): boolean => {
+        const cfg = opts.getConfig ? opts.getConfig() : null;
+        const token = cfg?.apiToken ?? null;
+        if (!token) return true;
+        const hdr = req.headers['authorization'];
+        if (typeof hdr === 'string' && hdr.toLowerCase().startsWith('bearer ') && hdr.slice(7).trim() === token) return true;
+        sendJson(res, 401, { error: 'unauthorized' });
+        return false;
+      };
+
       if (method === 'POST' && url.pathname === '/api/shutdown') {
+        if (!requireAuth()) return;
         sendJson(res, 200, { ok: true });
         if (opts.onShutdown) setImmediate(() => { try { opts.onShutdown!(); } catch {} });
+        return;
+      }
+
+      if (url.pathname === '/api/config' && opts.getConfig) {
+        if (method === 'GET') {
+          const cfg = opts.getConfig();
+          const etag = configEtag(opts.configPath);
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'etag': etag,
+          });
+          res.end(JSON.stringify({ etag, config: redactConfig(cfg) }));
+          return;
+        }
+        if (method === 'PATCH' && opts.patchConfig) {
+          if (!requireAuth()) return;
+          const ifMatch = (req.headers['if-match'] as string | undefined)?.trim();
+          const current = configEtag(opts.configPath);
+          if (!ifMatch || ifMatch !== current) {
+            sendJson(res, 412, { error: 'etag mismatch', current });
+            return;
+          }
+          let body: any = {};
+          if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+            await new Promise<void>(resolve => {
+              const chunks: Buffer[] = [];
+              req.on('data', (c: Buffer) => chunks.push(c));
+              req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+            });
+          }
+          const r = opts.patchConfig(body);
+          if (!r.ok) { sendJson(res, 400, { error: r.error }); return; }
+          const newEtag = configEtag(opts.configPath);
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'etag': newEtag });
+          res.end(JSON.stringify({ etag: newEtag, applied: r.applied }));
+          return;
+        }
+        sendJson(res, 405, { error: 'method not allowed' });
+        return;
+      }
+      if (url.pathname === '/api/config/reload' && method === 'POST' && opts.reloadConfig) {
+        if (!requireAuth()) return;
+        try {
+          const r = await opts.reloadConfig();
+          sendJson(res, 200, r);
+        } catch (err: any) {
+          sendJson(res, 400, { error: err?.message || String(err) });
+        }
         return;
       }
 

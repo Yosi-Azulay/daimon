@@ -45,6 +45,10 @@ export interface MetricsConfig {
   enabled: boolean;
 }
 
+export interface EditorConfig {
+  scheme: string;
+}
+
 export interface LogsConfig {
   enabled: boolean;
   dir: string;
@@ -72,6 +76,8 @@ export interface AppmanConfig {
   envFiles: Record<string, string[]>;
   requestLog: RequestLogConfig;
   metrics: MetricsConfig;
+  editor: EditorConfig;
+  apiToken: string | null;
 }
 
 export interface SearchRoot {

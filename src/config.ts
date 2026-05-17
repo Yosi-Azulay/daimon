@@ -50,6 +50,8 @@ function defaultConfig(): AppmanConfig {
     envFiles: {},
     requestLog: { enabled: false, portOffset: 1000 },
     metrics: { enabled: false },
+    editor: { scheme: 'vscode' },
+    apiToken: null,
   };
 }
 
@@ -166,6 +168,13 @@ function validate(raw: unknown, source: string): AppmanConfig {
   }
   if (obj.metrics && typeof obj.metrics === 'object') {
     cfg.metrics = { ...cfg.metrics, ...(obj.metrics as Partial<AppmanConfig['metrics']>) };
+  }
+  if (obj.editor && typeof obj.editor === 'object') {
+    const scheme = (obj.editor as any).scheme;
+    if (typeof scheme === 'string' && scheme.trim()) cfg.editor = { scheme: scheme.trim() };
+  }
+  if (typeof obj.apiToken === 'string' || obj.apiToken === null) {
+    cfg.apiToken = obj.apiToken as string | null;
   }
 
   return cfg;
