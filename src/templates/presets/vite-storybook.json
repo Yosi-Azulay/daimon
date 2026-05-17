@@ -1,0 +1,9 @@
+{
+  "name": "vite-storybook",
+  "description": "Vite app + Storybook running together with tagged groups.",
+  "patch": {
+    "tags": { "app": ["frontend"], "app-storybook": ["docs"] },
+    "profiles": { "ui": ["app", "app-storybook"] },
+    "healthProbe": { "intervalMs": 20000 }
+  }
+}

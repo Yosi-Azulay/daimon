@@ -1,0 +1,10 @@
+{
+  "name": "nx-fullstack",
+  "description": "Typical Nx fullstack — autoStart web + api, profile combining them, generous compile/health timeouts.",
+  "patch": {
+    "autoStart": ["web", "api"],
+    "profiles": { "fullstack": ["web", "api"] },
+    "healthProbe": { "intervalMs": 30000, "timeoutMs": 3000 },
+    "autoRestart": { "enabled": true, "maxAttempts": 5, "windowMs": 300000 }
+  }
+}

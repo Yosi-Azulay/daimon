@@ -17,6 +17,7 @@ import { dependants, topoLevels, transitiveClosure } from './depends.js';
 import { runOneShot, startWatch, type OneShotResult, type WatchTask } from './taskRunner.js';
 import { describeHolder, findPortHolder } from './portDiag.js';
 import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.js';
+import { readSecrets, substituteSecrets } from './secrets.js';
 import { SessionRecorder } from './session.js';
 
 interface Entry {
@@ -342,7 +343,9 @@ export class Registry extends EventEmitter {
         envFromFile = parseEnvFile(resolveEnvFilePath(e.app.workspaceRoot, active));
       }
     }
-    const mergedEnvOverride = { ...envFromFile, ...(so?.env ?? {}) };
+    const baseEnv = { ...envFromFile, ...(this.config.overrides?.[name]?.env ?? {}), ...(so?.env ?? {}) };
+    const secrets = readSecrets();
+    const mergedEnvOverride = substituteSecrets(baseEnv, secrets);
     const proc = new AppProcess({
       state: e.state,
       app: e.app,
@@ -359,7 +362,7 @@ export class Registry extends EventEmitter {
       onErrorRecorded: (entry, isNew) =>
         this.recordEvent({ app: name, type: isNew ? 'error-new' : 'error-recur', message: entry.message }),
       onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),
-      onLogLine: line => e.logger?.write(line),
+      onLogLine: line => { e.logger?.write(line); this.emit('log', { name, ts: Date.now(), line }); },
       onCompile: ms => {
         this.history?.recordCompile(name, ms);
         const state = this.getState(name)!;

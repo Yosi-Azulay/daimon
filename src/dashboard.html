@@ -64,6 +64,11 @@
       <div class="tab active" data-cfgtab="perapp">Per-app</div>
       <div class="tab" data-cfgtab="global">Global</div>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label style="color:#9aa3b2;font-size:12px">apply preset:</label>
+      <select id="preset-select" style="background:#0f1115;color:#e6e6e6;border:1px solid #353a45;padding:3px 8px;border-radius:3px"><option value="">—</option></select>
+      <button id="preset-apply">load into patch</button>
+    </div>
     <div id="cfg-perapp"></div>
     <div id="cfg-global" style="display:none">
       <div style="color:#9aa3b2;font-size:12px;margin-bottom:6px">JSON merge patch. Saving sends only this object to the server.</div>
@@ -179,9 +184,34 @@ async function copyError(err) {
   try { await navigator.clipboard.writeText(JSON.stringify(payload)); } catch {}
 }
 window.copyError = copyError;
+const logStreams = new Map();
+const logBuf = new Map();
+function startLogStream(name) {
+  if (logStreams.has(name)) return;
+  try {
+    const es = new EventSource('/api/apps/' + encodeURIComponent(name) + '/logs/stream');
+    logStreams.set(name, es);
+    if (!logBuf.has(name)) logBuf.set(name, []);
+    es.onmessage = ev => {
+      try {
+        const d = JSON.parse(ev.data);
+        const arr = logBuf.get(name);
+        arr.push(d.line);
+        if (arr.length > 200) arr.splice(0, arr.length - 200);
+        const slot = document.querySelector(`[data-livelog="${name}"]`);
+        if (slot) slot.textContent = arr.slice(-12).join('\n');
+      } catch {}
+    };
+    es.onerror = () => { es.close(); logStreams.delete(name); };
+  } catch {}
+}
+function stopLogStream(name) {
+  const es = logStreams.get(name);
+  if (es) { try { es.close(); } catch {}; logStreams.delete(name); }
+}
 async function toggleDrawer(name) {
-  if (expanded.has(name)) expanded.delete(name);
-  else { expanded.add(name); await fetchErrors(name); }
+  if (expanded.has(name)) { expanded.delete(name); stopLogStream(name); }
+  else { expanded.add(name); await fetchErrors(name); startLogStream(name); }
   tick();
 }
 window.toggleDrawer = toggleDrawer;
@@ -193,7 +223,8 @@ async function fetchErrors(name) {
 }
 function renderDrawer(name) {
   const errs = errorCache.get(name) || [];
-  if (errs.length === 0) return '<div class="drawer" style="color:#6c757d">no errors recorded</div>';
+  const liveLogHtml = `<pre data-livelog="${name}" style="background:#0c0e13;color:#a7b1c2;padding:8px;border-radius:4px;font-size:11px;margin:0 0 8px;max-height:160px;overflow:auto"></pre>`;
+  if (errs.length === 0) return '<div class="drawer">' + liveLogHtml + '<div style="color:#6c757d">no errors recorded</div></div>';
   const rows = errs.map((e, i) => {
     const p = e.parsed || {};
     const fileTxt = p.file ? `${p.file}${p.line ? ':' + p.line : ''}${p.col ? ':' + p.col : ''}` : '(unparsed)';
@@ -203,7 +234,7 @@ function renderDrawer(name) {
     const seen = new Date(e.lastSeen).toLocaleTimeString();
     return `<div class="errrow"><span class="sev"></span><div><div class="file">${link}</div><div class="msg" title="${escapeHtml(e.message)}">${msg}</div></div><div class="code">${code}</div><div class="count">×${e.count}</div><div><button onclick='copyError(${JSON.stringify(JSON.stringify(e))})'>copy</button>${p.file ? `<a href="${editorUrl(p.file, p.line, p.col)}"><button>open</button></a>` : ''}<div class="seen">${seen}</div></div></div>`;
   }).join('');
-  return `<div class="drawer">${rows}</div>`;
+  return `<div class="drawer">${liveLogHtml}${rows}</div>`;
 }
 async function loadEditorScheme() {
   try {
@@ -304,7 +335,30 @@ async function reloadConfig() {
   await loadEditorScheme();
   await openConfigPanel();
 }
-document.getElementById('gear').addEventListener('click', openConfigPanel);
+async function loadPresets() {
+  try {
+    const r = await fetch('/api/presets');
+    if (!r.ok) return;
+    const list = await r.json();
+    const sel = document.getElementById('preset-select');
+    sel.innerHTML = '<option value="">—</option>' + list.map((p, i) => `<option value="${i}">${escapeHtml(p.name)} — ${escapeHtml(p.description || '')}</option>`).join('');
+    sel._list = list;
+  } catch {}
+}
+document.getElementById('preset-apply').addEventListener('click', () => {
+  const sel = document.getElementById('preset-select');
+  const list = sel._list || [];
+  const idx = sel.value;
+  if (idx === '') return;
+  const preset = list[Number(idx)];
+  if (!preset) return;
+  document.getElementById('cfg-textarea').value = JSON.stringify(preset.patch, null, 2);
+  document.querySelectorAll('[data-cfgtab]').forEach(x => { x.classList.toggle('active', x.dataset.cfgtab === 'global'); });
+  document.getElementById('cfg-perapp').style.display = 'none';
+  document.getElementById('cfg-global').style.display = '';
+  setCfgToast('preset loaded into Global tab — click Save to apply', '#62d28a');
+});
+document.getElementById('gear').addEventListener('click', () => { loadPresets(); openConfigPanel(); });
 document.getElementById('cfg-close').addEventListener('click', closeConfigPanel);
 document.getElementById('cfg-save').addEventListener('click', saveConfig);
 document.getElementById('cfg-reload').addEventListener('click', reloadConfig);

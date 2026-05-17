@@ -10,6 +10,9 @@ import { executeClean, planClean } from './clean.js';
 import { exportMetrics } from './metrics.js';
 import type { RequestLog } from './requestLog.js';
 import type { AppmanConfig } from './types.js';
+import { appendAuditEntry } from './audit.js';
+import { listPresets } from './presets.js';
+import { writeHandoff } from './stateHandoff.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -147,11 +150,25 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           const r = opts.patchConfig(body);
           if (!r.ok) { sendJson(res, 400, { error: r.error }); return; }
           const newEtag = configEtag(opts.configPath);
+          try {
+            const remote = (req.socket as any).remoteAddress || '127.0.0.1';
+            appendAuditEntry(remote, body, body, r.applied);
+          } catch {}
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'etag': newEtag });
           res.end(JSON.stringify({ etag: newEtag, applied: r.applied, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired }));
           return;
         }
         sendJson(res, 405, { error: 'method not allowed' });
+        return;
+      }
+      if (url.pathname === '/api/presets' && method === 'GET') {
+        sendJson(res, 200, listPresets());
+        return;
+      }
+      if (url.pathname === '/api/snapshot-state' && method === 'POST') {
+        if (!requireAuth()) return;
+        const p = writeHandoff(registry);
+        sendJson(res, 200, { ok: true, path: p });
         return;
       }
       if (url.pathname === '/api/config/reload' && method === 'POST' && opts.reloadConfig) {
@@ -330,6 +347,37 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const errs = registry.errors(name);
         if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
         sendJson(res, 200, errs);
+        return;
+      }
+
+      if (sub === 'logs' && parts[4] === 'stream' && method === 'GET') {
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          'connection': 'keep-alive',
+        });
+        const initial = registry.logs(name, { tail: 50 }) ?? [];
+        for (const line of initial) {
+          res.write(`data: ${JSON.stringify({ ts: Date.now(), line })}\n\n`);
+        }
+        const buffer: string[] = [];
+        let dropped = 0;
+        const flush = () => {
+          while (buffer.length) {
+            const ok = res.write(buffer.shift()!);
+            if (!ok) break;
+          }
+        };
+        const onLog = (ev: { name: string; ts: number; line: string }) => {
+          if (ev.name !== name) return;
+          if (buffer.length >= 200) { dropped++; buffer.shift(); }
+          buffer.push(`data: ${JSON.stringify({ ts: ev.ts, line: ev.line })}\n\n`);
+          flush();
+        };
+        registry.on('log', onLog);
+        const keepalive = setInterval(() => res.write(': ping\n\n'), 30_000);
+        req.on('close', () => { registry.off('log', onLog); clearInterval(keepalive); });
         return;
       }
 

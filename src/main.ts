@@ -18,6 +18,7 @@ import { RequestLog } from './requestLog.js';
 import { buildLockInfo, removeLock, writeLock } from './daemon.js';
 import { patchConfigOnDisk, softReloadFromDisk } from './configManager.js';
 import { installCrashHandlers } from './crashDump.js';
+import { consumeHandoff } from './stateHandoff.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -78,6 +79,19 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   const requestLog = new RequestLog(registry, config.requestLog);
   registry.on('childExit', ({ name, code, signal, stopping }: any) => restarter.onExit(name, code, signal, stopping));
   registry.on('userStop', ({ name }: any) => restarter.onUserStop(name));
+
+  const handoff = consumeHandoff();
+  if (handoff && handoff.apps.length) {
+    process.stdout.write(`[appman] state-handoff: restoring ${handoff.apps.map(a => a.name).join(', ')}\n`);
+    for (const h of handoff.apps) {
+      portAlloc.pin(h.name, h.port);
+    }
+    for (const h of handoff.apps) {
+      if (registry.names().includes(h.name)) {
+        void registry.start(h.name);
+      }
+    }
+  }
 
   if (config.autoStart && config.autoStart.length) {
     const known = new Set(registry.names());

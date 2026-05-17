@@ -312,13 +312,14 @@ async function handleDaemon(rest: string[]): Promise<void> {
     case 'restart': {
       const lock = readLock();
       if (lock) {
+        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/snapshot-state`, { method: 'POST', headers: authHeaders() }); } catch {}
         try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST', headers: authHeaders() }); } catch {}
         await waitForExit(lock.pid, 5000);
         removeLock();
       }
       const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
       const info = await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
-      out({ ok: true, pid: info.pid, port: info.apiPort });
+      out({ ok: true, pid: info.pid, port: info.apiPort, handoff: true });
       return;
     }
     case 'attach': {
