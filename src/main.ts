@@ -7,6 +7,7 @@ import { PortAllocator } from './ports.js';
 import { startServer } from './server.js';
 import { HealthMonitor } from './health.js';
 import { UsageMonitor } from './usage.js';
+import { Restarter } from './restarter.js';
 import { loadPersistedState, savePersistedState } from './stateFile.js';
 import App from './tui/App.js';
 
@@ -43,6 +44,9 @@ async function main() {
   const registry = new Registry(config, apps, portAlloc);
   const health = new HealthMonitor(registry, config.healthProbe);
   const usage = new UsageMonitor(registry);
+  const restarter = new Restarter(registry, config.autoRestart);
+  registry.on('childExit', ({ name, code, signal, stopping }: any) => restarter.onExit(name, code, signal, stopping));
+  registry.on('userStop', ({ name }: any) => restarter.onUserStop(name));
 
   if (config.autoStart && config.autoStart.length) {
     const known = new Set(registry.names());
@@ -64,6 +68,7 @@ async function main() {
     shuttingDown = true;
     try { health.stop(); } catch {}
     try { usage.stop(); } catch {}
+    try { restarter.stop(); } catch {}
     try {
       await registry.stopAll(3000);
     } catch {}

@@ -55,6 +55,9 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   const [logFocus, setLogFocus] = useState(false);
   const [logScroll, setLogScroll] = useState(0);
   const [fullLog, setFullLog] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [tagPicking, setTagPicking] = useState(false);
+  const [tagInput, setTagInput] = useState('');
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -72,6 +75,19 @@ export default function App({ registry, apiPort, onQuit }: Props) {
 
   useInput((input, key) => {
     if (fullLog) return;
+    if (tagPicking) {
+      if (key.escape) { setTagPicking(false); setTagInput(''); return; }
+      if (key.return) {
+        const t = tagInput.trim();
+        setTagFilter(t ? t.split(/[\s,]+/).filter(Boolean) : []);
+        setTagPicking(false);
+        setTagInput('');
+        return;
+      }
+      if (key.backspace || key.delete) { setTagInput(s => s.slice(0, -1)); return; }
+      if (input && !key.ctrl) setTagInput(s => s + input);
+      return;
+    }
     if (input === 'q' || (key.ctrl && input === 'c')) {
       onQuit();
       exit();
@@ -97,13 +113,17 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     else if (input === 'x') void registry.stop(current.name);
     else if (input === 'r') void registry.restart(current.name);
     else if (input === 'L') setFullLog(true);
+    else if (input === 't') { setTagPicking(true); setTagInput(tagFilter.join(' ')); }
     else if (input === 'l') setLogFocus(f => !f);
     else if (input === 'o') { if (current.url) openUrl(current.url); }
     else if (key.pageUp) setLogScroll(s => s + 5);
     else if (key.pageDown) setLogScroll(s => Math.max(0, s - 5));
   });
 
-  const current = apps[selected];
+  const visibleApps = tagFilter.length === 0
+    ? apps
+    : apps.filter(a => tagFilter.every(t => a.tags.includes(t)));
+  const current = visibleApps[Math.min(selected, Math.max(0, visibleApps.length - 1))];
   const state = current ? registry.getState(current.name) : null;
   const recentLogs = state
     ? state.logBuffer
@@ -127,10 +147,10 @@ export default function App({ registry, apiPort, onQuit }: Props) {
 
       <Box flexDirection="row">
         <Box flexDirection="column" width={leftWidth} borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text bold>Apps</Text>
-          {apps.length === 0 ? (
-            <Text dimColor>(no apps discovered)</Text>
-          ) : apps.map((a, i) => {
+          <Text bold>Apps {tagFilter.length ? <Text dimColor>(tags: {tagFilter.join(', ')})</Text> : null}</Text>
+          {visibleApps.length === 0 ? (
+            <Text dimColor>{apps.length === 0 ? '(no apps discovered)' : '(no apps match tag filter)'}</Text>
+          ) : visibleApps.map((a, i) => {
             const sel = i === selected;
             return (
               <Box key={a.name}>
@@ -172,8 +192,11 @@ export default function App({ registry, apiPort, onQuit }: Props) {
         </Box>
       </Box>
 
-      <Box>
-        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [l] log focus  [Shift+L] full log  [PgUp/PgDn] scroll  [q] quit</Text>
+      <Box flexDirection="column">
+        {tagPicking ? (
+          <Text>tag filter (space-separated, Enter to apply, Esc to cancel): <Text color="cyan">{tagInput}</Text></Text>
+        ) : null}
+        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [t] tag filter  [l] log focus  [Shift+L] full log  [PgUp/PgDn] scroll  [q] quit</Text>
       </Box>
     </Box>
   );

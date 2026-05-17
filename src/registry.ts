@@ -201,6 +201,7 @@ export class Registry extends EventEmitter {
         this.recordEvent({ app: name, type: 'status', from, to, message }),
       onErrorRecorded: (entry, isNew) =>
         this.recordEvent({ app: name, type: isNew ? 'error-new' : 'error-recur', message: entry.message }),
+      onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),
     });
     e.proc = proc;
     this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'starting' });
@@ -211,6 +212,7 @@ export class Registry extends EventEmitter {
   async stop(name: string): Promise<{ ok: boolean; status: string; error?: string }> {
     const e = this.entries.get(name);
     if (!e) return { ok: false, status: 'unknown', error: 'unknown app' };
+    this.emit('userStop', { name });
     if (!e.proc || !e.proc.isRunning()) {
       if (e.state.status !== 'stopped') {
         this.recordEvent({ app: name, type: 'status', from: e.state.status, to: 'stopped' });

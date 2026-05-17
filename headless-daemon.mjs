@@ -5,6 +5,7 @@ import { PortAllocator } from './dist/ports.js';
 import { startServer } from './dist/server.js';
 import { HealthMonitor } from './dist/health.js';
 import { UsageMonitor } from './dist/usage.js';
+import { Restarter } from './dist/restarter.js';
 import { loadPersistedState, savePersistedState } from './dist/stateFile.js';
 
 const r = loadConfig();
@@ -17,6 +18,9 @@ const portAlloc = new PortAllocator(r.config.portRange, {
 const reg = new Registry(r.config, discoverApps(r.config), portAlloc);
 const health = new HealthMonitor(reg, r.config.healthProbe);
 const usage = new UsageMonitor(reg);
+const restarter = new Restarter(reg, r.config.autoRestart);
+reg.on('childExit', ({ name, code, signal, stopping }) => restarter.onExit(name, code, signal, stopping));
+reg.on('userStop', ({ name }) => restarter.onUserStop(name));
 const srv = startServer(reg, r.config.apiPort);
 for (const n of r.config.autoStart || []) void reg.start(n);
 console.error(`[headless] api on ${r.config.apiPort}`);
@@ -26,6 +30,7 @@ const stop = async () => {
   if (stopping) return; stopping = true;
   health.stop();
   usage.stop();
+  restarter.stop();
   await reg.stopAll(3000);
   srv.close();
   process.exit(0);
