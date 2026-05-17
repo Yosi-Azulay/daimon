@@ -2,6 +2,29 @@
   "name": "daimon",
   "version": "0.4.2",
   "description": "Local dev-server manager for Angular/Nx/Vite/Storybook — TUI, loopback HTTP API, JSON CLI, and MCP server for Claude Code",
+  "license": "MIT",
+  "author": "Yosi Azulay (https://flycotech.com)",
+  "homepage": "https://github.com/Yosi-Azulay/daimon#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yosi-Azulay/daimon.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Yosi-Azulay/daimon/issues"
+  },
+  "keywords": [
+    "dev-server",
+    "angular",
+    "nx",
+    "vite",
+    "storybook",
+    "process-manager",
+    "tui",
+    "mcp",
+    "claude-code",
+    "ai-tools",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "daimon": "./dist/cli.js"
@@ -18,7 +41,8 @@
     "start": "npm run build && node dist/main.js",
     "cli": "node dist/cli.js",
     "mcp": "node dist/mcp.js",
-    "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs"
+    "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs",
+    "prepublishOnly": "npm run build && npm test"
   },
   "engines": {
     "node": ">=20"
