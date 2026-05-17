@@ -96,6 +96,7 @@ export interface DiscoveredApp {
   pinnedPort?: number;
   env?: Record<string, string>;
   tags: string[];
+  tasks?: string[];
 }
 
 export interface ParsedError {

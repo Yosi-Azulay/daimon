@@ -233,6 +233,40 @@ export function startServer(registry: Registry, port: number): http.Server {
         sendJson(res, r.ok ? 200 : 400, r);
         return;
       }
+
+      if (sub === 'tasks' && method === 'GET' && !sub2) {
+        const tasks = registry.listTasks(name);
+        if (tasks == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        sendJson(res, 200, { tasks, watching: registry.listWatchTasks(name) });
+        return;
+      }
+
+      if (sub === 'run' && sub2 && method === 'POST') {
+        let body: any = {};
+        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+          await new Promise<void>(resolve => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(c));
+            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+          });
+        }
+        const args: string[] = Array.isArray(body.args) ? body.args.map(String) : [];
+        if (body.watch) {
+          const r = registry.startWatchTask(name, sub2, args);
+          sendJson(res, r.ok ? 200 : 400, r);
+          return;
+        }
+        const r = await registry.runTask(name, sub2, args);
+        if ('error' in r) { sendJson(res, 404, r); return; }
+        sendJson(res, 200, r);
+        return;
+      }
+
+      if (sub === 'run-stop' && sub2 && method === 'POST') {
+        const r = await registry.stopWatchTask(name, sub2);
+        sendJson(res, 200, r);
+        return;
+      }
       if (sub === 'stop' && method === 'POST') {
         const r = await registry.stop(name);
         sendJson(res, r.ok ? 200 : 400, r);

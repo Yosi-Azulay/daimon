@@ -18,6 +18,12 @@ function hasServeTarget(projectJson: any): boolean {
   return false;
 }
 
+function listTargetsExceptServe(projectJson: any): string[] {
+  if (!projectJson || typeof projectJson !== 'object') return [];
+  const targets = projectJson.targets ?? projectJson.architect ?? {};
+  return Object.keys(targets).filter(t => t !== 'serve').sort();
+}
+
 function toFgPath(p: string): string {
   return p.replace(/\\/g, '/');
 }
@@ -62,6 +68,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           command: `npx nx serve ${name}`,
           hidden: false,
           tags: [],
+          tasks: listTargetsExceptServe(pj),
         });
       }
       continue;
@@ -83,6 +90,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           command: `npx ng serve ${name}`,
           hidden: false,
           tags: [],
+          tasks: listTargetsExceptServe(p),
         });
       }
       continue;

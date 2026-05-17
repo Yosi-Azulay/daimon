@@ -41,6 +41,18 @@ async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{
   }
 }
 
+async function callJson(pathname: string, method: 'GET' | 'POST', payload: unknown): Promise<{ status: number; body: any }> {
+  try {
+    const res = await fetch(getBaseUrl() + pathname, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    const text = await res.text();
+    let body: any = text;
+    try { body = JSON.parse(text); } catch {}
+    return { status: res.status, body };
+  } catch {
+    fail('appman is not running — start it with: npm start');
+  }
+}
+
 interface Flags {
   tail?: number;
   since?: string;
@@ -154,6 +166,25 @@ async function main() {
       if (!name) fail(JSON.stringify({ error: 'usage: appman why <name>' }));
       const r = await call(`/api/history/why/${encodeURIComponent(name)}`);
       out(r.body);
+      return;
+    }
+    case 'tasks': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: appman tasks <name>' }));
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/tasks`);
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      return;
+    }
+    case 'run': {
+      const name = f.positional[0];
+      const task = f.positional[1];
+      if (!name || !task) fail(JSON.stringify({ error: 'usage: appman run <name> <task> [--watch] [-- args...]' }));
+      const body = { args: f.passthrough, watch: !!f.watch };
+      const r = await callJson(`/api/apps/${encodeURIComponent(name)}/run/${encodeURIComponent(task)}`, 'POST', body);
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      if (!f.watch && typeof r.body?.exitCode === 'number') process.exit(r.body.exitCode === 0 ? 0 : 1);
       return;
     }
     case 'errors': {

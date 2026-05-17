@@ -14,6 +14,7 @@ import { PortAllocator, isPortFree } from './ports.js';
 import { DiskLogger } from './diskLogger.js';
 import type { History } from './history.js';
 import { dependants, topoLevels, transitiveClosure } from './depends.js';
+import { runOneShot, startWatch, type OneShotResult, type WatchTask } from './taskRunner.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -33,6 +34,7 @@ export class Registry extends EventEmitter {
   private readonly config: AppmanConfig;
   private readonly eventBuffer: AppEvent[] = [];
   private history: History | null = null;
+  private readonly watchTasks = new Map<string, WatchTask>();
 
   constructor(config: AppmanConfig, apps: DiscoveredApp[], portAlloc?: PortAllocator) {
     super();
@@ -401,11 +403,64 @@ export class Registry extends EventEmitter {
     for (const e of this.entries.values()) {
       if (e.proc?.isRunning()) tasks.push(e.proc.stop());
     }
+    for (const wt of this.watchTasks.values()) tasks.push(wt.stop());
     await Promise.race([
       Promise.all(tasks),
       new Promise<void>(resolve => setTimeout(resolve, timeoutMs)),
     ]);
     for (const e of this.entries.values()) e.logger?.close();
+  }
+
+  listTasks(name: string): string[] | null {
+    const app = this.getApp(name);
+    if (!app) return null;
+    return [...(app.tasks ?? [])];
+  }
+
+  async runTask(name: string, task: string, args: string[] = []): Promise<OneShotResult | { error: string }> {
+    const app = this.getApp(name);
+    if (!app) return { error: 'unknown app' };
+    const result = await runOneShot(app, task, args);
+    this.history?.recordTaskRun(name, task, result.exitCode, result.durationMs, result.summary);
+    this.recordEvent({ app: name, type: 'task-run', message: `${task} exit=${result.exitCode} duration=${result.durationMs}ms` });
+    this.emit('taskRun', { name, task, result });
+    return result;
+  }
+
+  startWatchTask(name: string, task: string, args: string[] = []): { ok: boolean; pid?: number | null; error?: string } {
+    const app = this.getApp(name);
+    if (!app) return { ok: false, error: 'unknown app' };
+    const key = `${name}::${task}`;
+    if (this.watchTasks.has(key)) return { ok: true, pid: this.watchTasks.get(key)!.pid };
+    const wt = startWatch(app, task, args);
+    this.watchTasks.set(key, wt);
+    wt.child.on('exit', () => this.watchTasks.delete(key));
+    return { ok: true, pid: wt.pid };
+  }
+
+  async stopWatchTask(name: string, task: string): Promise<{ ok: boolean }> {
+    const key = `${name}::${task}`;
+    const wt = this.watchTasks.get(key);
+    if (!wt) return { ok: true };
+    await wt.stop();
+    this.watchTasks.delete(key);
+    return { ok: true };
+  }
+
+  listWatchTasks(name?: string): { app: string; task: string; pid: number | null; startedAt: number }[] {
+    const out: { app: string; task: string; pid: number | null; startedAt: number }[] = [];
+    for (const wt of this.watchTasks.values()) {
+      if (name && wt.app !== name) continue;
+      out.push({ app: wt.app, task: wt.task, pid: wt.pid, startedAt: wt.startedAt });
+    }
+    return out;
+  }
+
+  watchTaskLogs(name: string, task: string, tail?: number): string[] | null {
+    const wt = this.watchTasks.get(`${name}::${task}`);
+    if (!wt) return null;
+    const lines = wt.logs;
+    return tail ? lines.slice(-tail) : [...lines];
   }
 
   waitFor(
