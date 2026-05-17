@@ -329,8 +329,14 @@ async function handleDaemon(rest: string[]): Promise<void> {
       await attachToDaemon(lock!.apiPort);
       return;
     }
+    case 'install-service': {
+      const { installServiceArtifact } = await import('./serviceInstaller.js');
+      const r = installServiceArtifact();
+      out({ platform: r.platform, artifact: r.path, installCmd: r.installCmd });
+      return;
+    }
     default:
-      fail(JSON.stringify({ error: `usage: appman daemon <start|stop|status|restart|attach> [--detach] [--headless]` }));
+      fail(JSON.stringify({ error: `usage: appman daemon <start|stop|status|restart|attach|install-service> [--detach] [--headless]` }));
   }
 }
 
@@ -349,6 +355,22 @@ async function main() {
 
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
   if (cmd === 'claude') { await handleClaude(rest); return; }
+  if (cmd === 'init') {
+    const { runInit } = await import('./init.js');
+    const fParsed = parseFlags(rest);
+    try {
+      const r = await runInit({ force: !!fParsed.force });
+      out({ path: r.path, installClaude: r.installClaude });
+      if (r.installClaude) {
+        const apiPort = readApiPort();
+        const inst = claudeInstall({ skill: true, commands: true, agent: true, dir: defaultClaudeDir(), apiPort });
+        out({ claudeInstalled: inst.installed });
+      }
+    } catch (err: any) {
+      fail(JSON.stringify({ error: err?.message || String(err) }));
+    }
+    return;
+  }
 
   const f = parseFlags(rest);
   const surface = findSubcommand(cmd);

@@ -17,6 +17,7 @@ import { StaleDetector } from './staleDetector.js';
 import { RequestLog } from './requestLog.js';
 import { buildLockInfo, removeLock, writeLock } from './daemon.js';
 import { patchConfigOnDisk, softReloadFromDisk } from './configManager.js';
+import { installCrashHandlers } from './crashDump.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -24,6 +25,9 @@ export interface StartOpts {
 }
 
 export async function startInProcess(opts: StartOpts = {}): Promise<void> {
+  let crashRegistry: any = null;
+  let crashConfig: any = null;
+  installCrashHandlers({ getRegistry: () => crashRegistry, getConfig: () => crashConfig });
   let cfgResult;
   try {
     cfgResult = loadConfig();
@@ -62,6 +66,8 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     onChange: snap => savePersistedState({ ports: snap }),
   });
   const registry = new Registry(config, apps, portAlloc);
+  crashRegistry = registry;
+  crashConfig = config;
   const history = new History(config.history);
   registry.setHistory(history);
   const health = new HealthMonitor(registry, config.healthProbe, config);

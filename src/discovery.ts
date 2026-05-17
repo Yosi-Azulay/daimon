@@ -28,13 +28,19 @@ function toFgPath(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
-export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
+export interface DiscoverOptions {
+  warnings?: string[];
+}
+
+export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): DiscoveredApp[] {
   const found = new Map<string, DiscoveredApp>();
-  const warnings: string[] = [];
+  const warnings: string[] = opts.warnings ?? [];
+  const ownsWarnings = opts.warnings === undefined;
 
   for (const rootEntry of config.searchRoots) {
     const rootRaw = typeof rootEntry === 'string' ? rootEntry : rootEntry.path;
     const viteSubfolders = typeof rootEntry === 'string' ? false : !!rootEntry.viteSubfolders;
+    const workspaceLabel = typeof rootEntry === 'string' ? undefined : rootEntry.label;
     const root = path.resolve(rootRaw);
     if (!fs.existsSync(root)) {
       warnings.push(`searchRoot does not exist: ${root}`);
@@ -69,6 +75,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           hidden: false,
           tags: [],
           tasks: listTargetsExceptServe(pj),
+          workspaceLabel,
         });
       }
       continue;
@@ -91,6 +98,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           hidden: false,
           tags: [],
           tasks: listTargetsExceptServe(p),
+          workspaceLabel,
         });
       }
       continue;
@@ -110,6 +118,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           command: `npx vite`,
           hidden: false,
           tags: [],
+          workspaceLabel,
         });
       }
       matched = true;
@@ -126,6 +135,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
             command: `npx vite`,
             hidden: false,
             tags: [],
+            workspaceLabel,
           });
         }
       }
@@ -141,6 +151,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
           command: `npx storybook dev --no-open`,
           hidden: false,
           tags: [],
+          workspaceLabel,
         });
       }
       matched = true;
@@ -174,7 +185,7 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
     a.tags = config.tags?.[a.name] ?? [];
   }
 
-  if (warnings.length) {
+  if (ownsWarnings && warnings.length) {
     for (const w of warnings) {
       process.stderr.write(`[appman] warning: ${w}\n`);
     }

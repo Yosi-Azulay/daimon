@@ -83,6 +83,7 @@ export interface AppmanConfig {
 export interface SearchRoot {
   path: string;
   viteSubfolders?: boolean;
+  label?: string;
 }
 
 export interface AppOverride {
@@ -103,6 +104,7 @@ export interface DiscoveredApp {
   env?: Record<string, string>;
   tags: string[];
   tasks?: string[];
+  workspaceLabel?: string;
 }
 
 export interface ParsedError {
@@ -184,6 +186,7 @@ export interface AppState {
   sessionOverrides: { command?: string; port?: number; env?: Record<string, string> } | null;
   dependsOn: string[];
   recoveringFromError?: boolean;
+  workspaceLabel: string | null;
 }
 
 export interface AppSummary {
@@ -209,4 +212,5 @@ export interface AppSummary {
   bundleRegressionPct: number | null;
   dependsOn: string[];
   activeEnvFile: string | null;
+  workspaceLabel: string | null;
 }

@@ -48,7 +48,7 @@ export class Registry extends EventEmitter {
     for (const app of apps) {
       this.entries.set(app.name, {
         app,
-        state: this.freshState(app.name, app.tags),
+        state: this.freshState(app.name, app.tags, app.workspaceLabel ?? null),
         proc: null,
       });
     }
@@ -60,7 +60,7 @@ export class Registry extends EventEmitter {
 
   addDiscoveredApp(app: DiscoveredApp): void {
     if (this.entries.has(app.name)) return;
-    this.entries.set(app.name, { app, state: this.freshState(app.name, app.tags), proc: null });
+    this.entries.set(app.name, { app, state: this.freshState(app.name, app.tags, app.workspaceLabel ?? null), proc: null });
     this.emit('change');
   }
 
@@ -69,6 +69,7 @@ export class Registry extends EventEmitter {
     if (!e) return;
     e.app = app;
     e.state.tags = app.tags;
+    e.state.workspaceLabel = app.workspaceLabel ?? null;
     e.state.dependsOn = this.config.depends?.[app.name] ?? [];
     this.emit('change');
   }
@@ -85,7 +86,7 @@ export class Registry extends EventEmitter {
     return this.history;
   }
 
-  private freshState(name: string, tags: string[]): AppState {
+  private freshState(name: string, tags: string[], workspaceLabel: string | null = null): AppState {
     return {
       name,
       status: 'stopped',
@@ -116,6 +117,7 @@ export class Registry extends EventEmitter {
       activeEnvFile: null,
       sessionOverrides: null,
       dependsOn: this.config.depends?.[name] ?? [],
+      workspaceLabel,
     };
   }
 
@@ -163,6 +165,7 @@ export class Registry extends EventEmitter {
       bundleRegressionPct: s.bundleRegressionPct,
       dependsOn: [...s.dependsOn],
       activeEnvFile: s.activeEnvFile,
+      workspaceLabel: s.workspaceLabel,
     };
   }
 

@@ -29,7 +29,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   { name: 'replay', args: '<session.jsonl> [--speed N]', summary: 'Replay a recorded session.', example: 'appman replay session.jsonl', needsDaemon: true },
   { name: 'doctor', args: '', summary: 'Sanity-check the current config and environment.', example: 'appman doctor', needsDaemon: false },
   { name: 'free-port', args: '<port> [--force]', summary: 'Diagnose / free a port.', example: 'appman free-port 4200 --force', needsDaemon: false },
-  { name: 'daemon', args: 'start|stop|status|restart|attach [--detach] [--headless]', summary: 'Manage the appman daemon.', example: 'appman daemon status', needsDaemon: false },
+  { name: 'daemon', args: 'start|stop|status|restart|attach|install-service [--detach] [--headless]', summary: 'Manage the appman daemon.', example: 'appman daemon status', needsDaemon: false },
   { name: 'claude', args: 'install|update|uninstall|status [--skill] [--commands] [--agent] [--all] [--dir <path>] [--yes]', summary: 'Install/update Claude Code integration artifacts.', example: 'appman claude install --all', needsDaemon: false },
   { name: 'init', args: '[--force]', summary: 'Interactively create an appman config in cwd.', example: 'appman init', needsDaemon: false },
 ];
