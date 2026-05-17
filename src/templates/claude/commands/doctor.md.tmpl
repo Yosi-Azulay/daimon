@@ -1,10 +1,10 @@
 ---
-name: bosun-doctor
-description: Sanity-check the bosun config and environment. Exits 1 if anything is wrong.
-bosun-version: {{bosun_version}}
+name: daimon-doctor
+description: Sanity-check the daimon config and environment. Exits 1 if anything is wrong.
+daimon-version: {{daimon_version}}
 generated-at: {{generated_at}}
 ---
 
-Run: `bosun doctor`
+Run: `daimon doctor`
 
 Does not require the daemon. Returns `{ checks: [{name, ok, detail?}], ok: bool }`. On `ok: false`, report each failed check.

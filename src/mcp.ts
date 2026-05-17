@@ -3,11 +3,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { loadConfig } from './config.js';
 import { readLock, spawnDetached } from './daemon.js';
-import { BOSUN_VERSION } from './version.js';
+import { DAIMON_VERSION } from './version.js';
 
 function apiPort(): number {
-  if (process.env.BOSUN_PORT) {
-    const p = Number(process.env.BOSUN_PORT);
+  if (process.env.DAIMON_PORT) {
+    const p = Number(process.env.DAIMON_PORT);
     if (Number.isFinite(p) && p > 0) return p;
   }
   const lock = readLock();
@@ -25,10 +25,10 @@ let ensured = false;
 async function ensureDaemon(): Promise<void> {
   if (ensured) return;
   ensured = true;
-  if (process.env.BOSUN_NO_SPAWN === '1') return;
+  if (process.env.DAIMON_NO_SPAWN === '1') return;
   if (readLock()) return;
   try {
-    const port = process.env.BOSUN_PORT ? Number(process.env.BOSUN_PORT) : undefined;
+    const port = process.env.DAIMON_PORT ? Number(process.env.DAIMON_PORT) : undefined;
     await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
   } catch {}
 }
@@ -40,7 +40,7 @@ async function callJson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promi
     const text = await res.text();
     try { return { status: res.status, body: JSON.parse(text) }; } catch { return { status: res.status, body: text }; }
   } catch (err: any) {
-    return { status: 0, body: { error: 'bosun is not running — start it with: bosun daemon start --detach' } };
+    return { status: 0, body: { error: 'daimon is not running — start it with: daimon daemon start --detach' } };
   }
 }
 
@@ -52,7 +52,7 @@ function err(message: string): { content: { type: 'text'; text: string }[]; isEr
 }
 
 async function main() {
-  const server = new McpServer({ name: 'bosun', version: BOSUN_VERSION });
+  const server = new McpServer({ name: 'daimon', version: DAIMON_VERSION });
 
   server.registerTool('list_apps', { description: 'List all known apps with current status, port, health, etc.', inputSchema: {} }, async () => {
     const r = await callJson('/api/apps');
@@ -133,6 +133,6 @@ async function main() {
 }
 
 main().catch(err => {
-  process.stderr.write(`[bosun-mcp] fatal: ${err?.stack || err}\n`);
+  process.stderr.write(`[daimon-mcp] fatal: ${err?.stack || err}\n`);
   process.exit(1);
 });

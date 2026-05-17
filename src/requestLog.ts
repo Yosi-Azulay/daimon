@@ -78,7 +78,7 @@ export class RequestLog {
     });
     server.on('error', (err: any) => {
       if (err?.code === 'EADDRINUSE') {
-        process.stderr.write(`[bosun] requestLog: port ${proxyPort} in use for ${name}; disabling proxy\n`);
+        process.stderr.write(`[daimon] requestLog: port ${proxyPort} in use for ${name}; disabling proxy\n`);
       }
       this.proxies.delete(name);
     });

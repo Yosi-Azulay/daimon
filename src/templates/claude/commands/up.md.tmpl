@@ -1,10 +1,10 @@
 ---
-name: bosun-up
+name: daimon-up
 description: Bring up a profile or autoStart set. Cascades dependencies and blocks until each app is healthy (120s budget).
-bosun-version: {{bosun_version}}
+daimon-version: {{daimon_version}}
 generated-at: {{generated_at}}
 ---
 
-Run: `bosun up $1` (or just `bosun up` to use autoStart).
+Run: `daimon up $1` (or just `daimon up` to use autoStart).
 
-Returns an array of `{ name, status, health }`. Any entry with `status != "serving"` or `health != "healthy"` indicates a failure — follow up with `bosun errors <name>` and `bosun why <name>`.
+Returns an array of `{ name, status, health }`. Any entry with `status != "serving"` or `health != "healthy"` indicates a failure — follow up with `daimon errors <name>` and `daimon why <name>`.

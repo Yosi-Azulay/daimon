@@ -6,7 +6,7 @@ export interface CursorsFile {
   errors: Record<string, number>;
 }
 
-const CURSORS_PATH = path.join(os.homedir(), '.bosun', 'cursors.json');
+const CURSORS_PATH = path.join(os.homedir(), '.daimon', 'cursors.json');
 
 function load(): CursorsFile {
   try {
@@ -33,7 +33,7 @@ function scheduleSave(data: CursorsFile): void {
       fs.mkdirSync(path.dirname(CURSORS_PATH), { recursive: true });
       fs.writeFileSync(CURSORS_PATH, JSON.stringify(toWrite), 'utf8');
     } catch (err: any) {
-      process.stderr.write(`[bosun] warning: cursor write failed: ${err.message}\n`);
+      process.stderr.write(`[daimon] warning: cursor write failed: ${err.message}\n`);
     }
   }, 500);
 }

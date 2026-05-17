@@ -69,6 +69,6 @@ export class DiskLogger {
   private warn(msg: string): void {
     if (this.warned) return;
     this.warned = true;
-    process.stderr.write(`[bosun] warning: diskLogger(${this.appName}) ${msg}\n`);
+    process.stderr.write(`[daimon] warning: diskLogger(${this.appName}) ${msg}\n`);
   }
 }

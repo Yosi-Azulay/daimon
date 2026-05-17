@@ -17,7 +17,7 @@ export class Notifier {
   private logFile: string;
 
   constructor(private readonly registry: Registry, private readonly cfg: NotificationsConfig) {
-    this.logFile = path.join(os.homedir(), '.bosun', 'notifications.log');
+    this.logFile = path.join(os.homedir(), '.daimon', 'notifications.log');
     try { fs.mkdirSync(path.dirname(this.logFile), { recursive: true }); } catch {}
     if (!cfg.enabled) {
       this.audit('init', 'disabled by config');
@@ -51,7 +51,7 @@ export class Notifier {
   private warnOnce(msg: string): void {
     if (this.warned) return;
     this.warned = true;
-    process.stderr.write(`[bosun] notifier: ${msg}\n`);
+    process.stderr.write(`[daimon] notifier: ${msg}\n`);
   }
 
   stop(): void {
@@ -85,7 +85,7 @@ export class Notifier {
       return;
     }
     this.lastSent.set(key, now);
-    const payload = { title: `bosun: ${title}`, message, wait: false, appID: 'bosun' };
+    const payload = { title: `daimon: ${title}`, message, wait: false, appID: 'daimon' };
     const cb = (err: any, response: any) => {
       if (err) {
         this.audit('fail', `${key} :: ${err?.message || err}`);

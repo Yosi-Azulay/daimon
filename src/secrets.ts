@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { bosunDir } from './daemon.js';
+import { daimonDir } from './daemon.js';
 
 export function secretsPath(): string {
-  return path.join(bosunDir(), 'secrets.json');
+  return path.join(daimonDir(), 'secrets.json');
 }
 
 export function readSecrets(): Record<string, string> {

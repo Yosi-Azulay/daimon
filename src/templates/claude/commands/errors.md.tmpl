@@ -1,10 +1,10 @@
 ---
-name: bosun-errors
+name: daimon-errors
 description: Get deduplicated errors for an app. Prefer --structured for parsed TS errors (file:line:col, code).
-bosun-version: {{bosun_version}}
+daimon-version: {{daimon_version}}
 generated-at: {{generated_at}}
 ---
 
-Run: `bosun errors $1 --structured`
+Run: `daimon errors $1 --structured`
 
 Add `--since 5m` to scope to a recent window. For diff-mode (only errors newer than your last query), use `--since-last --client <your-id>`.

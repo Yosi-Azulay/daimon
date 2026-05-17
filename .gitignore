@@ -1,7 +1,7 @@
 node_modules
 dist
 appman.config.json
-bosun.config.json
+daimon.config.json
 *.stackdump
 *.tsbuildinfo
 Microsoft/

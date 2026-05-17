@@ -40,10 +40,10 @@ function defaultConfig(): AppmanConfig {
       rejectUnauthorized: false,
       fallbackHosts: ['127.0.0.1', '::1'],
     },
-    logs: { enabled: false, dir: path.join(os.homedir(), '.bosun', 'logs'), maxFiles: 5, maxBytesPerFile: 10000000 },
+    logs: { enabled: false, dir: path.join(os.homedir(), '.daimon', 'logs'), maxFiles: 5, maxBytesPerFile: 10000000 },
     depends: {},
     cascadeRestart: false,
-    history: { enabled: true, path: path.join(os.homedir(), '.bosun', 'history.db'), retentionDays: 30 },
+    history: { enabled: true, path: path.join(os.homedir(), '.daimon', 'history.db'), retentionDays: 30 },
     notifications: { enabled: true, onError: true, onUnhealthy: true, tray: false },
     staleDetect: { enabled: true, silentMs: 30000 },
     headless: false,
@@ -186,8 +186,8 @@ function validate(raw: unknown, source: string): AppmanConfig {
 
 export function configLookupPaths(): { local: string; user: string } {
   return {
-    local: path.join(process.cwd(), 'bosun.config.json'),
-    user: path.join(os.homedir(), '.bosun', 'config.json'),
+    local: path.join(process.cwd(), 'daimon.config.json'),
+    user: path.join(os.homedir(), '.daimon', 'config.json'),
   };
 }
 
@@ -204,8 +204,8 @@ export function loadConfig(): ConfigResult {
   }
 
   const exampleCandidates = [
-    path.resolve(__dirname, '..', 'bosun.config.example.json'),
-    path.resolve(__dirname, '..', '..', 'bosun.config.example.json'),
+    path.resolve(__dirname, '..', 'daimon.config.example.json'),
+    path.resolve(__dirname, '..', '..', 'daimon.config.example.json'),
   ];
   const example = exampleCandidates.find(p => fs.existsSync(p));
   fs.mkdirSync(path.dirname(user), { recursive: true });

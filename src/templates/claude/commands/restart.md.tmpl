@@ -1,10 +1,10 @@
 ---
-name: bosun-restart
-description: Restart an bosun-managed dev server. Then block until healthy.
-bosun-version: {{bosun_version}}
+name: daimon-restart
+description: Restart an daimon-managed dev server. Then block until healthy.
+daimon-version: {{daimon_version}}
 generated-at: {{generated_at}}
 ---
 
-Run: `bosun restart $1`
+Run: `daimon restart $1`
 
-Then: `bosun wait $1 --until healthy --timeout 60s`. On timeout, call `bosun errors $1 --structured` and `bosun why $1`.
+Then: `daimon wait $1 --until healthy --timeout 60s`. On timeout, call `daimon errors $1 --structured` and `daimon why $1`.

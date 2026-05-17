@@ -94,7 +94,7 @@ export function runOneShot(app: DiscoveredApp, task: string, args: string[] = []
       });
     });
     child.on('error', () => {
-      resolve({ app: app.name, task, exitCode: -1, durationMs: Date.now() - start, summary: null, outputTail: [...lines, `[bosun] task spawn error`] });
+      resolve({ app: app.name, task, exitCode: -1, durationMs: Date.now() - start, summary: null, outputTail: [...lines, `[daimon] task spawn error`] });
     });
   });
 }

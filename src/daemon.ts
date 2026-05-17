@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { BOSUN_VERSION } from './version.js';
+import { DAIMON_VERSION } from './version.js';
 
 export interface LockInfo {
   pid: number;
@@ -13,11 +13,11 @@ export interface LockInfo {
   headless: boolean;
 }
 
-const BOSUN_DIR = path.join(os.homedir(), '.bosun');
-const LOCK_PATH = path.join(BOSUN_DIR, 'daemon.lock');
+const DAIMON_DIR = path.join(os.homedir(), '.daimon');
+const LOCK_PATH = path.join(DAIMON_DIR, 'daemon.lock');
 
-export function bosunDir(): string {
-  return BOSUN_DIR;
+export function daimonDir(): string {
+  return DAIMON_DIR;
 }
 
 export function lockPath(): string {
@@ -49,7 +49,7 @@ export function readLock(): LockInfo | null {
 }
 
 export function writeLock(info: LockInfo): void {
-  fs.mkdirSync(BOSUN_DIR, { recursive: true });
+  fs.mkdirSync(DAIMON_DIR, { recursive: true });
   const tmp = LOCK_PATH + '.' + process.pid + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(info));
   fs.renameSync(tmp, LOCK_PATH);
@@ -66,7 +66,7 @@ function resolveMainJs(): string {
 
 export async function spawnDetached(opts: { port?: number } = {}): Promise<LockInfo> {
   const env = { ...process.env };
-  if (opts.port) env.BOSUN_PORT = String(opts.port);
+  if (opts.port) env.DAIMON_PORT = String(opts.port);
   const child = spawn(process.execPath, [resolveMainJs(), '--headless'], {
     detached: true,
     stdio: 'ignore',
@@ -96,7 +96,7 @@ export function buildLockInfo(apiPort: number, headless: boolean): LockInfo {
   return {
     pid: process.pid,
     apiPort,
-    version: BOSUN_VERSION,
+    version: DAIMON_VERSION,
     startedAt: Date.now(),
     headless,
   };

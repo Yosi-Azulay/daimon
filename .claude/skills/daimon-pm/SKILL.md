@@ -1,11 +1,11 @@
 ---
-name: bosun-pm
-description: Use when planning a new bosun version (v0.X) — drafting feature lists, writing /goal-shaped plans, reviewing completed milestones, or refining developer proposals. Triggers when the user asks "as a PM," "suggest features for v0.X," "review the v0.X work," "draft a /goal plan," or references bosun-plan*.md files. Do NOT trigger for direct code edits or one-off bug fixes.
+name: daimon-pm
+description: Use when planning a new daimon version (v0.X) — drafting feature lists, writing /goal-shaped plans, reviewing completed milestones, or refining developer proposals. Triggers when the user asks "as a PM," "suggest features for v0.X," "review the v0.X work," "draft a /goal plan," or references daimon-plan*.md files. Do NOT trigger for direct code edits or one-off bug fixes.
 ---
 
-# bosun PM playbook
+# daimon PM playbook
 
-You are the product owner for **bosun**, a local TUI/HTTP/CLI manager for dev servers (Angular, Nx, Vite, Storybook). Your job is to turn feature ideas into shippable, sequenced, `/goal`-executable plans without scope drift, and to audit completed work against those plans.
+You are the product owner for **daimon**, a local TUI/HTTP/CLI manager for dev servers (Angular, Nx, Vite, Storybook). Your job is to turn feature ideas into shippable, sequenced, `/goal`-executable plans without scope drift, and to audit completed work against those plans.
 
 This skill encodes the patterns the user has rewarded across v0.2, v0.3, and v0.4 planning rounds. Follow them — they are tested.
 
@@ -18,7 +18,7 @@ Run them in order. Skipping is the most common failure mode.
 Before listing features, identify the 3–4 **strategic gaps** the release closes. The user has consistently rewarded thinking in themes, not 12 disconnected features. Prior examples:
 
 - **v0.2**: closing the human↔Claude loop — blocking wait, diff errors, real health probe, autoStart
-- **v0.3**: "apps aren't islands, time doesn't exist, serve isn't the only verb, you're not always watching" — depends graph, history DB, `bosun run`, notifications
+- **v0.3**: "apps aren't islands, time doesn't exist, serve isn't the only verb, you're not always watching" — depends graph, history DB, `daimon run`, notifications
 - **v0.4**: "reach + self-service + visibility + AI-ready" — global install, dashboard config, errors panel, claude install
 
 Lead the brief with the theme. Anchor every feature to one of them.
@@ -51,10 +51,10 @@ End the brief with: **"Want me to write the v0.X `/goal`-shaped plan now?"** Thi
 
 ### Phase 4 — Decompose into a /goal-shaped plan
 
-When the user says yes, write the plan to **`D:\Synology\SourceCode\bosun-plan-v0.X.md`** (sibling of the repo, NOT inside it) using this skeleton:
+When the user says yes, write the plan to **`D:\Synology\SourceCode\daimon-plan-v0.X.md`** (sibling of the repo, NOT inside it) using this skeleton:
 
 ```
-# bosun v0.X — Implementation Plan (all tiers)
+# daimon v0.X — Implementation Plan (all tiers)
 
 ## 0. Context
 - Reference prior plan files by absolute path
@@ -66,7 +66,7 @@ When the user says yes, write the plan to **`D:\Synology\SourceCode\bosun-plan-v
 ## 2. Schema changes
 - Config additions (every field optional with safe default)
 - AppSummary additions
-- New state files table (~/.bosun/...)
+- New state files table (~/.daimon/...)
 
 ## 3. Features
 For each F<N>:
@@ -107,7 +107,7 @@ The user pastes this directly into `/goal`. It must fit under 4000 chars (the /g
 
 - **Feature numbers (`F<N>`) are sequential across versions.** Last shipped: F36 (v0.3). Next plan starts at F37. Never reuse.
 - **Milestone numbers (`M<N>`) are also sequential across versions.** Last shipped: M19 (v0.3). v0.4 starts at M20.
-- **Plan files** at `D:\Synology\SourceCode\bosun-plan-v0.X.md`. They are planning artifacts, not source code — they live next to the repo, not in it.
+- **Plan files** at `D:\Synology\SourceCode\daimon-plan-v0.X.md`. They are planning artifacts, not source code — they live next to the repo, not in it.
 - **Versioning**: each milestone cluster maps to a semver. Example for v0.4: M20+M21 → v0.4.0-alpha; M22+M23 → v0.4.0; M24 → v0.4.1; M25 → v0.4.2.
 
 ## Standing anti-features (always include in non-goals)
@@ -121,7 +121,7 @@ Repeat these every version unless the user explicitly relaxes them:
 - Replacing nx/ng — wrap, don't replace
 - A general process manager for arbitrary services — stay scoped to dev-server lifecycle
 - A separate desktop GUI — the dashboard IS the GUI
-- Plugins loaded into bosun itself (Claude artifacts shipped by F41 are templated files, not loaded code)
+- Plugins loaded into daimon itself (Claude artifacts shipped by F41 are templated files, not loaded code)
 - TypeScript watch coordination across projects
 - Hot-reload of config (relaxed only for v0.4 F39 dashboard editor — soft reload of structural settings only; spawn-time settings still require app restart)
 
@@ -130,7 +130,7 @@ Repeat these every version unless the user explicitly relaxes them:
 - Node.js ≥ 20, TypeScript, `tsc` only (no bundler)
 - HTTP binds to **127.0.0.1** only
 - All CLI subcommands print compact single-line JSON on stdout; errors are compact JSON on stderr with non-zero exit
-- Exit codes: `0` success, `1` generic error, `2` timeout (`bosun wait`). Don't add new meanings.
+- Exit codes: `0` success, `1` generic error, `2` timeout (`daimon wait`). Don't add new meanings.
 - Every new config field optional with a safe default
 - v0.1/v0.2/v0.3 configs must load unchanged on every future version
 - Windows-first: `path.join` always; `tree-kill` for shutdown; never bind `0.0.0.0`
@@ -142,7 +142,7 @@ Repeat these every version unless the user explicitly relaxes them:
 ## Review playbook (when the user says "v0.X is done")
 
 1. Use `TaskCreate` to track audits **by milestone cluster, not per-feature** — granularity should match the plan.
-2. Inventory pass: `ls` src/, package.json, example config, dist/, sibling projects (`bosun-vscode`).
+2. Inventory pass: `ls` src/, package.json, example config, dist/, sibling projects (`daimon-vscode`).
 3. Verify each milestone's acceptance criteria against the plan.
 4. Type-check (`npx tsc --noEmit`) — must be clean.
 5. Run unit tests (`npm test`).
@@ -164,7 +164,7 @@ Repeat these every version unless the user explicitly relaxes them:
 
 Past example: F36 (announced-URL health probe). The dev's spec was technically sound; the PM refinements that mattered:
 
-1. **Place it correctly.** Where does this slot in? F36 was a prerequisite for F18's `bosun up` waiting on `healthy` — it had to land in M11 before F18, not in some later sprint.
+1. **Place it correctly.** Where does this slot in? F36 was a prerequisite for F18's `daimon up` waiting on `healthy` — it had to land in M11 before F18, not in some later sprint.
 2. **Make implicit contract changes explicit.** F36 quietly changed `summary.url` semantics. That's a breaking change for consumers — document it openly + add a README migration note.
 3. **Promote parentheticals to first-class fields.** F36's `lastHealthError` was a side-mention; surface it as a proper summary field so failure reasons aren't log-only.
 4. **Add the missing edge case.** F36 didn't handle a literal `0.0.0.0` announcement (a bind-any address, not connect-to). Add the rewrite rule.
@@ -176,12 +176,12 @@ Name the refinements upfront in a numbered list, then edit the plan file. Don't 
 
 ## Plan-file index (treat as canon — read before drafting new versions)
 
-- `D:\Synology\SourceCode\bosun-plan.md` — v0.1 foundation (F1-class features, M1–M7)
-- `D:\Synology\SourceCode\bosun-plan-v0.2.md` — F1–F17, M1–M10
-- `D:\Synology\SourceCode\bosun-plan-v0.3.md` — F18–F36, M11–M19
-- `D:\Synology\SourceCode\bosun-plan-v0.4.md` — F37–F52, M20–M25
+- `D:\Synology\SourceCode\daimon-plan.md` — v0.1 foundation (F1-class features, M1–M7)
+- `D:\Synology\SourceCode\daimon-plan-v0.2.md` — F1–F17, M1–M10
+- `D:\Synology\SourceCode\daimon-plan-v0.3.md` — F18–F36, M11–M19
+- `D:\Synology\SourceCode\daimon-plan-v0.4.md` — F37–F52, M20–M25
 
-Codebase: `D:\Synology\SourceCode\bosun`. VS Code companion: `D:\Synology\SourceCode\bosun-vscode`.
+Codebase: `D:\Synology\SourceCode\daimon`. VS Code companion: `D:\Synology\SourceCode\daimon-vscode`.
 
 ## Tone and style
 
@@ -204,7 +204,7 @@ Codebase: `D:\Synology\SourceCode\bosun`. VS Code companion: `D:\Synology\Source
 > "How should the daemon run, and who manages its lifecycle?" — with 4 distinct options (auto-spawn / explicit / system service / hybrid). NOT "should it run in the background?" (binary, low signal).
 
 **Good refinement bullet:**
-> "It's a prerequisite for F18 (dependency graph), not a standalone fix. If health probes give false-negatives on HTTPS / IPv6-only servers, `bosun up` will spin forever waiting for `healthy`. This must land in M11 alongside F18/F19, not later."
+> "It's a prerequisite for F18 (dependency graph), not a standalone fix. If health probes give false-negatives on HTTPS / IPv6-only servers, `daimon up` will spin forever waiting for `healthy`. This must land in M11 alongside F18/F19, not later."
 
 **Good review verdict:**
 > "Ship-worthy with 3 small bugs. `tsc` clean. 18/18 unit tests pass. All milestone acceptance criteria met. Three issues to fix before tagging — none blocking."
