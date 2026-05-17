@@ -105,6 +105,23 @@ async function main() {
   process.on('SIGTERM', () => { void shutdown(); });
   process.on('beforeExit', () => { void shutdown(); });
 
+  const headless = !!config.headless || process.argv.includes('--headless');
+  if (headless) {
+    process.stdout.write(`[appman] headless mode — TUI suppressed. Dashboard: http://127.0.0.1:${config.apiPort}\n`);
+    let lastSnapshot = '';
+    const heartbeat = setInterval(() => {
+      const summary = registry.list().map(s => ({ name: s.name, status: s.status, health: s.health, port: s.port }));
+      const json = JSON.stringify(summary);
+      if (json !== lastSnapshot) {
+        process.stderr.write(json + '\n');
+        lastSnapshot = json;
+      }
+    }, 60_000);
+    await new Promise<void>(() => {});
+    clearInterval(heartbeat);
+    return;
+  }
+
   const inst = render(React.createElement(App, { registry, apiPort: config.apiPort, onQuit: () => void shutdown() }));
   await inst.waitUntilExit();
   await shutdown();

@@ -168,6 +168,14 @@ async function main() {
       out(r.body);
       return;
     }
+    case 'snapshot': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: appman snapshot <name>' }));
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/snapshot?write=1`, 'POST');
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      return;
+    }
     case 'tasks': {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: appman tasks <name>' }));

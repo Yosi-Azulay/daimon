@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Registry } from './registry.js';
 import { Cursors } from './cursors.js';
+import { buildSnapshot, writeSnapshot } from './snapshot.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -265,6 +266,20 @@ export function startServer(registry: Registry, port: number): http.Server {
       if (sub === 'run-stop' && sub2 && method === 'POST') {
         const r = await registry.stopWatchTask(name, sub2);
         sendJson(res, 200, r);
+        return;
+      }
+
+      if (sub === 'snapshot' && method === 'POST') {
+        const persist = url.searchParams.get('write') === '1';
+        if (persist) {
+          const wr = writeSnapshot(registry, name);
+          if (!wr) { sendJson(res, 404, { error: 'unknown app' }); return; }
+          sendJson(res, 200, { snapshot: wr.path });
+          return;
+        }
+        const p = buildSnapshot(registry, name);
+        if (!p) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        sendJson(res, 200, p);
         return;
       }
       if (sub === 'stop' && method === 'POST') {

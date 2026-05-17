@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
-import { spawn } from 'node:child_process';
+import TextInput from 'ink-text-input';
+import { spawn, spawnSync } from 'node:child_process';
 import type { Registry } from '../registry.js';
 import type { AppHealth, AppSummary, AppStatus } from '../types.js';
 import LogPane from './LogPane.js';
@@ -58,6 +62,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [tagPicking, setTagPicking] = useState(false);
   const [tagInput, setTagInput] = useState('');
+  const [editing, setEditing] = useState<{ name: string; field: 'command' | 'port' | 'env'; cmd: string; port: string; env: string } | null>(null);
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -75,6 +80,15 @@ export default function App({ registry, apiPort, onQuit }: Props) {
 
   useInput((input, key) => {
     if (fullLog) return;
+    if (editing) {
+      if (key.escape) { setEditing(null); return; }
+      if (key.tab) {
+        const nextField = editing.field === 'command' ? 'port' : editing.field === 'port' ? 'env' : 'command';
+        setEditing({ ...editing, field: nextField });
+        return;
+      }
+      return;
+    }
     if (tagPicking) {
       if (key.escape) { setTagPicking(false); setTagInput(''); return; }
       if (key.return) {
@@ -114,6 +128,44 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     else if (input === 'r') void registry.restart(current.name);
     else if (input === 'L') setFullLog(true);
     else if (input === 't') { setTagPicking(true); setTagInput(tagFilter.join(' ')); }
+    else if (input === 'e') {
+      const cfg = registry.getConfig();
+      const app = registry.getApp(current.name);
+      const so = registry.getState(current.name)?.sessionOverrides ?? null;
+      const envSrc = so?.env ?? cfg.overrides?.[current.name]?.env ?? {};
+      const envText = Object.entries(envSrc).map(([k, v]) => `${k}=${v}`).join('\n');
+      setEditing({
+        name: current.name,
+        field: 'command',
+        cmd: so?.command ?? app?.command ?? '',
+        port: String(so?.port ?? cfg.overrides?.[current.name]?.port ?? current.port ?? ''),
+        env: envText,
+      });
+    }
+    else if (input === 'E') {
+      const editor = process.env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi');
+      const tmp = path.join(os.tmpdir(), `appman-${current.name}-${Date.now()}.json`);
+      const cfg = registry.getConfig();
+      const app = registry.getApp(current.name);
+      const so = registry.getState(current.name)?.sessionOverrides ?? null;
+      const payload = {
+        command: so?.command ?? app?.command,
+        port: so?.port ?? cfg.overrides?.[current.name]?.port ?? null,
+        env: so?.env ?? cfg.overrides?.[current.name]?.env ?? {},
+      };
+      try {
+        fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+        spawnSync(editor, [tmp], { stdio: 'inherit', shell: true });
+        const raw = fs.readFileSync(tmp, 'utf8');
+        const parsed = JSON.parse(raw);
+        registry.setSessionOverride(current.name, {
+          command: typeof parsed.command === 'string' ? parsed.command : undefined,
+          port: typeof parsed.port === 'number' ? parsed.port : undefined,
+          env: parsed.env && typeof parsed.env === 'object' ? parsed.env : undefined,
+        });
+        fs.unlinkSync(tmp);
+      } catch {}
+    }
     else if (input === 'l') setLogFocus(f => !f);
     else if (input === 'o') { if (current.url) openUrl(current.url); }
     else if (key.pageUp) setLogScroll(s => s + 5);
@@ -155,7 +207,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
             return (
               <Box key={a.name}>
                 <Text color={sel ? 'cyan' : undefined}>{sel ? '▸ ' : '  '}</Text>
-                <Text color={sel ? 'cyan' : undefined}>{a.name.padEnd(20).slice(0, 20)}</Text>
+                <Text color={sel ? 'cyan' : undefined}>{((registry.getState(a.name)?.sessionOverrides ? '*' : '') + a.name).padEnd(20).slice(0, 20)}</Text>
                 <Text color={STATUS_COLORS[a.status]}> {a.status.padEnd(9)}</Text>
                 <Text color={HEALTH_COLORS[a.health]}>{a.status === 'serving' ? '●' : ' '}</Text>
                 <Text dimColor>{a.port ? ` :${a.port}` : ''}</Text>
@@ -205,7 +257,43 @@ export default function App({ registry, apiPort, onQuit }: Props) {
         {tagPicking ? (
           <Text>tag filter (space-separated, Enter to apply, Esc to cancel): <Text color="cyan">{tagInput}</Text></Text>
         ) : null}
-        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [t] tag filter  [l] log focus  [Shift+L] full log  [PgUp/PgDn] scroll  [q] quit</Text>
+        {editing ? (
+          <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+            <Text bold color="yellow">edit {editing.name} (session-only)  Tab=next field  Enter=save  Esc=cancel</Text>
+            <Box>
+              <Text>{editing.field === 'command' ? '> ' : '  '}command: </Text>
+              {editing.field === 'command' ? (
+                <TextInput value={editing.cmd} onChange={v => setEditing({ ...editing, cmd: v })} onSubmit={() => setEditing({ ...editing, field: 'port' })} />
+              ) : <Text dimColor>{editing.cmd}</Text>}
+            </Box>
+            <Box>
+              <Text>{editing.field === 'port' ? '> ' : '  '}port:    </Text>
+              {editing.field === 'port' ? (
+                <TextInput value={editing.port} onChange={v => setEditing({ ...editing, port: v })} onSubmit={() => setEditing({ ...editing, field: 'env' })} />
+              ) : <Text dimColor>{editing.port}</Text>}
+            </Box>
+            <Box>
+              <Text>{editing.field === 'env' ? '> ' : '  '}env (k=v;): </Text>
+              {editing.field === 'env' ? (
+                <TextInput value={editing.env.replace(/\n/g, ';')} onChange={v => setEditing({ ...editing, env: v.replace(/;/g, '\n') })} onSubmit={() => {
+                  const portNum = Number(editing.port);
+                  const env: Record<string, string> = {};
+                  for (const line of editing.env.split(/\n/)) {
+                    const m = line.match(/^\s*([^=]+)=(.*)$/);
+                    if (m) env[m[1].trim()] = m[2];
+                  }
+                  registry.setSessionOverride(editing.name, {
+                    command: editing.cmd || undefined,
+                    port: Number.isFinite(portNum) && portNum > 0 ? portNum : undefined,
+                    env: Object.keys(env).length ? env : undefined,
+                  });
+                  setEditing(null);
+                }} />
+              ) : <Text dimColor>{editing.env}</Text>}
+            </Box>
+          </Box>
+        ) : null}
+        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [t] tag filter  [e] edit  [E] $EDITOR  [l] log focus  [Shift+L] full log  [PgUp/PgDn] scroll  [q] quit</Text>
       </Box>
     </Box>
   );
