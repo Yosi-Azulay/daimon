@@ -6,6 +6,8 @@ import type { Registry } from './registry.js';
 import { Cursors } from './cursors.js';
 import { buildSnapshot, writeSnapshot } from './snapshot.js';
 import { executeClean, planClean } from './clean.js';
+import { exportMetrics } from './metrics.js';
+import type { RequestLog } from './requestLog.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,7 +51,12 @@ function parseSinceParam(s: string | null): { sinceMs?: number; sinceTs?: number
   return {};
 }
 
-export function startServer(registry: Registry, port: number): http.Server {
+export interface ServerOpts {
+  metricsEnabled?: boolean;
+  requestLog?: RequestLog | null;
+}
+
+export function startServer(registry: Registry, port: number, opts: ServerOpts = {}): http.Server {
   const cursors = new Cursors();
 
   const server = http.createServer(async (req, res) => {
@@ -57,6 +64,13 @@ export function startServer(registry: Registry, port: number): http.Server {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       const method = req.method || 'GET';
       const parts = url.pathname.replace(/\/$/, '').split('/').filter(Boolean);
+
+      if (method === 'GET' && url.pathname === '/metrics' && opts.metricsEnabled) {
+        const body = exportMetrics(registry);
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'content-length': Buffer.byteLength(body) });
+        res.end(body);
+        return;
+      }
 
       if (method === 'GET' && url.pathname === '/') {
         const p = dashboardPath();
@@ -289,6 +303,13 @@ export function startServer(registry: Registry, port: number): http.Server {
         registry.setActiveEnvFile(name, body.use ?? null);
         const state = registry.getState(name);
         sendJson(res, 200, { active: state?.activeEnvFile ?? null });
+        return;
+      }
+
+      if (sub === 'requests' && method === 'GET') {
+        if (!opts.requestLog) { sendJson(res, 200, []); return; }
+        const sinceMs = parseDuration(url.searchParams.get('since'));
+        sendJson(res, 200, opts.requestLog.requests(name, sinceMs));
         return;
       }
 

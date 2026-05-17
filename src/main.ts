@@ -13,6 +13,7 @@ import { History } from './history.js';
 import { findCycle } from './depends.js';
 import { Notifier } from './notifier.js';
 import { StaleDetector } from './staleDetector.js';
+import { RequestLog } from './requestLog.js';
 import App from './tui/App.js';
 
 async function main() {
@@ -61,6 +62,7 @@ async function main() {
   const restarter = new Restarter(registry, config.autoRestart);
   const notifier = new Notifier(registry, config.notifications);
   const staleDetector = new StaleDetector(registry, config.staleDetect);
+  const requestLog = new RequestLog(registry, config.requestLog);
   registry.on('childExit', ({ name, code, signal, stopping }: any) => restarter.onExit(name, code, signal, stopping));
   registry.on('userStop', ({ name }: any) => restarter.onUserStop(name));
 
@@ -79,7 +81,7 @@ async function main() {
     }
   }
 
-  const server = startServer(registry, config.apiPort);
+  const server = startServer(registry, config.apiPort, { metricsEnabled: config.metrics.enabled, requestLog });
   process.stdout.write(`[appman] api: http://127.0.0.1:${config.apiPort}\n`);
 
   let shuttingDown = false;
@@ -91,6 +93,7 @@ async function main() {
     try { restarter.stop(); } catch {}
     try { notifier.stop(); } catch {}
     try { staleDetector.stop(); } catch {}
+    try { requestLog.stop(); } catch {}
     try { history.close(); } catch {}
     try {
       await registry.stopAll(3000);

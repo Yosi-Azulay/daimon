@@ -11,6 +11,7 @@ import { History } from './dist/history.js';
 import { findCycle } from './dist/depends.js';
 import { Notifier } from './dist/notifier.js';
 import { StaleDetector } from './dist/staleDetector.js';
+import { RequestLog } from './dist/requestLog.js';
 
 const r = loadConfig();
 if (r.kind !== 'loaded') { console.error('expected loaded config'); process.exit(1); }
@@ -31,9 +32,10 @@ const usage = new UsageMonitor(reg);
 const restarter = new Restarter(reg, r.config.autoRestart);
 const notifier = new Notifier(reg, r.config.notifications);
 const staleDetector = new StaleDetector(reg, r.config.staleDetect);
+const requestLog = new RequestLog(reg, r.config.requestLog);
 reg.on('childExit', ({ name, code, signal, stopping }) => restarter.onExit(name, code, signal, stopping));
 reg.on('userStop', ({ name }) => restarter.onUserStop(name));
-const srv = startServer(reg, r.config.apiPort);
+const srv = startServer(reg, r.config.apiPort, { metricsEnabled: r.config.metrics.enabled, requestLog });
 for (const n of r.config.autoStart || []) {
   if (r.config.depends && r.config.depends[n] && r.config.depends[n].length) void reg.startWithDeps(n);
   else void reg.start(n);
@@ -48,6 +50,7 @@ const stop = async () => {
   restarter.stop();
   notifier.stop();
   staleDetector.stop();
+  requestLog.stop();
   await reg.stopAll(3000);
   history.close();
   srv.close();
