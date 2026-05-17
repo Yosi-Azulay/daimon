@@ -69,9 +69,14 @@ async function ensureDaemon(): Promise<void> {
   } catch {}
 }
 
+function authHeaders(): Record<string, string> {
+  const tok = process.env.APPMAN_TOKEN;
+  return tok ? { authorization: `Bearer ${tok}` } : {};
+}
+
 async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{ status: number; body: any }> {
   try {
-    const res = await fetch(getBaseUrl() + pathname, { method });
+    const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders() });
     const text = await res.text();
     let body: any = text;
     try { body = JSON.parse(text); } catch {}
@@ -83,7 +88,7 @@ async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{
 
 async function callJson(pathname: string, method: 'GET' | 'POST', payload: unknown): Promise<{ status: number; body: any }> {
   try {
-    const res = await fetch(getBaseUrl() + pathname, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    const res = await fetch(getBaseUrl() + pathname, { method, headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify(payload) });
     const text = await res.text();
     let body: any = text;
     try { body = JSON.parse(text); } catch {}
@@ -290,7 +295,7 @@ async function handleDaemon(rest: string[]): Promise<void> {
       const lock = readLock();
       if (!lock) { out({ ok: true, wasRunning: false }); return; }
       try {
-        await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST' });
+        await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST', headers: authHeaders() });
       } catch {}
       const exited = await waitForExit(lock.pid, 5000);
       if (exited) {
@@ -307,7 +312,7 @@ async function handleDaemon(rest: string[]): Promise<void> {
     case 'restart': {
       const lock = readLock();
       if (lock) {
-        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST' }); } catch {}
+        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST', headers: authHeaders() }); } catch {}
         await waitForExit(lock.pid, 5000);
         removeLock();
       }

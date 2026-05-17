@@ -58,6 +58,21 @@ export class Registry extends EventEmitter {
     return this.config;
   }
 
+  addDiscoveredApp(app: DiscoveredApp): void {
+    if (this.entries.has(app.name)) return;
+    this.entries.set(app.name, { app, state: this.freshState(app.name, app.tags), proc: null });
+    this.emit('change');
+  }
+
+  updateDiscoveredApp(app: DiscoveredApp): void {
+    const e = this.entries.get(app.name);
+    if (!e) return;
+    e.app = app;
+    e.state.tags = app.tags;
+    e.state.dependsOn = this.config.depends?.[app.name] ?? [];
+    this.emit('change');
+  }
+
   getPortAllocator(): PortAllocator {
     return this.portAlloc;
   }

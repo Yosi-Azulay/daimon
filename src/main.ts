@@ -16,6 +16,7 @@ import { Notifier } from './notifier.js';
 import { StaleDetector } from './staleDetector.js';
 import { RequestLog } from './requestLog.js';
 import { buildLockInfo, removeLock, writeLock } from './daemon.js';
+import { patchConfigOnDisk, softReloadFromDisk } from './configManager.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -117,6 +118,19 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     onShutdown: () => { void shutdown(); },
     configPath: cfgPath,
     getConfig: () => registry.getConfig(),
+    patchConfig: (patch) => {
+      try {
+        const r = patchConfigOnDisk({ configPath: cfgPath, patch });
+        const apply = softReloadFromDisk({ configPath: cfgPath, registry });
+        return { ok: true, applied: r.applied, addedApps: apply.addedApps, removedApps: apply.removedApps, restartRequired: apply.restartRequired } as any;
+      } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    },
+    reloadConfig: async () => {
+      const r = softReloadFromDisk({ configPath: cfgPath, registry });
+      return { ok: true, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired };
+    },
   });
   process.stdout.write(`[appman] api: http://127.0.0.1:${apiPort}\n`);
   try { writeLock(buildLockInfo(apiPort, headless)); } catch (err: any) { process.stderr.write(`[appman] warning: could not write daemon.lock: ${err?.message || err}\n`); }

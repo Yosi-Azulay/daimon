@@ -60,7 +60,7 @@ export interface ServerOpts {
   configPath?: string;
   getConfig?: () => AppmanConfig;
   reloadConfig?: () => Promise<{ ok: boolean; addedApps: string[]; removedApps: string[] }>;
-  patchConfig?: (patch: any) => { ok: true; applied: string[] } | { ok: false; error: string };
+  patchConfig?: (patch: any) => { ok: true; applied: string[]; addedApps?: string[]; removedApps?: string[]; restartRequired?: string[] } | { ok: false; error: string };
 }
 
 const REDACT_KEY = /key|secret|token|password|pass/i;
@@ -148,7 +148,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           if (!r.ok) { sendJson(res, 400, { error: r.error }); return; }
           const newEtag = configEtag(opts.configPath);
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'etag': newEtag });
-          res.end(JSON.stringify({ etag: newEtag, applied: r.applied }));
+          res.end(JSON.stringify({ etag: newEtag, applied: r.applied, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired }));
           return;
         }
         sendJson(res, 405, { error: 'method not allowed' });
@@ -170,6 +170,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'content-length': Buffer.byteLength(body) });
         res.end(body);
         return;
+      }
+
+      if (method !== 'GET' && url.pathname.startsWith('/api/') && url.pathname !== '/api/shutdown' && url.pathname !== '/api/config' && url.pathname !== '/api/config/reload') {
+        if (!requireAuth()) return;
       }
 
       if (method === 'GET' && url.pathname === '/') {

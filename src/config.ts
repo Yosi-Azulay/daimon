@@ -61,6 +61,10 @@ function expandTilde(p: string): string {
   return p;
 }
 
+export function validateConfig(raw: unknown, source: string): AppmanConfig {
+  return validate(raw, source);
+}
+
 function validate(raw: unknown, source: string): AppmanConfig {
   if (!raw || typeof raw !== 'object') {
     throw new Error(`Config at ${source} is not a JSON object`);
