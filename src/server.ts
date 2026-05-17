@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { Registry } from './registry.js';
 import { Cursors } from './cursors.js';
 import { buildSnapshot, writeSnapshot } from './snapshot.js';
+import { executeClean, planClean } from './clean.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -266,6 +267,40 @@ export function startServer(registry: Registry, port: number): http.Server {
       if (sub === 'run-stop' && sub2 && method === 'POST') {
         const r = await registry.stopWatchTask(name, sub2);
         sendJson(res, 200, r);
+        return;
+      }
+
+      if (sub === 'env' && method === 'GET') {
+        const cfg = registry.getConfig();
+        const candidates = cfg.envFiles?.[name] ?? [];
+        const state = registry.getState(name);
+        sendJson(res, 200, { candidates, active: state?.activeEnvFile ?? null });
+        return;
+      }
+      if (sub === 'env' && method === 'POST') {
+        let body: any = {};
+        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+          await new Promise<void>(resolve => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(c));
+            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+          });
+        }
+        registry.setActiveEnvFile(name, body.use ?? null);
+        const state = registry.getState(name);
+        sendJson(res, 200, { active: state?.activeEnvFile ?? null });
+        return;
+      }
+
+      if (sub === 'clean' && method === 'POST') {
+        const deep = url.searchParams.get('deep') === '1';
+        const yes = url.searchParams.get('yes') === '1';
+        const plan = planClean(registry, name, deep);
+        if (!plan) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (plan.ranOnServing) { sendJson(res, 409, { error: 'refusing: app is currently running', plan }); return; }
+        if (!yes) { sendJson(res, 200, { plan, hint: 'pass --yes to delete' }); return; }
+        const result = executeClean(registry, name, deep);
+        sendJson(res, 200, result);
         return;
       }
 

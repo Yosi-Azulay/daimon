@@ -143,6 +143,15 @@ export default function App({ registry, apiPort, onQuit }: Props) {
       });
     }
     else if (input === 'E') {
+      const cfg = registry.getConfig();
+      const cands = cfg.envFiles?.[current.name] ?? [];
+      if (!cands.length) return;
+      const cur = registry.getState(current.name)?.activeEnvFile ?? null;
+      const idx = cur ? cands.indexOf(cur) : -1;
+      const next = cands[(idx + 1) % cands.length];
+      registry.setActiveEnvFile(current.name, next);
+    }
+    else if (input === 'V') {
       const editor = process.env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi');
       const tmp = path.join(os.tmpdir(), `appman-${current.name}-${Date.now()}.json`);
       const cfg = registry.getConfig();
@@ -296,7 +305,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
             </Box>
           </Box>
         ) : null}
-        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [t] tag filter  [e] edit  [E] $EDITOR  [l] log focus  [Shift+L] full log  [PgUp/PgDn] scroll  [q] quit</Text>
+        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [t] tag filter  [e] edit  [E] cycle env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [PgUp/PgDn] scroll  [q] quit</Text>
       </Box>
     </Box>
   );

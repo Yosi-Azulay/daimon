@@ -16,6 +16,7 @@ import type { History } from './history.js';
 import { dependants, topoLevels, transitiveClosure } from './depends.js';
 import { runOneShot, startWatch, type OneShotResult, type WatchTask } from './taskRunner.js';
 import { describeHolder, findPortHolder } from './portDiag.js';
+import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -307,11 +308,25 @@ export class Registry extends EventEmitter {
       e.logger = new DiskLogger(name, this.config.logs);
     }
     const so = e.state.sessionOverrides;
+    const envFileCandidates = this.config.envFiles?.[name] ?? [];
+    let envFromFile: Record<string, string> = {};
+    if (envFileCandidates.length) {
+      let active = e.state.activeEnvFile;
+      if (!active || !existingEnvFiles(e.app.workspaceRoot, [active]).length) {
+        const found = existingEnvFiles(e.app.workspaceRoot, envFileCandidates);
+        active = found[0] ?? null;
+        if (active) e.state.activeEnvFile = active;
+      }
+      if (active) {
+        envFromFile = parseEnvFile(resolveEnvFilePath(e.app.workspaceRoot, active));
+      }
+    }
+    const mergedEnvOverride = { ...envFromFile, ...(so?.env ?? {}) };
     const proc = new AppProcess({
       state: e.state,
       app: e.app,
       port,
-      envOverride: so?.env,
+      envOverride: Object.keys(mergedEnvOverride).length ? mergedEnvOverride : undefined,
       commandOverride: so?.command,
       onStateChange: () => this.emit('change'),
       onStatusChange: (from, to, message) => {

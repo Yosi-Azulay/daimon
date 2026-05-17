@@ -171,6 +171,32 @@ async function main() {
       out(r.body);
       return;
     }
+    case 'env': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: appman env <name> [--use <file>]' }));
+      if (f.use) {
+        const r = await callJson(`/api/apps/${encodeURIComponent(name)}/env`, 'POST', { use: f.use });
+        if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+        out(r.body);
+        return;
+      }
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/env`);
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      return;
+    }
+    case 'clean': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: appman clean <name> [--deep] [--yes]' }));
+      const qs = new URLSearchParams();
+      if (f.deep) qs.set('deep', '1');
+      if (f.yes) qs.set('yes', '1');
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/clean${qs.toString() ? '?' + qs.toString() : ''}`, 'POST');
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 409) { out(r.body); process.exit(1); }
+      out(r.body);
+      return;
+    }
     case 'doctor': {
       const cfgR = loadConfig();
       if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
