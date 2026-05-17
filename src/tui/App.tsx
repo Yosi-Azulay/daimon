@@ -157,6 +157,9 @@ export default function App({ registry, apiPort, onQuit }: Props) {
               {current.cpu != null || current.memMB != null ? (
                 <Text>Usage:    {current.cpu ?? '-'}%  {current.memMB ?? '-'} MB</Text>
               ) : null}
+              {current.compileHistoryMs.length > 0 ? (
+                <Text>Recent compile: {current.compileHistoryMs.slice(-5).map(ms => (ms / 1000).toFixed(1) + 's').join(' · ')}</Text>
+              ) : null}
               {state.lastStatusMessage ? <Text dimColor>Note:     {state.lastStatusMessage}</Text> : null}
               <Text>──── recent log {logFocus ? '(focused)' : ''} ────</Text>
               {recentLogs.length === 0 ? <Text dimColor>(no output yet)</Text> : recentLogs.map((line, i) => (
