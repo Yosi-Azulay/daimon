@@ -1,0 +1,10 @@
+---
+name: appman-status
+description: Get the current status of an appman-managed dev server (status, port, health, uptime, error count).
+appman-version: {{appman_version}}
+generated-at: {{generated_at}}
+---
+
+Run: `appman status $1`
+
+Return the JSON object as-is. If exit code 1, the app is unknown or the daemon is unreachable.

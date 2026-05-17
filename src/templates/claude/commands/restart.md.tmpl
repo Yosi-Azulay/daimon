@@ -1,0 +1,10 @@
+---
+name: appman-restart
+description: Restart an appman-managed dev server. Then block until healthy.
+appman-version: {{appman_version}}
+generated-at: {{generated_at}}
+---
+
+Run: `appman restart $1`
+
+Then: `appman wait $1 --until healthy --timeout 60s`. On timeout, call `appman errors $1 --structured` and `appman why $1`.

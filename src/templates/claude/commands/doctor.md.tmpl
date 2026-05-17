@@ -1,0 +1,10 @@
+---
+name: appman-doctor
+description: Sanity-check the appman config and environment. Exits 1 if anything is wrong.
+appman-version: {{appman_version}}
+generated-at: {{generated_at}}
+---
+
+Run: `appman doctor`
+
+Does not require the daemon. Returns `{ checks: [{name, ok, detail?}], ok: bool }`. On `ok: false`, report each failed check.

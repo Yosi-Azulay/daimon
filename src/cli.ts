@@ -7,6 +7,15 @@ import { readSession } from './session.js';
 import { readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
 import { APPMAN_VERSION } from './version.js';
 import { CLI_SUBCOMMANDS, findSubcommand, usageString } from './cliSurface.js';
+import {
+  checkVersionDriftAndNudge,
+  COMMAND_NAMES as CLAUDE_COMMAND_NAMES,
+  defaultClaudeDir,
+  install as claudeInstall,
+  readManifest as readClaudeManifest,
+  status as claudeStatus,
+  uninstall as claudeUninstall,
+} from './claude.js';
 
 const nodeMajor = Number((process.versions.node || '0').split('.')[0]);
 if (nodeMajor && nodeMajor < 20) {
@@ -82,6 +91,15 @@ async function callJson(pathname: string, method: 'GET' | 'POST', payload: unkno
   } catch {
     fail(JSON.stringify({ error: 'appman is not running — start it with: appman daemon start --detach' }));
   }
+}
+
+interface ClaudeFlags {
+  skill?: boolean;
+  commands?: boolean;
+  agent?: boolean;
+  all?: boolean;
+  dir?: string;
+  yes?: boolean;
 }
 
 interface Flags {
@@ -169,6 +187,77 @@ function printHelp(): void {
   process.stdout.write(lines.join('\n') + '\n');
 }
 
+function parseClaudeFlags(args: string[]): { positional: string[]; flags: ClaudeFlags } {
+  const flags: ClaudeFlags = {};
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--skill') flags.skill = true;
+    else if (a === '--commands') flags.commands = true;
+    else if (a === '--agent') flags.agent = true;
+    else if (a === '--all') flags.all = true;
+    else if (a === '--dir') flags.dir = args[++i];
+    else if (a === '--yes') flags.yes = true;
+    else positional.push(a);
+  }
+  return { positional, flags };
+}
+
+async function handleClaude(rest: string[]): Promise<void> {
+  const sub = rest[0];
+  if (!sub) fail(JSON.stringify({ error: 'usage: appman claude <install|update|uninstall|status> [--skill] [--commands] [--agent] [--all] [--dir <path>] [--yes]' }));
+  const { flags } = parseClaudeFlags(rest.slice(1));
+  const dir = flags.dir ?? defaultClaudeDir();
+  const apiPort = readApiPort();
+
+  if (sub === 'status') {
+    out(claudeStatus(dir));
+    return;
+  }
+
+  if (sub === 'install') {
+    let selection: { skill: boolean; commands: boolean; agent: boolean };
+    const anyFlag = flags.skill || flags.commands || flags.agent || flags.all;
+    if (flags.all || flags.yes || (!anyFlag && !process.stdin.isTTY)) {
+      selection = { skill: true, commands: true, agent: true };
+    } else if (!anyFlag) {
+      const { promptClaudeInstall } = await import('./tui/ClaudeInstallPrompt.js');
+      const picked = await promptClaudeInstall();
+      if (!picked) { out({ cancelled: true }); return; }
+      selection = picked;
+    } else {
+      selection = { skill: !!flags.skill, commands: !!flags.commands, agent: !!flags.agent };
+    }
+    const r = claudeInstall({ ...selection, dir, apiPort });
+    out({ installed: r.installed, manifest: r.manifestPath, version: APPMAN_VERSION });
+    return;
+  }
+
+  if (sub === 'update') {
+    const m = readClaudeManifest(dir);
+    if (!m) fail(JSON.stringify({ error: 'no manifest at ' + dir + ' — run `appman claude install` first' }));
+    const selection = {
+      skill: !!m!.skill,
+      commands: !!(m!.commands && m!.commands.length),
+      agent: !!m!.agent,
+    };
+    const r = claudeInstall({ ...selection, dir, apiPort });
+    out({ updated: r.installed, manifest: r.manifestPath, version: APPMAN_VERSION });
+    return;
+  }
+
+  if (sub === 'uninstall') {
+    const anyFlag = flags.skill || flags.commands || flags.agent || flags.all;
+    if (!anyFlag) fail(JSON.stringify({ error: 'usage: appman claude uninstall [--all|--skill|--commands|--agent]' }));
+    const r = claudeUninstall({ dir, selection: { all: flags.all, skill: flags.skill, commands: flags.commands, agent: flags.agent } });
+    out({ removed: r.removed, manifest: r.manifestPath });
+    return;
+  }
+
+  fail(JSON.stringify({ error: `unknown claude subcommand: ${sub}` }));
+  void CLAUDE_COMMAND_NAMES;
+}
+
 async function handleDaemon(rest: string[]): Promise<void> {
   const sub = rest[0];
   const f = parseFlags(rest.slice(1));
@@ -247,10 +336,14 @@ async function main() {
   });
 
   const [cmd, ...rest] = argv;
+
+  try { checkVersionDriftAndNudge(); } catch {}
+
   if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { printHelp(); return; }
   if (cmd === '--version' || cmd === '-v') { out({ version: APPMAN_VERSION }); return; }
 
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
+  if (cmd === 'claude') { await handleClaude(rest); return; }
 
   const f = parseFlags(rest);
   const surface = findSubcommand(cmd);

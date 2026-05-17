@@ -1,0 +1,10 @@
+---
+name: appman-logs
+description: Tail recent log lines for an app. Default tail is 50.
+appman-version: {{appman_version}}
+generated-at: {{generated_at}}
+---
+
+Run: `appman logs $1 --tail ${2:-50}`
+
+Returns `{ lines: string[] }`. ANSI-stripped, in chronological order.

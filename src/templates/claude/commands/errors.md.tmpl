@@ -1,0 +1,10 @@
+---
+name: appman-errors
+description: Get deduplicated errors for an app. Prefer --structured for parsed TS errors (file:line:col, code).
+appman-version: {{appman_version}}
+generated-at: {{generated_at}}
+---
+
+Run: `appman errors $1 --structured`
+
+Add `--since 5m` to scope to a recent window. For diff-mode (only errors newer than your last query), use `--since-last --client <your-id>`.
