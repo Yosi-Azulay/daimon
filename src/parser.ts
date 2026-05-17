@@ -136,6 +136,7 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
   let compileMs: number | undefined;
 
   if (SERVING_PATTERNS.some(rx => rx.test(trimmed))) {
+    const wasError = state.status === 'error' || !!state.recoveringFromError;
     if (state.status === 'compiling' || state.status === 'starting' || state.status === 'error') {
       const now = Date.now();
       if (state.compileStartedAt != null) {
@@ -152,8 +153,13 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
       }
     }
     state.status = 'serving';
+    if (wasError) {
+      state.errors.clear();
+      state.recoveringFromError = false;
+    }
   } else if (COMPILING_PATTERNS.some(rx => rx.test(trimmed))) {
     if (state.status === 'starting' || state.status === 'serving' || state.status === 'error') {
+      if (state.status === 'error') state.recoveringFromError = true;
       state.compileStartedAt = Date.now();
       state.status = 'compiling';
     }

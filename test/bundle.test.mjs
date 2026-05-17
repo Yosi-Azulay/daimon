@@ -51,6 +51,23 @@ test('F36: parser captures Server running at URL', () => {
   assert.equal(s.announcedUrl, 'https://localhost:9443');
 });
 
+test('parser: errors map clears on error -> serving recovery', () => {
+  const s = freshState();
+  s.startedAt = Date.now() - 30_000;
+  s.compileStartedAt = s.startedAt;
+  parseLine(s, 'Initial chunk files | Names | Raw size');
+  parseLine(s, 'Application bundle generation complete.');
+  parseLine(s, 'X [ERROR] TS2552: Cannot find name foo');
+  parseLine(s, 'X [ERROR] TS2724: missing export bar');
+  assert.equal(s.status, 'error');
+  assert.equal(s.errors.size, 2);
+
+  parseLine(s, 'Initial chunk files | Names | Raw size');
+  parseLine(s, 'Application bundle generation complete.');
+  assert.equal(s.status, 'serving');
+  assert.equal(s.errors.size, 0, 'errors cleared on recovery');
+});
+
 test('parser: lastCompileAt updates on error -> serving recovery (post-stale bug)', () => {
   const s = freshState();
   s.startedAt = Date.now() - 30_000;

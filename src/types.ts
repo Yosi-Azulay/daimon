@@ -177,6 +177,7 @@ export interface AppState {
   activeEnvFile: string | null;
   sessionOverrides: { command?: string; port?: number; env?: Record<string, string> } | null;
   dependsOn: string[];
+  recoveringFromError?: boolean;
 }
 
 export interface AppSummary {
