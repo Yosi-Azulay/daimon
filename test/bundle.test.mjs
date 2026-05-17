@@ -51,6 +51,28 @@ test('F36: parser captures Server running at URL', () => {
   assert.equal(s.announcedUrl, 'https://localhost:9443');
 });
 
+test('parser: lastCompileAt updates on error -> serving recovery (post-stale bug)', () => {
+  const s = freshState();
+  s.startedAt = Date.now() - 30_000;
+  s.compileStartedAt = s.startedAt;
+  parseLine(s, 'Initial chunk files | Names | Raw size');
+  parseLine(s, 'Application bundle generation complete.');
+  const firstCompileAt = s.lastCompileAt;
+  assert.ok(firstCompileAt != null, 'first compile recorded');
+  assert.equal(s.status, 'serving');
+
+  parseLine(s, 'X [ERROR] TS2552: Cannot find name foo');
+  assert.equal(s.status, 'error');
+
+  const beforeRebuild = Date.now();
+  parseLine(s, 'Initial chunk files | Names | Raw size');
+  assert.equal(s.status, 'compiling', 'COMPILING_PATTERNS should recover from error');
+  parseLine(s, 'Application bundle generation complete.');
+  assert.equal(s.status, 'serving');
+  assert.ok(s.lastCompileAt >= beforeRebuild, `lastCompileAt updated on recovery (was ${firstCompileAt}, now ${s.lastCompileAt})`);
+  assert.equal(s.compileHistory.length, 2, 'two compiles recorded');
+});
+
 test('F36: parser captures Next.js listening on URL', () => {
   const s = freshState();
   parseLine(s, '- ready started server on 0.0.0.0:3000, url: http://localhost:3000');
