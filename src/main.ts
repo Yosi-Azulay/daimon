@@ -11,6 +11,8 @@ import { Restarter } from './restarter.js';
 import { loadPersistedState, savePersistedState } from './stateFile.js';
 import { History } from './history.js';
 import { findCycle } from './depends.js';
+import { Notifier } from './notifier.js';
+import { StaleDetector } from './staleDetector.js';
 import App from './tui/App.js';
 
 async function main() {
@@ -57,6 +59,8 @@ async function main() {
   const health = new HealthMonitor(registry, config.healthProbe, config);
   const usage = new UsageMonitor(registry);
   const restarter = new Restarter(registry, config.autoRestart);
+  const notifier = new Notifier(registry, config.notifications);
+  const staleDetector = new StaleDetector(registry, config.staleDetect);
   registry.on('childExit', ({ name, code, signal, stopping }: any) => restarter.onExit(name, code, signal, stopping));
   registry.on('userStop', ({ name }: any) => restarter.onUserStop(name));
 
@@ -85,6 +89,8 @@ async function main() {
     try { health.stop(); } catch {}
     try { usage.stop(); } catch {}
     try { restarter.stop(); } catch {}
+    try { notifier.stop(); } catch {}
+    try { staleDetector.stop(); } catch {}
     try { history.close(); } catch {}
     try {
       await registry.stopAll(3000);

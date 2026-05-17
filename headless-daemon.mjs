@@ -9,6 +9,8 @@ import { Restarter } from './dist/restarter.js';
 import { loadPersistedState, savePersistedState } from './dist/stateFile.js';
 import { History } from './dist/history.js';
 import { findCycle } from './dist/depends.js';
+import { Notifier } from './dist/notifier.js';
+import { StaleDetector } from './dist/staleDetector.js';
 
 const r = loadConfig();
 if (r.kind !== 'loaded') { console.error('expected loaded config'); process.exit(1); }
@@ -27,6 +29,8 @@ reg.setHistory(history);
 const health = new HealthMonitor(reg, r.config.healthProbe, r.config);
 const usage = new UsageMonitor(reg);
 const restarter = new Restarter(reg, r.config.autoRestart);
+const notifier = new Notifier(reg, r.config.notifications);
+const staleDetector = new StaleDetector(reg, r.config.staleDetect);
 reg.on('childExit', ({ name, code, signal, stopping }) => restarter.onExit(name, code, signal, stopping));
 reg.on('userStop', ({ name }) => restarter.onUserStop(name));
 const srv = startServer(reg, r.config.apiPort);
@@ -42,6 +46,8 @@ const stop = async () => {
   health.stop();
   usage.stop();
   restarter.stop();
+  notifier.stop();
+  staleDetector.stop();
   await reg.stopAll(3000);
   history.close();
   srv.close();

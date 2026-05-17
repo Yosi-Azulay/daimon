@@ -178,6 +178,9 @@ export default function App({ registry, apiPort, onQuit }: Props) {
               {current.lastHealthError ? (
                 <Text color="red">HealthErr: {current.lastHealthError}</Text>
               ) : null}
+              {current.stale ? (
+                <Text color="yellow">⚠ stale (best guess)</Text>
+              ) : null}
               <Text>Errors:   <Text color={current.errorCount ? 'red' : undefined}>{current.errorCount}</Text></Text>
               <Text>Uptime:   {fmtUptime(current.uptimeMs)}</Text>
               {current.cpu != null || current.memMB != null ? (
