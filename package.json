@@ -1,14 +1,24 @@
 {
   "name": "appman",
-  "version": "0.3.0",
-  "private": true,
+  "version": "0.4.0-alpha",
   "description": "Local Angular/Nx app manager with TUI, HTTP API, and CLI",
   "type": "module",
+  "bin": {
+    "appman": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src/dashboard.html",
+    "src/templates",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "npm run build && node dist/main.js",
     "cli": "node dist/cli.js",
-    "mcp": "node dist/mcp.js"
+    "mcp": "node dist/mcp.js",
+    "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs"
   },
   "engines": {
     "node": ">=20"

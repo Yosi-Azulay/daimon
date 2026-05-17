@@ -1,8 +1,20 @@
+#!/usr/bin/env node
 import { loadConfig } from './config.js';
 import { discoverApps } from './discovery.js';
 import { runDoctor } from './doctor.js';
 import { findPortHolder, killHolder } from './portDiag.js';
 import { readSession } from './session.js';
+import { readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
+import { APPMAN_VERSION } from './version.js';
+import { CLI_SUBCOMMANDS, findSubcommand, usageString } from './cliSurface.js';
+
+const nodeMajor = Number((process.versions.node || '0').split('.')[0]);
+if (nodeMajor && nodeMajor < 20) {
+  process.stderr.write('appman requires Node >= 20\n');
+  process.exit(1);
+}
+
+let noSpawnFlag = false;
 
 function fail(msg: string, code = 1): never {
   process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
@@ -14,6 +26,12 @@ function out(obj: unknown): void {
 }
 
 function readApiPort(): number {
+  if (process.env.APPMAN_PORT) {
+    const p = Number(process.env.APPMAN_PORT);
+    if (Number.isFinite(p) && p > 0) return p;
+  }
+  const lock = readLock();
+  if (lock) return lock.apiPort;
   try {
     const r = loadConfig();
     if (r.kind === 'loaded') return r.config.apiPort;
@@ -33,6 +51,15 @@ function getBaseUrl(): string {
   return `http://127.0.0.1:${readApiPort()}`;
 }
 
+async function ensureDaemon(): Promise<void> {
+  if (noSpawnFlag || process.env.APPMAN_NO_SPAWN === '1') return;
+  if (readLock()) return;
+  try {
+    const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
+    await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
+  } catch {}
+}
+
 async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{ status: number; body: any }> {
   try {
     const res = await fetch(getBaseUrl() + pathname, { method });
@@ -41,7 +68,7 @@ async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch {
-    fail('appman is not running — start it with: npm start');
+    fail(JSON.stringify({ error: 'appman is not running — start it with: appman daemon start --detach' }));
   }
 }
 
@@ -53,7 +80,7 @@ async function callJson(pathname: string, method: 'GET' | 'POST', payload: unkno
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch {
-    fail('appman is not running — start it with: npm start');
+    fail(JSON.stringify({ error: 'appman is not running — start it with: appman daemon start --detach' }));
   }
 }
 
@@ -77,6 +104,8 @@ interface Flags {
   speed?: number;
   task?: string;
   headless?: boolean;
+  detach?: boolean;
+  workspace?: string;
   passthrough: string[];
 }
 
@@ -105,6 +134,8 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--speed') f.speed = Number(args[++i]);
     else if (a === '--task') f.task = args[++i];
     else if (a === '--headless') f.headless = true;
+    else if (a === '--detach') f.detach = true;
+    else if (a === '--workspace') f.workspace = args[++i];
     else f.positional.push(a);
   }
   return f;
@@ -123,17 +154,114 @@ function durationToSeconds(s: string): number | null {
   return null;
 }
 
+function printHelp(): void {
+  const w = Math.max(...CLI_SUBCOMMANDS.map(c => c.name.length));
+  const lines = [
+    `appman v${APPMAN_VERSION}`,
+    'usage: appman <command> [args]',
+    '',
+  ];
+  for (const c of CLI_SUBCOMMANDS) {
+    lines.push(`  ${c.name.padEnd(w)}  ${c.summary}`);
+  }
+  lines.push('');
+  lines.push('Flags: --no-spawn (skip auto-spawn), APPMAN_PORT=N (target a non-default daemon), APPMAN_NO_SPAWN=1');
+  process.stdout.write(lines.join('\n') + '\n');
+}
+
+async function handleDaemon(rest: string[]): Promise<void> {
+  const sub = rest[0];
+  const f = parseFlags(rest.slice(1));
+  switch (sub) {
+    case 'status': {
+      const lock = readLock();
+      if (!lock) { out({ running: false }); return; }
+      const uptime = Date.now() - lock.startedAt;
+      out({ running: true, pid: lock.pid, port: lock.apiPort, uptime, version: lock.version, headless: lock.headless });
+      return;
+    }
+    case 'start': {
+      if (f.detach) {
+        const existing = readLock();
+        if (existing) { out({ ok: true, alreadyRunning: true, pid: existing.pid, port: existing.apiPort }); return; }
+        try {
+          const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
+          const info = await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
+          out({ ok: true, pid: info.pid, port: info.apiPort });
+        } catch (err: any) {
+          fail(JSON.stringify({ error: err?.message || String(err) }));
+        }
+        return;
+      }
+      const { startInProcess } = await import('./main.js');
+      await startInProcess({ headless: !!f.headless });
+      return;
+    }
+    case 'stop': {
+      const lock = readLock();
+      if (!lock) { out({ ok: true, wasRunning: false }); return; }
+      try {
+        await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST' });
+      } catch {}
+      const exited = await waitForExit(lock.pid, 5000);
+      if (exited) {
+        removeLock();
+        out({ ok: true, wasRunning: true });
+      } else {
+        try { process.kill(lock.pid, 'SIGTERM'); } catch {}
+        await waitForExit(lock.pid, 2000);
+        removeLock();
+        out({ ok: true, wasRunning: true, forced: true });
+      }
+      return;
+    }
+    case 'restart': {
+      const lock = readLock();
+      if (lock) {
+        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST' }); } catch {}
+        await waitForExit(lock.pid, 5000);
+        removeLock();
+      }
+      const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
+      const info = await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
+      out({ ok: true, pid: info.pid, port: info.apiPort });
+      return;
+    }
+    case 'attach': {
+      await ensureDaemon();
+      const lock = readLock();
+      if (!lock) fail(JSON.stringify({ error: 'no daemon running and auto-spawn failed' }));
+      const { attachToDaemon } = await import('./tui/AttachApp.js');
+      await attachToDaemon(lock!.apiPort);
+      return;
+    }
+    default:
+      fail(JSON.stringify({ error: `usage: appman daemon <start|stop|status|restart|attach> [--detach] [--headless]` }));
+  }
+}
+
 async function main() {
-  const [, , cmd, ...rest] = process.argv;
-  if (!cmd) fail(JSON.stringify({ error: 'usage: appman <list|status|errors|events|wait|logs|start|stop|restart|up|down|history|why|tasks|run|snapshot|doctor|env|clean|free-port|record|replay>' }));
+  const argv = process.argv.slice(2).filter(a => {
+    if (a === '--no-spawn') { noSpawnFlag = true; return false; }
+    return true;
+  });
+
+  const [cmd, ...rest] = argv;
+  if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { printHelp(); return; }
+  if (cmd === '--version' || cmd === '-v') { out({ version: APPMAN_VERSION }); return; }
+
+  if (cmd === 'daemon') { await handleDaemon(rest); return; }
 
   const f = parseFlags(rest);
+  const surface = findSubcommand(cmd);
+  if (surface?.needsDaemon) await ensureDaemon();
 
   switch (cmd) {
     case 'list': {
       const r = await call('/api/apps');
       let arr = Array.isArray(r.body) ? r.body : [];
       if (f.tags.length) arr = arr.filter((a: any) => f.tags.every(t => (a.tags || []).includes(t)));
+      if (f.workspace) arr = arr.filter((a: any) => a.workspaceLabel === f.workspace);
       out(arr);
       return;
     }
@@ -226,8 +354,13 @@ async function main() {
     case 'doctor': {
       const cfgR = loadConfig();
       if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
-      const apps = discoverApps(cfgR.config);
+      const warnings: string[] = [];
+      const apps = discoverApps(cfgR.config, { warnings });
       const result = await runDoctor(cfgR.config, apps);
+      for (const w of warnings) {
+        result.checks.unshift({ name: `discovery: ${w}`, ok: false, detail: w });
+      }
+      if (warnings.length) result.ok = false;
       out(result);
       if (!result.ok) process.exit(1);
       return;
@@ -374,7 +507,7 @@ async function main() {
       return;
     }
     default:
-      fail(JSON.stringify({ error: `unknown command: ${cmd}` }));
+      fail(JSON.stringify({ error: `unknown command: ${cmd}. ${usageString()}` }));
   }
 }
 

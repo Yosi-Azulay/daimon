@@ -54,6 +54,7 @@ function parseSinceParam(s: string | null): { sinceMs?: number; sinceTs?: number
 export interface ServerOpts {
   metricsEnabled?: boolean;
   requestLog?: RequestLog | null;
+  onShutdown?: () => void;
 }
 
 export function startServer(registry: Registry, port: number, opts: ServerOpts = {}): http.Server {
@@ -64,6 +65,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       const method = req.method || 'GET';
       const parts = url.pathname.replace(/\/$/, '').split('/').filter(Boolean);
+
+      if (method === 'POST' && url.pathname === '/api/shutdown') {
+        sendJson(res, 200, { ok: true });
+        if (opts.onShutdown) setImmediate(() => { try { opts.onShutdown!(); } catch {} });
+        return;
+      }
 
       if (method === 'GET' && url.pathname === '/metrics' && opts.metricsEnabled) {
         const body = exportMetrics(registry);

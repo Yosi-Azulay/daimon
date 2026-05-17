@@ -2,8 +2,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { loadConfig } from './config.js';
+import { readLock, spawnDetached } from './daemon.js';
+import { APPMAN_VERSION } from './version.js';
 
 function apiPort(): number {
+  if (process.env.APPMAN_PORT) {
+    const p = Number(process.env.APPMAN_PORT);
+    if (Number.isFinite(p) && p > 0) return p;
+  }
+  const lock = readLock();
+  if (lock) return lock.apiPort;
   try {
     const r = loadConfig();
     if (r.kind === 'loaded') return r.config.apiPort;
@@ -13,13 +21,26 @@ function apiPort(): number {
 
 const BASE = () => `http://127.0.0.1:${apiPort()}`;
 
+let ensured = false;
+async function ensureDaemon(): Promise<void> {
+  if (ensured) return;
+  ensured = true;
+  if (process.env.APPMAN_NO_SPAWN === '1') return;
+  if (readLock()) return;
+  try {
+    const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
+    await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
+  } catch {}
+}
+
 async function callJson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<any> {
+  await ensureDaemon();
   try {
     const res = await fetch(BASE() + pathname, { method });
     const text = await res.text();
     try { return { status: res.status, body: JSON.parse(text) }; } catch { return { status: res.status, body: text }; }
   } catch (err: any) {
-    return { status: 0, body: { error: 'appman is not running — start it with: npm start' } };
+    return { status: 0, body: { error: 'appman is not running — start it with: appman daemon start --detach' } };
   }
 }
 
@@ -31,7 +52,7 @@ function err(message: string): { content: { type: 'text'; text: string }[]; isEr
 }
 
 async function main() {
-  const server = new McpServer({ name: 'appman', version: '0.2.0' });
+  const server = new McpServer({ name: 'appman', version: APPMAN_VERSION });
 
   server.registerTool('list_apps', { description: 'List all known apps with current status, port, health, etc.', inputSchema: {} }, async () => {
     const r = await callJson('/api/apps');

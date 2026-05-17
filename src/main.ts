@@ -1,5 +1,6 @@
 import React from 'react';
 import { render } from 'ink';
+import { pathToFileURL } from 'node:url';
 import { loadConfig, configLookupPaths } from './config.js';
 import { discoverApps } from './discovery.js';
 import { Registry } from './registry.js';
@@ -14,9 +15,14 @@ import { findCycle } from './depends.js';
 import { Notifier } from './notifier.js';
 import { StaleDetector } from './staleDetector.js';
 import { RequestLog } from './requestLog.js';
+import { buildLockInfo, removeLock, writeLock } from './daemon.js';
 import App from './tui/App.js';
 
-async function main() {
+export interface StartOpts {
+  headless?: boolean;
+}
+
+export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   let cfgResult;
   try {
     cfgResult = loadConfig();
@@ -81,8 +87,8 @@ async function main() {
     }
   }
 
-  const server = startServer(registry, config.apiPort, { metricsEnabled: config.metrics.enabled, requestLog });
-  process.stdout.write(`[appman] api: http://127.0.0.1:${config.apiPort}\n`);
+  const apiPort = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : config.apiPort;
+  const headless = !!opts.headless || !!config.headless || process.argv.includes('--headless');
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -101,16 +107,20 @@ async function main() {
     try {
       server.close();
     } catch {}
+    try { removeLock(); } catch {}
     process.exit(0);
   };
+
+  const server = startServer(registry, apiPort, { metricsEnabled: config.metrics.enabled, requestLog, onShutdown: () => { void shutdown(); } });
+  process.stdout.write(`[appman] api: http://127.0.0.1:${apiPort}\n`);
+  try { writeLock(buildLockInfo(apiPort, headless)); } catch (err: any) { process.stderr.write(`[appman] warning: could not write daemon.lock: ${err?.message || err}\n`); }
 
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });
   process.on('beforeExit', () => { void shutdown(); });
 
-  const headless = !!config.headless || process.argv.includes('--headless');
   if (headless) {
-    process.stdout.write(`[appman] headless mode — TUI suppressed. Dashboard: http://127.0.0.1:${config.apiPort}\n`);
+    process.stdout.write(`[appman] headless mode — TUI suppressed. Dashboard: http://127.0.0.1:${apiPort}\n`);
     let lastSnapshot = '';
     const heartbeat = setInterval(() => {
       const summary = registry.list().map(s => ({ name: s.name, status: s.status, health: s.health, port: s.port }));
@@ -125,12 +135,18 @@ async function main() {
     return;
   }
 
-  const inst = render(React.createElement(App, { registry, apiPort: config.apiPort, onQuit: () => void shutdown() }));
+  const inst = render(React.createElement(App, { registry, apiPort, onQuit: () => void shutdown() }));
   await inst.waitUntilExit();
   await shutdown();
 }
 
-main().catch(err => {
-  process.stderr.write(`[appman] fatal: ${err?.stack || err}\n`);
-  process.exit(1);
-});
+const invokedDirectly = (() => {
+  try { return import.meta.url === pathToFileURL(process.argv[1] || '').href; } catch { return false; }
+})();
+
+if (invokedDirectly) {
+  startInProcess().catch(err => {
+    process.stderr.write(`[appman] fatal: ${err?.stack || err}\n`);
+    process.exit(1);
+  });
+}
