@@ -32,9 +32,9 @@ const ANNOUNCED_LOCAL_RX = /Local:\s+(https?:\/\/\S+)/i;
 const ANNOUNCED_SERVER_RX = /Server running at\s+(https?:\/\/\S+)/i;
 const ANNOUNCED_LISTENING_RX = /listening on\s+(https?:\/\/\S+)/i;
 const ANNOUNCED_LISTEN_PLAIN_RX = /(?:listening|listen)\s+(https?:\/\/\S+)/i;
-const BUNDLE_INITIAL_HEADER_RX = /Initial (?:chunk|total)/i;
-const BUNDLE_LAZY_HEADER_RX = /Lazy chunk/i;
-const BUNDLE_TOTAL_RX = /^\s*\|?\s*(Initial total|Lazy total)\s*\|?\s*(\S+)\s*\|/i;
+const BUNDLE_INITIAL_HEADER_RX = /Initial chunk files/i;
+const BUNDLE_LAZY_HEADER_RX = /Lazy chunk files/i;
+const BUNDLE_TOTAL_RX = /(Initial total|Lazy total)\s*\|?\s*([\d.]+)\s*(kB|MB|B)\b/i;
 const BUNDLE_ROW_RX = /^\s*\|?\s*([^\s|][^|]*?)\s*\|\s*([^|]+?)\s*\|\s*([\d.]+)\s*(kB|MB|B)\b/i;
 
 function hashLine(line: string): string {
@@ -99,8 +99,8 @@ function parseBundleLine(state: AppState, trimmed: string): boolean {
   const totalMatch = trimmed.match(BUNDLE_TOTAL_RX);
   if (totalMatch && state.bundle) {
     const num = parseFloat(totalMatch[2]);
-    const isMb = /MB/i.test(totalMatch[2]);
-    const kb = Math.round(isMb ? num * 1024 : num);
+    const unit = totalMatch[3].toUpperCase();
+    const kb = Math.round(unit === 'MB' ? num * 1024 : unit === 'B' ? num / 1024 : num);
     if (/Initial/i.test(totalMatch[1])) state.bundle.initialKB = kb;
     else state.bundle.lazyKB = kb;
     return true;
