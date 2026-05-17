@@ -15,6 +15,7 @@ import { DiskLogger } from './diskLogger.js';
 import type { History } from './history.js';
 import { dependants, topoLevels, transitiveClosure } from './depends.js';
 import { runOneShot, startWatch, type OneShotResult, type WatchTask } from './taskRunner.js';
+import { describeHolder, findPortHolder } from './portDiag.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -24,6 +25,7 @@ interface Entry {
   resolvedUrl?: string;
   prevHealthyAt?: number;
   cascadeArmed?: boolean;
+  lastBundleInitialKB?: number;
 }
 
 const EVENT_BUFFER_MAX = 500;
@@ -283,12 +285,14 @@ export class Registry extends EventEmitter {
 
     const free = await isPortFree(port);
     if (!free) {
+      const holder = findPortHolder(port);
+      const msg = describeHolder(port, holder);
       e.state.status = 'error';
       e.state.port = port;
-      e.state.lastStatusMessage = `port ${port} already in use`;
-      this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'error', message: `port ${port} already in use` });
+      e.state.lastStatusMessage = msg;
+      this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'error', message: msg });
       this.emit('change');
-      return { ok: false, status: 'error', error: `port ${port} already in use` };
+      return { ok: false, status: 'error', error: msg };
     }
 
     e.state.health = 'unknown';
@@ -322,6 +326,21 @@ export class Registry extends EventEmitter {
       onLogLine: line => e.logger?.write(line),
       onCompile: ms => {
         this.history?.recordCompile(name, ms);
+        const state = this.getState(name)!;
+        const prevInit = e.lastBundleInitialKB;
+        if (state.bundle && state.bundle.initialKB > 0) {
+          if (prevInit && prevInit > 0) {
+            const pct = ((state.bundle.initialKB - prevInit) / prevInit) * 100;
+            state.bundleRegressionPct = Math.round(pct * 10) / 10;
+            if (pct > 10) {
+              this.recordEvent({ app: name, type: 'bundle-regression', message: `initialKB +${state.bundleRegressionPct}% (${prevInit}->${state.bundle.initialKB})` });
+            }
+          } else {
+            state.bundleRegressionPct = null;
+          }
+          e.lastBundleInitialKB = state.bundle.initialKB;
+        }
+        this.checkCompileRegression(name, ms);
         this.emit('compile', { name, ms });
       },
       onBundleUpdate: () => this.emit('bundleUpdate', { name }),
@@ -454,6 +473,19 @@ export class Registry extends EventEmitter {
       out.push({ app: wt.app, task: wt.task, pid: wt.pid, startedAt: wt.startedAt });
     }
     return out;
+  }
+
+  private checkCompileRegression(name: string, ms: number): void {
+    const h = this.history;
+    if (!h) return;
+    const rows = h.queryCompiles({ app: name, limit: 31 });
+    const prior = rows.filter(r => r.ms !== ms).slice(0, 30).map(r => r.ms);
+    if (prior.length < 10) return;
+    const sorted = [...prior].sort((a, b) => a - b);
+    const p50 = sorted[Math.floor((sorted.length - 1) * 0.5)];
+    if (ms > 2 * p50) {
+      this.recordEvent({ app: name, type: 'compile-regression', message: `${(ms / 1000).toFixed(1)}s vs p50 ${(p50 / 1000).toFixed(1)}s` });
+    }
   }
 
   watchTaskLogs(name: string, task: string, tail?: number): string[] | null {

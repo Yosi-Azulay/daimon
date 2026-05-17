@@ -1,4 +1,7 @@
 import { loadConfig } from './config.js';
+import { discoverApps } from './discovery.js';
+import { runDoctor } from './doctor.js';
+import { findPortHolder, killHolder } from './portDiag.js';
 
 function fail(msg: string, code = 1): never {
   process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
@@ -166,6 +169,27 @@ async function main() {
       if (!name) fail(JSON.stringify({ error: 'usage: appman why <name>' }));
       const r = await call(`/api/history/why/${encodeURIComponent(name)}`);
       out(r.body);
+      return;
+    }
+    case 'doctor': {
+      const cfgR = loadConfig();
+      if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
+      const apps = discoverApps(cfgR.config);
+      const result = await runDoctor(cfgR.config, apps);
+      out(result);
+      if (!result.ok) process.exit(1);
+      return;
+    }
+    case 'free-port': {
+      const port = Number(f.positional[0]);
+      if (!Number.isFinite(port) || port <= 0) fail(JSON.stringify({ error: 'usage: appman free-port <port> [--force]' }));
+      const holder = findPortHolder(port);
+      if (!holder) { out({ port, free: true }); return; }
+      if (!f.force) { out({ port, free: false, holder }); return; }
+      if (holder.pid === process.pid) fail(JSON.stringify({ error: 'refuse to kill appman itself', holder }));
+      const ok = await killHolder(holder);
+      out({ port, killed: ok, holder });
+      if (!ok) process.exit(1);
       return;
     }
     case 'snapshot': {

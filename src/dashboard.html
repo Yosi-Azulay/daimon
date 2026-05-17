@@ -36,7 +36,7 @@
     <tr>
       <th>name</th><th>status</th><th>health</th><th>port</th><th>url</th>
       <th>errors</th><th>uptime</th><th class="num">cpu%</th><th class="num">mem MB</th>
-      <th>recent compile</th><th>actions</th>
+      <th>recent compile</th><th>bundle</th><th>actions</th>
     </tr>
   </thead>
   <tbody id="rows"></tbody>
@@ -84,6 +84,7 @@ async function tick() {
         <td class="num">${a.cpu == null ? '' : a.cpu.toFixed ? a.cpu.toFixed(1) : a.cpu}</td>
         <td class="num">${a.memMB == null ? '' : a.memMB}</td>
         <td>${sparkline((a.compileHistoryMs || []).slice(-10))}</td>
+        <td>${a.bundle ? `${a.bundle.initialKB}KB initial · ${a.bundle.lazyKB}KB lazy${a.bundleRegressionPct != null && a.bundleRegressionPct > 10 ? ` <span class="err">(+${a.bundleRegressionPct}%)</span>` : ''}` : ''}</td>
         <td>
           <button onclick="action('${a.name}','start',this)">start</button>
           <button onclick="action('${a.name}','stop',this)">stop</button>

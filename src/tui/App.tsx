@@ -241,6 +241,9 @@ export default function App({ registry, apiPort, onQuit }: Props) {
               {current.compileHistoryMs.length > 0 ? (
                 <Text>Recent compile: {current.compileHistoryMs.slice(-5).map(ms => (ms / 1000).toFixed(1) + 's').join(' · ')}</Text>
               ) : null}
+              {current.bundle ? (
+                <Text>Bundle: {current.bundle.initialKB}KB initial · {current.bundle.lazyKB}KB lazy{current.bundleRegressionPct != null && current.bundleRegressionPct > 10 ? <Text color="red"> (+{current.bundleRegressionPct}% ⚠)</Text> : null}</Text>
+              ) : null}
               {state.lastStatusMessage ? <Text dimColor>Note:     {state.lastStatusMessage}</Text> : null}
               <Text>──── recent log {logFocus ? '(focused)' : ''} ────</Text>
               {recentLogs.length === 0 ? <Text dimColor>(no output yet)</Text> : recentLogs.map((line, i) => (
