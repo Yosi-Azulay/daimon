@@ -22,7 +22,7 @@ export interface LogsConfig {
 }
 
 export interface AppmanConfig {
-  searchRoots: string[];
+  searchRoots: (string | SearchRoot)[];
   portRange: [number, number];
   apiPort: number;
   overrides: Record<string, AppOverride>;
@@ -32,6 +32,11 @@ export interface AppmanConfig {
   autoRestart: AutoRestartConfig;
   healthProbe: HealthProbeConfig;
   logs: LogsConfig;
+}
+
+export interface SearchRoot {
+  path: string;
+  viteSubfolders?: boolean;
 }
 
 export interface AppOverride {

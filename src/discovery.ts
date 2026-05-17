@@ -26,7 +26,9 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
   const found = new Map<string, DiscoveredApp>();
   const warnings: string[] = [];
 
-  for (const rootRaw of config.searchRoots) {
+  for (const rootEntry of config.searchRoots) {
+    const rootRaw = typeof rootEntry === 'string' ? rootEntry : rootEntry.path;
+    const viteSubfolders = typeof rootEntry === 'string' ? false : !!rootEntry.viteSubfolders;
     const root = path.resolve(rootRaw);
     if (!fs.existsSync(root)) {
       warnings.push(`searchRoot does not exist: ${root}`);
@@ -86,7 +88,57 @@ export function discoverApps(config: AppmanConfig): DiscoveredApp[] {
       continue;
     }
 
-    warnings.push(`searchRoot has neither nx.json nor angular.json: ${root}`);
+    const hasVite = fg.sync('vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true, deep: 1 });
+    const hasStorybook = fs.existsSync(path.join(root, '.storybook'));
+    let matched = false;
+
+    if (hasVite.length > 0) {
+      const name = path.basename(root);
+      if (!found.has(name)) {
+        found.set(name, {
+          name,
+          workspaceRoot: root,
+          workspaceType: 'vite',
+          command: `npx vite`,
+          hidden: false,
+          tags: [],
+        });
+      }
+      matched = true;
+      if (viteSubfolders) {
+        const sub = fg.sync('*/vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true });
+        for (const f of sub) {
+          const dir = path.dirname(f);
+          const subName = path.basename(dir);
+          if (subName === name || found.has(subName)) continue;
+          found.set(subName, {
+            name: subName,
+            workspaceRoot: dir,
+            workspaceType: 'vite',
+            command: `npx vite`,
+            hidden: false,
+            tags: [],
+          });
+        }
+      }
+    }
+
+    if (hasStorybook) {
+      const name = `${path.basename(root)}-storybook`;
+      if (!found.has(name)) {
+        found.set(name, {
+          name,
+          workspaceRoot: root,
+          workspaceType: 'storybook',
+          command: `npx storybook dev --no-open`,
+          hidden: false,
+          tags: [],
+        });
+      }
+      matched = true;
+    }
+
+    if (!matched) warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook: ${root}`);
   }
 
   for (const [name, ov] of Object.entries(config.overrides || {})) {

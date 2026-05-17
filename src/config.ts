@@ -43,10 +43,10 @@ function validate(raw: unknown, source: string): AppmanConfig {
   const cfg = defaultConfig();
 
   if (obj.searchRoots !== undefined) {
-    if (!Array.isArray(obj.searchRoots) || !obj.searchRoots.every(s => typeof s === 'string')) {
-      throw new Error(`Config "searchRoots" must be an array of strings (${source})`);
+    if (!Array.isArray(obj.searchRoots) || !obj.searchRoots.every(s => typeof s === 'string' || (s && typeof s === 'object' && typeof (s as any).path === 'string'))) {
+      throw new Error(`Config "searchRoots" must be an array of strings or { path, viteSubfolders? } objects (${source})`);
     }
-    cfg.searchRoots = obj.searchRoots as string[];
+    cfg.searchRoots = obj.searchRoots as any;
   }
 
   if (obj.portRange !== undefined) {
