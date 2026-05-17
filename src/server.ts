@@ -108,6 +108,30 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'session') {
+        if (parts[2] === 'record' && method === 'POST') {
+          const action = url.searchParams.get('action') || 'toggle';
+          if (action === 'start' || (action === 'toggle' && !registry.sessionRecorder.isRecording())) {
+            const r = registry.sessionRecorder.start();
+            sendJson(res, 200, { recording: true, path: r.path });
+            return;
+          }
+          if (action === 'stop' || (action === 'toggle' && registry.sessionRecorder.isRecording())) {
+            const r = registry.sessionRecorder.stop();
+            sendJson(res, 200, { recording: false, path: r.path });
+            return;
+          }
+          sendJson(res, 400, { error: 'invalid action' });
+          return;
+        }
+        if (parts[2] === 'status' && method === 'GET') {
+          sendJson(res, 200, { recording: registry.sessionRecorder.isRecording() });
+          return;
+        }
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'history') {
         if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
         const h = registry.getHistory();

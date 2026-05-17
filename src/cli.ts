@@ -2,6 +2,7 @@ import { loadConfig } from './config.js';
 import { discoverApps } from './discovery.js';
 import { runDoctor } from './doctor.js';
 import { findPortHolder, killHolder } from './portDiag.js';
+import { readSession } from './session.js';
 
 function fail(msg: string, code = 1): never {
   process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
@@ -195,6 +196,31 @@ async function main() {
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       if (r.status === 409) { out(r.body); process.exit(1); }
       out(r.body);
+      return;
+    }
+    case 'record': {
+      const r = await call('/api/session/record?action=toggle', 'POST');
+      out(r.body);
+      return;
+    }
+    case 'replay': {
+      const file = f.positional[0];
+      if (!file) fail(JSON.stringify({ error: 'usage: appman replay <session.jsonl> [--speed N]' }));
+      const speed = f.speed && f.speed > 0 ? f.speed : 1;
+      let ops;
+      try { ops = readSession(file); } catch (err: any) { fail(JSON.stringify({ error: err?.message || String(err) })); }
+      let prev = 0;
+      for (const op of ops) {
+        const gap = Math.max(0, (op.ts - prev) / speed);
+        if (gap > 0) await new Promise(r => setTimeout(r, gap));
+        prev = op.ts;
+        if (op.kind === 'run') {
+          await callJson(`/api/apps/${encodeURIComponent(op.app)}/run/${encodeURIComponent(op.task || '')}`, 'POST', { args: op.args || [] });
+        } else {
+          await call(`/api/apps/${encodeURIComponent(op.app)}/${op.kind}`, 'POST');
+        }
+      }
+      out({ replayed: ops.length, file });
       return;
     }
     case 'doctor': {

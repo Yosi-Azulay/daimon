@@ -17,6 +17,7 @@ import { dependants, topoLevels, transitiveClosure } from './depends.js';
 import { runOneShot, startWatch, type OneShotResult, type WatchTask } from './taskRunner.js';
 import { describeHolder, findPortHolder } from './portDiag.js';
 import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.js';
+import { SessionRecorder } from './session.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -38,6 +39,7 @@ export class Registry extends EventEmitter {
   private readonly eventBuffer: AppEvent[] = [];
   private history: History | null = null;
   private readonly watchTasks = new Map<string, WatchTask>();
+  readonly sessionRecorder = new SessionRecorder();
 
   constructor(config: AppmanConfig, apps: DiscoveredApp[], portAlloc?: PortAllocator) {
     super();
@@ -268,6 +270,7 @@ export class Registry extends EventEmitter {
   }
 
   async start(name: string): Promise<{ ok: boolean; status: string; error?: string }> {
+    this.sessionRecorder.append({ kind: 'start', app: name });
     const e = this.entries.get(name);
     if (!e) return { ok: false, status: 'unknown', error: 'unknown app' };
     if (e.proc?.isRunning()) return { ok: true, status: e.state.status };
@@ -367,6 +370,7 @@ export class Registry extends EventEmitter {
   }
 
   async stop(name: string): Promise<{ ok: boolean; status: string; error?: string }> {
+    this.sessionRecorder.append({ kind: 'stop', app: name });
     const e = this.entries.get(name);
     if (!e) return { ok: false, status: 'unknown', error: 'unknown app' };
     this.emit('userStop', { name });
@@ -390,6 +394,7 @@ export class Registry extends EventEmitter {
   }
 
   async restart(name: string): Promise<{ ok: boolean; status: string; error?: string }> {
+    this.sessionRecorder.append({ kind: 'restart', app: name });
     await this.stop(name);
     return this.start(name);
   }
@@ -452,6 +457,7 @@ export class Registry extends EventEmitter {
   }
 
   async runTask(name: string, task: string, args: string[] = []): Promise<OneShotResult | { error: string }> {
+    this.sessionRecorder.append({ kind: 'run', app: name, task, args });
     const app = this.getApp(name);
     if (!app) return { error: 'unknown app' };
     const result = await runOneShot(app, task, args);
