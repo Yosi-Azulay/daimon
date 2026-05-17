@@ -1,26 +1,51 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { Registry } from './registry.js';
 import type { NotificationsConfig } from './types.js';
 
 const requireCjs = createRequire(import.meta.url);
 
-interface ThrottleKey { app: string; category: string; }
 const THROTTLE_MS = 60_000;
 
 export class Notifier {
   private notifier: any = null;
+  private toaster: any = null;
   private lastSent = new Map<string, number>();
   private warned = false;
+  private logFile: string;
 
   constructor(private readonly registry: Registry, private readonly cfg: NotificationsConfig) {
-    if (!cfg.enabled) return;
+    this.logFile = path.join(os.homedir(), '.appman', 'notifications.log');
+    try { fs.mkdirSync(path.dirname(this.logFile), { recursive: true }); } catch {}
+    if (!cfg.enabled) {
+      this.audit('init', 'disabled by config');
+      return;
+    }
     try {
-      this.notifier = requireCjs('node-notifier');
+      const mod = requireCjs('node-notifier');
+      this.notifier = mod;
+      if (process.platform === 'win32') {
+        try {
+          const WindowsToaster = mod.WindowsToaster;
+          if (WindowsToaster) this.toaster = new WindowsToaster({ withFallback: true });
+        } catch (err: any) {
+          this.audit('init', `WindowsToaster unavailable: ${err?.message || err}`);
+        }
+      }
+      this.audit('init', `node-notifier loaded${this.toaster ? ' (+WindowsToaster fallback)' : ''}`);
     } catch (err: any) {
       this.warnOnce(`node-notifier unavailable: ${err?.message || err}`);
+      this.audit('init', `node-notifier load failed: ${err?.message || err}`);
       return;
     }
     registry.on('event', this.onEvent);
+  }
+
+  private audit(kind: string, detail: string): void {
+    const line = `${new Date().toISOString()}\t${kind}\t${detail}\n`;
+    try { fs.appendFileSync(this.logFile, line); } catch {}
   }
 
   private warnOnce(msg: string): void {
@@ -54,12 +79,28 @@ export class Notifier {
     if (!this.notifier) return;
     const key = `${app}::${category}`;
     const last = this.lastSent.get(key) ?? 0;
-    if (Date.now() - last < THROTTLE_MS) return;
-    this.lastSent.set(key, Date.now());
+    const now = Date.now();
+    if (now - last < THROTTLE_MS) {
+      this.audit('throttled', `${key}`);
+      return;
+    }
+    this.lastSent.set(key, now);
+    const payload = { title: `appman: ${title}`, message, wait: false, appID: 'appman' };
+    const cb = (err: any, response: any) => {
+      if (err) {
+        this.audit('fail', `${key} :: ${err?.message || err}`);
+        this.warnOnce(`notify failed: ${err?.message || err}`);
+      } else {
+        this.audit('ok', `${key} :: ${title} :: ${response ?? '(no response)'}`);
+      }
+    };
     try {
-      this.notifier.notify({ title: `appman: ${title}`, message, wait: false });
+      this.audit('attempt', `${key} :: ${title}`);
+      const target = this.toaster ?? this.notifier;
+      target.notify(payload, cb);
     } catch (err: any) {
-      this.warnOnce(`notify failed: ${err?.message || err}`);
+      this.audit('throw', `${key} :: ${err?.message || err}`);
+      this.warnOnce(`notify threw: ${err?.message || err}`);
     }
   }
 }

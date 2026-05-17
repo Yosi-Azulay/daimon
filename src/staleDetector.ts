@@ -45,7 +45,8 @@ export class StaleDetector {
       if (s.stale) this.registry.setStale(name, false);
       return;
     }
-    if (this.hasSourceChange(app.workspaceRoot, s.startedAt)) {
+    const referenceTs = s.lastCompileAt ?? s.startedAt;
+    if (this.hasSourceChange(app.workspaceRoot, referenceTs)) {
       if (!s.stale) {
         this.registry.setStale(name, true);
         this.registry.recordEvent({ app: name, type: 'stale', message: `no output in ${Math.round(silentFor / 1000)}s despite source changes` });
@@ -53,14 +54,14 @@ export class StaleDetector {
     }
   }
 
-  private hasSourceChange(root: string, startedAt: number): boolean {
+  private hasSourceChange(root: string, sinceTs: number): boolean {
     const cached = this.caches.get(root);
     if (!cached || Date.now() - cached.ts > GLOB_REFRESH_MS) {
       const files = this.scan(root);
       this.caches.set(root, { ts: Date.now(), files });
     }
     const fresh = this.caches.get(root)!;
-    return fresh.files.some(f => f.mtime > startedAt);
+    return fresh.files.some(f => f.mtime > sinceTs);
   }
 
   private scan(root: string): { path: string; mtime: number }[] {
