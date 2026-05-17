@@ -28,6 +28,15 @@ const TS_CODE_RX = /\berror TS(\d+)/;
 const ESBUILD_TS_RX = /✘\s*\[ERROR\]\s*TS(\d+)/;
 const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+)/;
 
+const ANNOUNCED_LOCAL_RX = /Local:\s+(https?:\/\/\S+)/i;
+const ANNOUNCED_SERVER_RX = /Server running at\s+(https?:\/\/\S+)/i;
+const ANNOUNCED_LISTENING_RX = /listening on\s+(https?:\/\/\S+)/i;
+const ANNOUNCED_LISTEN_PLAIN_RX = /(?:listening|listen)\s+(https?:\/\/\S+)/i;
+const BUNDLE_INITIAL_HEADER_RX = /Initial (?:chunk|total)/i;
+const BUNDLE_LAZY_HEADER_RX = /Lazy chunk/i;
+const BUNDLE_TOTAL_RX = /^\s*\|?\s*(Initial total|Lazy total)\s*\|?\s*(\S+)\s*\|/i;
+const BUNDLE_ROW_RX = /^\s*\|?\s*([^\s|][^|]*?)\s*\|\s*([^|]+?)\s*\|\s*([\d.]+)\s*(kB|MB|B)\b/i;
+
 function hashLine(line: string): string {
   return crypto.createHash('sha1').update(line).digest('hex').slice(0, 16);
 }
@@ -48,6 +57,65 @@ function parseStructured(line: string): ParsedError {
 export interface ParseResult {
   statusChanged: boolean;
   error?: { entry: ErrorEntry; isNew: boolean };
+  announcedUrl?: string;
+  bundleUpdated?: boolean;
+  compileMs?: number;
+}
+
+function rewriteHost(rawUrl: string, fallback: string): string {
+  try {
+    const u = new URL(rawUrl);
+    if (u.hostname === '0.0.0.0' || u.hostname === '[::]') {
+      u.hostname = fallback.includes(':') ? `[${fallback}]` : fallback;
+      return u.toString().replace(/\/$/, '');
+    }
+    return rawUrl.replace(/\/$/, '');
+  } catch {
+    return rawUrl;
+  }
+}
+
+export function detectAnnouncedUrl(line: string, fallbackHost = '127.0.0.1'): string | null {
+  const m = line.match(ANNOUNCED_LOCAL_RX)
+    || line.match(ANNOUNCED_SERVER_RX)
+    || line.match(ANNOUNCED_LISTENING_RX)
+    || line.match(ANNOUNCED_LISTEN_PLAIN_RX);
+  if (!m) return null;
+  const raw = m[1].replace(/[),.;]+$/, '');
+  return rewriteHost(raw, fallbackHost);
+}
+
+function parseBundleLine(state: AppState, trimmed: string): boolean {
+  if (BUNDLE_INITIAL_HEADER_RX.test(trimmed)) {
+    if (!state.bundle) state.bundle = { initialKB: 0, lazyKB: 0, files: [] };
+    (state as any)._bundleSection = 'initial';
+    return false;
+  }
+  if (BUNDLE_LAZY_HEADER_RX.test(trimmed)) {
+    if (!state.bundle) state.bundle = { initialKB: 0, lazyKB: 0, files: [] };
+    (state as any)._bundleSection = 'lazy';
+    return false;
+  }
+  const totalMatch = trimmed.match(BUNDLE_TOTAL_RX);
+  if (totalMatch && state.bundle) {
+    const num = parseFloat(totalMatch[2]);
+    const isMb = /MB/i.test(totalMatch[2]);
+    const kb = Math.round(isMb ? num * 1024 : num);
+    if (/Initial/i.test(totalMatch[1])) state.bundle.initialKB = kb;
+    else state.bundle.lazyKB = kb;
+    return true;
+  }
+  const rowMatch = trimmed.match(BUNDLE_ROW_RX);
+  if (rowMatch && state.bundle) {
+    const file = rowMatch[1].trim();
+    if (/^(Initial|Lazy)\s+(total|chunk)/i.test(file)) return false;
+    const unit = rowMatch[4].toUpperCase();
+    const raw = parseFloat(rowMatch[3]);
+    const kb = unit === 'MB' ? raw * 1024 : unit === 'B' ? raw / 1024 : raw;
+    state.bundle.files.push({ name: file, sizeKB: Math.round(kb * 10) / 10 });
+    return false;
+  }
+  return false;
 }
 
 export function parseLine(state: AppState, line: string): ParseResult | null {
@@ -56,12 +124,22 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
 
   const prev = state.status;
   let statusChanged = false;
+  let announcedUrl: string | undefined;
+
+  const ann = detectAnnouncedUrl(trimmed);
+  if (ann && !state.announcedUrl) {
+    state.announcedUrl = ann;
+    announcedUrl = ann;
+  }
+
+  const bundleUpdated = parseBundleLine(state, trimmed);
+  let compileMs: number | undefined;
 
   if (SERVING_PATTERNS.some(rx => rx.test(trimmed))) {
     if (state.status === 'compiling' || state.status === 'starting') {
       const now = Date.now();
       if (state.compileStartedAt != null) {
-        const compileMs = now - state.compileStartedAt;
+        compileMs = now - state.compileStartedAt;
         state.lastCompileMs = compileMs;
         state.lastCompileAt = now;
         state.compileStartedAt = null;
@@ -106,5 +184,5 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
   }
 
   statusChanged = state.status !== prev;
-  return { statusChanged, error: errorResult };
+  return { statusChanged, error: errorResult, announcedUrl, bundleUpdated, compileMs };
 }

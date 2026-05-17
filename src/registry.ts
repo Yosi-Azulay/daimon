@@ -12,12 +12,17 @@ import type {
 import { AppProcess } from './appProcess.js';
 import { PortAllocator, isPortFree } from './ports.js';
 import { DiskLogger } from './diskLogger.js';
+import type { History } from './history.js';
+import { dependants, topoLevels, transitiveClosure } from './depends.js';
 
 interface Entry {
   app: DiscoveredApp;
   state: AppState;
   proc: AppProcess | null;
   logger?: DiskLogger;
+  resolvedUrl?: string;
+  prevHealthyAt?: number;
+  cascadeArmed?: boolean;
 }
 
 const EVENT_BUFFER_MAX = 500;
@@ -27,6 +32,7 @@ export class Registry extends EventEmitter {
   private readonly portAlloc: PortAllocator;
   private readonly config: AppmanConfig;
   private readonly eventBuffer: AppEvent[] = [];
+  private history: History | null = null;
 
   constructor(config: AppmanConfig, apps: DiscoveredApp[], portAlloc?: PortAllocator) {
     super();
@@ -47,6 +53,14 @@ export class Registry extends EventEmitter {
 
   getPortAllocator(): PortAllocator {
     return this.portAlloc;
+  }
+
+  setHistory(h: History | null): void {
+    this.history = h;
+  }
+
+  getHistory(): History | null {
+    return this.history;
   }
 
   private freshState(name: string, tags: string[]): AppState {
@@ -70,6 +84,16 @@ export class Registry extends EventEmitter {
       restartWindowStart: null,
       nextRestartAt: null,
       tags,
+      announcedUrl: null,
+      lastHealthError: null,
+      cachedProbeHost: null,
+      lastLogTs: null,
+      stale: false,
+      bundle: null,
+      bundleRegressionPct: null,
+      activeEnvFile: null,
+      sessionOverrides: null,
+      dependsOn: this.config.depends?.[name] ?? [],
     };
   }
 
@@ -89,11 +113,16 @@ export class Registry extends EventEmitter {
       s.startedAt && (s.status === 'serving' || s.status === 'compiling' || s.status === 'starting')
         ? Date.now() - s.startedAt
         : null;
+    const override = this.config.overrides?.[name]?.url;
+    const resolvedUrl = override
+      || e.resolvedUrl
+      || s.announcedUrl
+      || (s.port ? `http://127.0.0.1:${s.port}` : null);
     return {
       name: s.name,
       status: s.status,
       port: s.port,
-      url: s.port ? `http://127.0.0.1:${s.port}` : null,
+      url: resolvedUrl,
       errorCount: [...s.errors.values()].reduce((acc, x) => acc + x.count, 0),
       uptimeMs,
       lastCompileMs: s.lastCompileMs,
@@ -105,6 +134,13 @@ export class Registry extends EventEmitter {
       tags: [...s.tags],
       restartAttempts: s.restartAttempts,
       nextRestartAt: s.nextRestartAt,
+      announcedUrl: s.announcedUrl,
+      lastHealthError: s.lastHealthError,
+      stale: s.stale,
+      bundle: s.bundle,
+      bundleRegressionPct: s.bundleRegressionPct,
+      dependsOn: [...s.dependsOn],
+      activeEnvFile: s.activeEnvFile,
     };
   }
 
@@ -151,17 +187,78 @@ export class Registry extends EventEmitter {
     if (this.eventBuffer.length > EVENT_BUFFER_MAX) {
       this.eventBuffer.splice(0, this.eventBuffer.length - EVENT_BUFFER_MAX);
     }
+    this.history?.recordEvent(full);
     this.emit('event', full);
   }
 
   setHealth(name: string, health: AppHealth): void {
-    const s = this.getState(name);
-    if (!s) return;
+    const e = this.entries.get(name);
+    if (!e) return;
+    const s = e.state;
+    s.lastHealthAt = Date.now();
     if (s.health === health) return;
     const from = s.health;
     s.health = health;
-    s.lastHealthAt = Date.now();
+    if (health === 'healthy') {
+      e.prevHealthyAt = Date.now();
+      if (e.cascadeArmed) {
+        e.cascadeArmed = false;
+        this.triggerCascadeRestart(name);
+      }
+    }
     this.recordEvent({ app: name, type: 'health', from, to: health });
+    this.emit('change');
+  }
+
+  armCascade(name: string): void {
+    const e = this.entries.get(name);
+    if (!e) return;
+    if (!this.config.cascadeRestart) return;
+    if (e.prevHealthyAt == null) return;
+    e.cascadeArmed = true;
+  }
+
+  setLastHealthError(name: string, msg: string | null): void {
+    const s = this.getState(name);
+    if (!s) return;
+    if (s.lastHealthError === msg) return;
+    s.lastHealthError = msg;
+    this.emit('change');
+  }
+
+  setResolvedUrl(name: string, url: string): void {
+    const e = this.entries.get(name);
+    if (!e) return;
+    if (e.resolvedUrl === url) return;
+    e.resolvedUrl = url;
+    this.emit('change');
+  }
+
+  setCachedProbeHost(name: string, host: string): void {
+    const s = this.getState(name);
+    if (!s) return;
+    s.cachedProbeHost = host;
+  }
+
+  setStale(name: string, stale: boolean): void {
+    const s = this.getState(name);
+    if (!s) return;
+    if (s.stale === stale) return;
+    s.stale = stale;
+    this.emit('change');
+  }
+
+  setSessionOverride(name: string, overrides: { command?: string; port?: number; env?: Record<string, string> } | null): void {
+    const s = this.getState(name);
+    if (!s) return;
+    s.sessionOverrides = overrides;
+    this.emit('change');
+  }
+
+  setActiveEnvFile(name: string, file: string | null): void {
+    const s = this.getState(name);
+    if (!s) return;
+    s.activeEnvFile = file;
     this.emit('change');
   }
 
@@ -194,20 +291,38 @@ export class Registry extends EventEmitter {
 
     e.state.health = 'unknown';
     e.state.lastHealthAt = null;
+    e.state.announcedUrl = null;
+    e.state.lastHealthError = null;
+    e.state.cachedProbeHost = null;
+    e.state.stale = false;
+    e.state.lastLogTs = null;
+    e.resolvedUrl = undefined;
     if (!e.logger && this.config.logs.enabled) {
       e.logger = new DiskLogger(name, this.config.logs);
     }
+    const so = e.state.sessionOverrides;
     const proc = new AppProcess({
       state: e.state,
       app: e.app,
       port,
+      envOverride: so?.env,
+      commandOverride: so?.command,
       onStateChange: () => this.emit('change'),
-      onStatusChange: (from, to, message) =>
-        this.recordEvent({ app: name, type: 'status', from, to, message }),
+      onStatusChange: (from, to, message) => {
+        this.recordEvent({ app: name, type: 'status', from, to, message });
+        if ((to === 'stopped' || to === 'error') && (from === 'serving' || from === 'compiling')) {
+          this.armCascade(name);
+        }
+      },
       onErrorRecorded: (entry, isNew) =>
         this.recordEvent({ app: name, type: isNew ? 'error-new' : 'error-recur', message: entry.message }),
       onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),
       onLogLine: line => e.logger?.write(line),
+      onCompile: ms => {
+        this.history?.recordCompile(name, ms);
+        this.emit('compile', { name, ms });
+      },
+      onBundleUpdate: () => this.emit('bundleUpdate', { name }),
     });
     e.proc = proc;
     this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'starting' });
@@ -241,6 +356,44 @@ export class Registry extends EventEmitter {
   async restart(name: string): Promise<{ ok: boolean; status: string; error?: string }> {
     await this.stop(name);
     return this.start(name);
+  }
+
+  async startWithDeps(name: string, opts: { waitMs?: number } = {}): Promise<{ ok: boolean; results: { name: string; status: string; health: string; error?: string }[] }> {
+    if (!this.entries.has(name)) return { ok: false, results: [{ name, status: 'unknown', health: 'unknown', error: 'unknown app' }] };
+    const closure = transitiveClosure(this.config.depends ?? {}, name).filter(n => this.entries.has(n));
+    const levels = topoLevels(this.config.depends ?? {}, closure);
+    const results: { name: string; status: string; health: string; error?: string }[] = [];
+    const waitMs = opts.waitMs ?? 60_000;
+    for (const level of levels) {
+      const startResults = await Promise.all(level.map(n => this.start(n)));
+      for (let i = 0; i < level.length; i++) {
+        const sr = startResults[i];
+        if (!sr.ok) {
+          results.push({ name: level[i], status: sr.status, health: 'unknown', error: sr.error });
+          return { ok: false, results };
+        }
+      }
+      const waits = await Promise.all(level.map(n => this.waitFor(n, 'healthy', waitMs)));
+      for (let i = 0; i < level.length; i++) {
+        const w = waits[i];
+        const reachedHealthy = !w.timedOut && w.status === 'serving' && w.health === 'healthy';
+        results.push({ name: w.name, status: w.status, health: w.health, error: reachedHealthy ? undefined : (w.timedOut ? 'timeout waiting for healthy' : 'did not reach healthy') });
+        if (!reachedHealthy) return { ok: false, results };
+      }
+    }
+    return { ok: true, results };
+  }
+
+  triggerCascadeRestart(target: string): void {
+    if (!this.config.cascadeRestart) return;
+    const ds = dependants(this.config.depends ?? {}, target);
+    for (const d of ds) {
+      const s = this.getState(d);
+      if (!s) continue;
+      if (s.status === 'serving' || s.status === 'compiling' || s.status === 'starting') {
+        void this.restart(d);
+      }
+    }
   }
 
   async stopAll(timeoutMs = 3000): Promise<void> {

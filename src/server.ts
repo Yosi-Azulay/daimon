@@ -75,7 +75,58 @@ export function startServer(registry: Registry, port: number): http.Server {
         if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
         const sinceMs = parseDuration(url.searchParams.get('since'));
         const app = url.searchParams.get('app') || undefined;
-        sendJson(res, 200, registry.events({ sinceMs, app }));
+        const memEvents = registry.events({ sinceMs, app });
+        const h = registry.getHistory();
+        if (h && sinceMs && memEvents.length < 500) {
+          const sinceTs = Date.now() - sinceMs;
+          const rows = h.queryEvents({ app, since: sinceTs, limit: 1000 });
+          const seen = new Set(memEvents.map(e => `${e.ts}|${e.app}|${e.type}|${e.from ?? ''}|${e.to ?? ''}|${e.message ?? ''}`));
+          for (const r of rows) {
+            const key = `${r.ts}|${r.app}|${r.type}|${r.from_state ?? ''}|${r.to_state ?? ''}|${r.message ?? ''}`;
+            if (seen.has(key)) continue;
+            memEvents.push({ ts: r.ts, app: r.app, type: r.type as any, from: r.from_state ?? undefined, to: r.to_state ?? undefined, message: r.message ?? undefined });
+          }
+          memEvents.sort((a, b) => a.ts - b.ts);
+        }
+        sendJson(res, 200, memEvents);
+        return;
+      }
+
+      if (parts[0] === 'api' && parts[1] === 'history') {
+        if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+        const h = registry.getHistory();
+        if (!h) { sendJson(res, 200, []); return; }
+        const sub3 = parts[2];
+        const app = url.searchParams.get('app') || undefined;
+        const since = url.searchParams.get('since');
+        const until = url.searchParams.get('until');
+        const limit = url.searchParams.get('limit');
+        const sinceMs = since ? (/^\d{10,}$/.test(since) ? Number(since) : Date.now() - (parseDuration(since) ?? 0)) : undefined;
+        const untilMs = until ? (/^\d{10,}$/.test(until) ? Number(until) : Date.now() - (parseDuration(until) ?? 0)) : undefined;
+        const lim = limit ? Number(limit) : undefined;
+        if (sub3 === 'events') {
+          sendJson(res, 200, h.queryEvents({ app, since: sinceMs, until: untilMs, type: url.searchParams.get('type') || undefined, limit: lim }));
+          return;
+        }
+        if (sub3 === 'compile-times') {
+          sendJson(res, 200, h.queryCompiles({ app, since: sinceMs, until: untilMs, limit: lim }));
+          return;
+        }
+        if (sub3 === 'tasks') {
+          sendJson(res, 200, h.queryTasks({ app, task: url.searchParams.get('task') || undefined, since: sinceMs, limit: lim }));
+          return;
+        }
+        if (sub3 === 'summary' && parts.length >= 4) {
+          const name = decodeURIComponent(parts[3]);
+          sendJson(res, 200, h.summary(name));
+          return;
+        }
+        if (sub3 === 'why' && parts.length >= 4) {
+          const name = decodeURIComponent(parts[3]);
+          sendJson(res, 200, h.why(name));
+          return;
+        }
+        sendJson(res, 404, { error: 'not found' });
         return;
       }
 
@@ -167,7 +218,18 @@ export function startServer(registry: Registry, port: number): http.Server {
       }
 
       if (sub === 'start' && method === 'POST') {
+        const withDeps = url.searchParams.get('withDeps') === '1';
+        if (withDeps) {
+          const r = await registry.startWithDeps(name);
+          sendJson(res, r.ok ? 200 : 400, r);
+          return;
+        }
         const r = await registry.start(name);
+        sendJson(res, r.ok ? 200 : 400, r);
+        return;
+      }
+      if (sub === 'start-with-deps' && method === 'POST') {
+        const r = await registry.startWithDeps(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;
       }

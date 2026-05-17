@@ -9,6 +9,8 @@ import { HealthMonitor } from './health.js';
 import { UsageMonitor } from './usage.js';
 import { Restarter } from './restarter.js';
 import { loadPersistedState, savePersistedState } from './stateFile.js';
+import { History } from './history.js';
+import { findCycle } from './depends.js';
 import App from './tui/App.js';
 
 async function main() {
@@ -31,6 +33,14 @@ async function main() {
   const { config, path: cfgPath } = cfgResult;
   process.stdout.write(`[appman] config: ${cfgPath}\n`);
 
+  if (config.depends && Object.keys(config.depends).length) {
+    const cycle = findCycle(config.depends);
+    if (cycle) {
+      process.stderr.write(`[appman] config error: depends graph has a cycle: ${cycle.join(' -> ')}\n`);
+      process.exit(1);
+    }
+  }
+
   const apps = discoverApps(config);
   if (apps.length === 0) {
     process.stdout.write(`[appman] no serveable projects discovered in: ${config.searchRoots.join(', ') || '(none)'}\n`);
@@ -42,7 +52,9 @@ async function main() {
     onChange: snap => savePersistedState({ ports: snap }),
   });
   const registry = new Registry(config, apps, portAlloc);
-  const health = new HealthMonitor(registry, config.healthProbe);
+  const history = new History(config.history);
+  registry.setHistory(history);
+  const health = new HealthMonitor(registry, config.healthProbe, config);
   const usage = new UsageMonitor(registry);
   const restarter = new Restarter(registry, config.autoRestart);
   registry.on('childExit', ({ name, code, signal, stopping }: any) => restarter.onExit(name, code, signal, stopping));
@@ -55,7 +67,11 @@ async function main() {
         process.stderr.write(`[appman] warning: autoStart references unknown app "${name}"\n`);
         continue;
       }
-      void registry.start(name);
+      if (config.depends && config.depends[name] && config.depends[name].length) {
+        void registry.startWithDeps(name);
+      } else {
+        void registry.start(name);
+      }
     }
   }
 
@@ -69,6 +85,7 @@ async function main() {
     try { health.stop(); } catch {}
     try { usage.stop(); } catch {}
     try { restarter.stop(); } catch {}
+    try { history.close(); } catch {}
     try {
       await registry.stopAll(3000);
     } catch {}

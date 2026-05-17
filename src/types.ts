@@ -12,6 +12,37 @@ export interface HealthProbeConfig {
   intervalMs: number;
   timeoutMs: number;
   path: string;
+  host?: string | null;
+  scheme?: 'http' | 'https' | null;
+  rejectUnauthorized?: boolean;
+  fallbackHosts?: string[];
+}
+
+export interface HistoryConfig {
+  enabled: boolean;
+  path: string;
+  retentionDays: number;
+}
+
+export interface NotificationsConfig {
+  enabled: boolean;
+  onError: boolean;
+  onUnhealthy: boolean;
+  tray: boolean;
+}
+
+export interface StaleDetectConfig {
+  enabled: boolean;
+  silentMs: number;
+}
+
+export interface RequestLogConfig {
+  enabled: boolean;
+  portOffset: number;
+}
+
+export interface MetricsConfig {
+  enabled: boolean;
 }
 
 export interface LogsConfig {
@@ -32,6 +63,15 @@ export interface AppmanConfig {
   autoRestart: AutoRestartConfig;
   healthProbe: HealthProbeConfig;
   logs: LogsConfig;
+  depends: Record<string, string[]>;
+  cascadeRestart: boolean;
+  history: HistoryConfig;
+  notifications: NotificationsConfig;
+  staleDetect: StaleDetectConfig;
+  headless: boolean;
+  envFiles: Record<string, string[]>;
+  requestLog: RequestLogConfig;
+  metrics: MetricsConfig;
 }
 
 export interface SearchRoot {
@@ -44,6 +84,7 @@ export interface AppOverride {
   command?: string;
   hidden?: boolean;
   env?: Record<string, string>;
+  url?: string;
 }
 
 export interface DiscoveredApp {
@@ -83,7 +124,11 @@ export type AppEventType =
   | 'error-new'
   | 'error-recur'
   | 'health'
-  | 'restart-scheduled';
+  | 'restart-scheduled'
+  | 'stale'
+  | 'bundle-regression'
+  | 'compile-regression'
+  | 'task-run';
 
 export interface AppEvent {
   ts: number;
@@ -92,6 +137,12 @@ export interface AppEvent {
   from?: string;
   to?: string;
   message?: string;
+}
+
+export interface BundleInfo {
+  initialKB: number;
+  lazyKB: number;
+  files: { name: string; sizeKB: number }[];
 }
 
 export interface AppState {
@@ -115,6 +166,16 @@ export interface AppState {
   restartWindowStart: number | null;
   nextRestartAt: number | null;
   tags: string[];
+  announcedUrl: string | null;
+  lastHealthError: string | null;
+  cachedProbeHost: string | null;
+  lastLogTs: number | null;
+  stale: boolean;
+  bundle: BundleInfo | null;
+  bundleRegressionPct: number | null;
+  activeEnvFile: string | null;
+  sessionOverrides: { command?: string; port?: number; env?: Record<string, string> } | null;
+  dependsOn: string[];
 }
 
 export interface AppSummary {
@@ -133,4 +194,11 @@ export interface AppSummary {
   tags: string[];
   restartAttempts: number;
   nextRestartAt: number | null;
+  announcedUrl: string | null;
+  lastHealthError: string | null;
+  stale: boolean;
+  bundle: BundleInfo | null;
+  bundleRegressionPct: number | null;
+  dependsOn: string[];
+  activeEnvFile: string | null;
 }

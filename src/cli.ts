@@ -52,12 +52,25 @@ interface Flags {
   app?: string;
   tags: string[];
   positional: string[];
+  withDeps?: boolean;
+  watch?: boolean;
+  force?: boolean;
+  yes?: boolean;
+  deep?: boolean;
+  use?: string;
+  speed?: number;
+  task?: string;
+  headless?: boolean;
+  passthrough: string[];
 }
 
 function parseFlags(args: string[]): Flags {
-  const f: Flags = { tags: [], positional: [] };
+  const f: Flags = { tags: [], positional: [], passthrough: [] };
+  let afterDD = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (afterDD) { f.passthrough.push(a); continue; }
+    if (a === '--') { afterDD = true; continue; }
     if (a === '--tail') f.tail = Number(args[++i]);
     else if (a === '--since') f.since = args[++i];
     else if (a === '--since-last') f.sinceLast = true;
@@ -67,6 +80,15 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--timeout') f.timeout = args[++i];
     else if (a === '--app') f.app = args[++i];
     else if (a === '--tag') f.tags.push(args[++i]);
+    else if (a === '--with-deps') f.withDeps = true;
+    else if (a === '--watch') f.watch = true;
+    else if (a === '--force') f.force = true;
+    else if (a === '--yes') f.yes = true;
+    else if (a === '--deep') f.deep = true;
+    else if (a === '--use') f.use = args[++i];
+    else if (a === '--speed') f.speed = Number(args[++i]);
+    else if (a === '--task') f.task = args[++i];
+    else if (a === '--headless') f.headless = true;
     else f.positional.push(a);
   }
   return f;
@@ -87,7 +109,7 @@ function durationToSeconds(s: string): number | null {
 
 async function main() {
   const [, , cmd, ...rest] = process.argv;
-  if (!cmd) fail(JSON.stringify({ error: 'usage: appman <list|status|errors|events|wait|logs|start|stop|restart>' }));
+  if (!cmd) fail(JSON.stringify({ error: 'usage: appman <list|status|errors|events|wait|logs|start|stop|restart|up|down|history|why|tasks|run|snapshot|doctor|env|clean|free-port|record|replay>' }));
 
   const f = parseFlags(rest);
 
@@ -100,7 +122,6 @@ async function main() {
       return;
     }
     case 'status':
-    case 'start':
     case 'stop':
     case 'restart': {
       const name = f.positional[0];
@@ -109,6 +130,29 @@ async function main() {
       const method: 'GET' | 'POST' = cmd === 'status' ? 'GET' : 'POST';
       const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}`, method);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      return;
+    }
+    case 'start': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: appman start <name> [--with-deps]' }));
+      const qs = f.withDeps ? '?withDeps=1' : '';
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/start${qs}`, 'POST');
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      return;
+    }
+    case 'history': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: appman history <name>' }));
+      const r = await call(`/api/history/summary/${encodeURIComponent(name)}`);
+      out(r.body);
+      return;
+    }
+    case 'why': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: appman why <name>' }));
+      const r = await call(`/api/history/why/${encodeURIComponent(name)}`);
       out(r.body);
       return;
     }
@@ -181,7 +225,11 @@ async function main() {
         targets = list;
       }
       const action = cmd === 'up' ? 'start' : 'stop';
-      await Promise.all(targets.map(n => call(`/api/apps/${encodeURIComponent(n)}/${action}`, 'POST')));
+      if (cmd === 'up') {
+        await Promise.all(targets.map(n => call(`/api/apps/${encodeURIComponent(n)}/start?withDeps=1`, 'POST')));
+      } else {
+        await Promise.all(targets.map(n => call(`/api/apps/${encodeURIComponent(n)}/${action}`, 'POST')));
+      }
       if (cmd === 'up') {
         const budgetMs = 120_000;
         const start = Date.now();

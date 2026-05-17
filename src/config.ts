@@ -30,9 +30,33 @@ function defaultConfig(): AppmanConfig {
     profiles: {},
     tags: {},
     autoRestart: { enabled: false, maxAttempts: 5, windowMs: 300000 },
-    healthProbe: { enabled: true, intervalMs: 30000, timeoutMs: 2000, path: '/' },
+    healthProbe: {
+      enabled: true,
+      intervalMs: 30000,
+      timeoutMs: 2000,
+      path: '/',
+      host: null,
+      scheme: null,
+      rejectUnauthorized: false,
+      fallbackHosts: ['127.0.0.1', '::1'],
+    },
     logs: { enabled: false, dir: path.join(os.homedir(), '.appman', 'logs'), maxFiles: 5, maxBytesPerFile: 10000000 },
+    depends: {},
+    cascadeRestart: false,
+    history: { enabled: true, path: path.join(os.homedir(), '.appman', 'history.db'), retentionDays: 30 },
+    notifications: { enabled: true, onError: true, onUnhealthy: true, tray: false },
+    staleDetect: { enabled: true, silentMs: 30000 },
+    headless: false,
+    envFiles: {},
+    requestLog: { enabled: false, portOffset: 1000 },
+    metrics: { enabled: false },
   };
+}
+
+function expandTilde(p: string): string {
+  if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(os.homedir(), p.slice(2));
+  if (p === '~') return os.homedir();
+  return p;
 }
 
 function validate(raw: unknown, source: string): AppmanConfig {
@@ -110,9 +134,38 @@ function validate(raw: unknown, source: string): AppmanConfig {
   }
   if (obj.logs && typeof obj.logs === 'object') {
     cfg.logs = { ...cfg.logs, ...(obj.logs as Partial<AppmanConfig['logs']>) };
-    if (cfg.logs.dir.startsWith('~')) {
-      cfg.logs.dir = path.join(os.homedir(), cfg.logs.dir.slice(cfg.logs.dir.startsWith('~/') || cfg.logs.dir.startsWith('~\\') ? 2 : 1));
+    cfg.logs.dir = expandTilde(cfg.logs.dir);
+  }
+
+  if (obj.depends && typeof obj.depends === 'object' && !Array.isArray(obj.depends)) {
+    for (const [k, v] of Object.entries(obj.depends as Record<string, unknown>)) {
+      if (!Array.isArray(v) || !v.every(x => typeof x === 'string')) {
+        throw new Error(`Config "depends.${k}" must be an array of strings (${source})`);
+      }
     }
+    cfg.depends = obj.depends as Record<string, string[]>;
+  }
+  if (typeof obj.cascadeRestart === 'boolean') cfg.cascadeRestart = obj.cascadeRestart;
+
+  if (obj.history && typeof obj.history === 'object') {
+    cfg.history = { ...cfg.history, ...(obj.history as Partial<AppmanConfig['history']>) };
+    cfg.history.path = expandTilde(cfg.history.path);
+  }
+  if (obj.notifications && typeof obj.notifications === 'object') {
+    cfg.notifications = { ...cfg.notifications, ...(obj.notifications as Partial<AppmanConfig['notifications']>) };
+  }
+  if (obj.staleDetect && typeof obj.staleDetect === 'object') {
+    cfg.staleDetect = { ...cfg.staleDetect, ...(obj.staleDetect as Partial<AppmanConfig['staleDetect']>) };
+  }
+  if (typeof obj.headless === 'boolean') cfg.headless = obj.headless;
+  if (obj.envFiles && typeof obj.envFiles === 'object' && !Array.isArray(obj.envFiles)) {
+    cfg.envFiles = obj.envFiles as Record<string, string[]>;
+  }
+  if (obj.requestLog && typeof obj.requestLog === 'object') {
+    cfg.requestLog = { ...cfg.requestLog, ...(obj.requestLog as Partial<AppmanConfig['requestLog']>) };
+  }
+  if (obj.metrics && typeof obj.metrics === 'object') {
+    cfg.metrics = { ...cfg.metrics, ...(obj.metrics as Partial<AppmanConfig['metrics']>) };
   }
 
   return cfg;

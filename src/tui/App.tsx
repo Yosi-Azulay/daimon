@@ -172,6 +172,12 @@ export default function App({ registry, apiPort, onQuit }: Props) {
               <Text>Status:   <Text color={STATUS_COLORS[current.status]}>{current.status}</Text> <Text color={HEALTH_COLORS[current.health]}>●</Text> <Text dimColor>{current.health}</Text></Text>
               <Text>Port:     {current.port ?? '-'}</Text>
               <Text>URL:      {current.url ?? '-'}</Text>
+              {current.announcedUrl && current.announcedUrl !== current.url ? (
+                <Text dimColor>Announced: {current.announcedUrl}</Text>
+              ) : null}
+              {current.lastHealthError ? (
+                <Text color="red">HealthErr: {current.lastHealthError}</Text>
+              ) : null}
               <Text>Errors:   <Text color={current.errorCount ? 'red' : undefined}>{current.errorCount}</Text></Text>
               <Text>Uptime:   {fmtUptime(current.uptimeMs)}</Text>
               {current.cpu != null || current.memMB != null ? (

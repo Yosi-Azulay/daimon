@@ -1,14 +1,69 @@
 import http from 'node:http';
+import https from 'node:https';
 import type { Registry } from './registry.js';
-import type { HealthProbeConfig } from './types.js';
+import type { AppmanConfig, HealthProbeConfig } from './types.js';
+
+const FRESH_SERVING_RETRY_MS = 1000;
+const INITIAL_DELAY_MS = 500;
+
+interface FreshState {
+  retried: boolean;
+}
+
+export function resolveProbeUrls(
+  cfg: HealthProbeConfig,
+  override: string | undefined,
+  announced: string | null,
+  port: number | null,
+  cachedHost: string | null,
+): string[] {
+  if (override) return [override];
+  const path = cfg.path || '/';
+  const fallbacks = cfg.fallbackHosts && cfg.fallbackHosts.length ? cfg.fallbackHosts : ['127.0.0.1'];
+
+  if (cfg.host || cfg.scheme) {
+    const base = announced ? safeUrl(announced) : null;
+    const scheme = cfg.scheme || base?.protocol?.replace(':', '') || 'http';
+    const host = cfg.host || base?.hostname || (port ? fallbacks[0] : '127.0.0.1');
+    const p = port ?? (base?.port ? Number(base.port) : null);
+    return [buildUrl(scheme, host, p, path)];
+  }
+
+  if (announced) {
+    const u = safeUrl(announced);
+    if (u) {
+      u.pathname = path;
+      return [u.toString()];
+    }
+  }
+
+  const order: string[] = [];
+  if (cachedHost) order.push(cachedHost);
+  for (const h of fallbacks) if (!order.includes(h)) order.push(h);
+  return order.map(h => buildUrl('http', h, port, path));
+}
+
+function safeUrl(s: string): URL | null {
+  try { return new URL(s); } catch { return null; }
+}
+
+function buildUrl(scheme: string, host: string, port: number | null, path: string): string {
+  const bracketed = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  const portPart = port ? `:${port}` : '';
+  return `${scheme}://${bracketed}${portPart}${path.startsWith('/') ? path : '/' + path}`;
+}
 
 export class HealthMonitor {
   private timers = new Map<string, NodeJS.Timeout>();
   private starting = new Map<string, NodeJS.Timeout>();
+  private freshness = new Map<string, FreshState>();
   private stopped = false;
-  private readonly initialDelayMs = 500;
 
-  constructor(private readonly registry: Registry, private readonly cfg: HealthProbeConfig) {
+  constructor(
+    private readonly registry: Registry,
+    private readonly cfg: HealthProbeConfig,
+    private readonly fullConfig?: AppmanConfig,
+  ) {
     if (!cfg.enabled) return;
     registry.on('change', this.onChange);
     for (const name of registry.names()) this.evaluate(name);
@@ -33,34 +88,85 @@ export class HealthMonitor {
     if (!s) return;
     if (s.status === 'serving') {
       if (this.timers.has(name) || this.starting.has(name)) return;
+      this.freshness.set(name, { retried: false });
       const delay = setTimeout(() => {
         this.starting.delete(name);
-        this.probe(name);
-        const t = setInterval(() => this.probe(name), this.cfg.intervalMs);
+        void this.probe(name);
+        const t = setInterval(() => void this.probe(name), this.cfg.intervalMs);
         this.timers.set(name, t);
-      }, this.initialDelayMs);
+      }, INITIAL_DELAY_MS);
       this.starting.set(name, delay);
     } else {
       const t = this.timers.get(name);
       if (t) { clearInterval(t); this.timers.delete(name); }
       const d = this.starting.get(name);
       if (d) { clearTimeout(d); this.starting.delete(name); }
+      this.freshness.delete(name);
       if (s.health !== 'unknown' && (s.status === 'stopped' || s.status === 'error')) {
         this.registry.setHealth(name, 'unknown');
       }
     }
   }
 
-  private probe(name: string): void {
+  private async probe(name: string): Promise<void> {
     const s = this.registry.getState(name);
-    if (!s || s.status !== 'serving' || !s.port) return;
-    const url = `http://127.0.0.1:${s.port}${this.cfg.path}`;
-    const req = http.get(url, { timeout: this.cfg.timeoutMs }, res => {
-      const code = res.statusCode ?? 0;
-      res.resume();
-      this.registry.setHealth(name, code >= 200 && code < 500 ? 'healthy' : 'unhealthy');
+    if (!s || s.status !== 'serving') return;
+    const override = this.fullConfig?.overrides?.[name]?.url;
+    const candidates = resolveProbeUrls(this.cfg, override, s.announcedUrl, s.port, s.cachedProbeHost);
+    if (candidates.length === 0) {
+      this.registry.setLastHealthError(name, 'no probe URL available');
+      this.registry.setHealth(name, 'unhealthy');
+      return;
+    }
+
+    let firstError: string | null = null;
+    for (const url of candidates) {
+      const result = await this.tryProbe(url);
+      if (result.ok) {
+        const u = safeUrl(url);
+        if (u) this.registry.setCachedProbeHost(name, u.hostname.replace(/^\[|\]$/g, ''));
+        this.registry.setResolvedUrl(name, url);
+        this.registry.setLastHealthError(name, null);
+        this.registry.setHealth(name, 'healthy');
+        return;
+      }
+      if (!firstError) firstError = `${result.error} ${url}`;
+    }
+
+    const fresh = this.freshness.get(name);
+    if (fresh && !fresh.retried) {
+      fresh.retried = true;
+      setTimeout(() => void this.probe(name), FRESH_SERVING_RETRY_MS);
+      return;
+    }
+    this.registry.setLastHealthError(name, firstError || 'unknown probe failure');
+    this.registry.setHealth(name, 'unhealthy');
+  }
+
+  private tryProbe(url: string): Promise<{ ok: boolean; error?: string }> {
+    return new Promise(resolve => {
+      let settled = false;
+      const done = (v: { ok: boolean; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        resolve(v);
+      };
+      const isHttps = url.startsWith('https://');
+      const lib = isHttps ? https : http;
+      const opts: any = { timeout: this.cfg.timeoutMs };
+      if (isHttps) opts.rejectUnauthorized = !!this.cfg.rejectUnauthorized;
+      try {
+        const req = lib.get(url, opts, (res: any) => {
+          const code = res.statusCode ?? 0;
+          res.resume();
+          if (code >= 200 && code < 500) done({ ok: true });
+          else done({ ok: false, error: `http ${code}` });
+        });
+        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('error', (err: any) => done({ ok: false, error: err?.code || err?.message || 'error' }));
+      } catch (err: any) {
+        done({ ok: false, error: err?.message || 'throw' });
+      }
     });
-    req.on('timeout', () => { req.destroy(new Error('timeout')); });
-    req.on('error', () => { this.registry.setHealth(name, 'unhealthy'); });
   }
 }

@@ -10,11 +10,15 @@ export interface AppProcessDeps {
   state: AppState;
   app: DiscoveredApp;
   port: number;
+  envOverride?: Record<string, string>;
+  commandOverride?: string;
   onStateChange: () => void;
   onStatusChange?: (from: AppStatus, to: AppStatus, message?: string) => void;
   onErrorRecorded?: (entry: ErrorEntry, isNew: boolean) => void;
   onExit?: (code: number | null, signal: NodeJS.Signals | null, stopping: boolean) => void;
   onLogLine?: (line: string) => void;
+  onCompile?: (ms: number) => void;
+  onBundleUpdate?: () => void;
 }
 
 export class AppProcess {
@@ -46,8 +50,9 @@ export class AppProcess {
     state.logBuffer.length = 0;
     state.lastStatusMessage = undefined;
 
-    const fullCmd = `${app.command} --port ${port}`;
-    const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...(app.env || {}), PORT: String(port), FORCE_COLOR: '0' };
+    const baseCmd = this.deps.commandOverride || app.command;
+    const fullCmd = `${baseCmd} --port ${port}`;
+    const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...(app.env || {}), ...(this.deps.envOverride || {}), PORT: String(port), FORCE_COLOR: '0' };
     const child = spawn(fullCmd, [], {
       cwd: app.workspaceRoot,
       shell: true,
@@ -109,7 +114,10 @@ export class AppProcess {
     for (const rawLine of complete.split(/\r?\n/)) {
       if (!rawLine.length) continue;
       const clean = stripAnsi(rawLine);
-      state.logBuffer.push({ ts: Date.now(), line: clean });
+      const ts = Date.now();
+      state.lastLogTs = ts;
+      if (state.stale) state.stale = false;
+      state.logBuffer.push({ ts, line: clean });
       if (state.logBuffer.length > LOG_BUFFER_MAX) {
         state.logBuffer.splice(0, state.logBuffer.length - LOG_BUFFER_MAX);
       }
@@ -123,6 +131,8 @@ export class AppProcess {
       if (r?.error) {
         this.deps.onErrorRecorded?.(r.error.entry, r.error.isNew);
       }
+      if (r?.compileMs != null) this.deps.onCompile?.(r.compileMs);
+      if (r?.bundleUpdated) this.deps.onBundleUpdate?.();
     }
     if (changed || complete.length > 0) this.deps.onStateChange();
   }
