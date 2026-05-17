@@ -65,7 +65,7 @@ export class History {
   private warnOnce(msg: string): void {
     if (this.warned) return;
     this.warned = true;
-    process.stderr.write(`[appman] history: ${msg}\n`);
+    process.stderr.write(`[bosun] history: ${msg}\n`);
   }
 
   private migrate(): void {

@@ -1,0 +1,78 @@
+{
+  "searchRoots": [
+    "D:\\Synology\\SourceCode\\my-nx-workspace",
+    { "path": "D:\\Synology\\SourceCode\\vite-projects", "viteSubfolders": true }
+  ],
+  "portRange": [4200, 4299],
+  "apiPort": 4999,
+
+  "autoStart": [],
+  "profiles": {
+    "fullstack": ["web-admin", "api"]
+  },
+  "tags": {
+    "web-admin": ["frontend"],
+    "api": ["backend"]
+  },
+  "depends": {
+    "web-admin": ["api"]
+  },
+  "cascadeRestart": false,
+
+  "healthProbe": {
+    "enabled": true,
+    "intervalMs": 30000,
+    "timeoutMs": 2000,
+    "path": "/",
+    "host": null,
+    "scheme": null,
+    "rejectUnauthorized": false,
+    "fallbackHosts": ["127.0.0.1", "::1"]
+  },
+
+  "autoRestart": {
+    "enabled": false,
+    "maxAttempts": 5,
+    "windowMs": 300000
+  },
+
+  "history": {
+    "enabled": true,
+    "path": "~/.appman/history.db",
+    "retentionDays": 30
+  },
+
+  "notifications": {
+    "enabled": true,
+    "onError": true,
+    "onUnhealthy": true,
+    "tray": false
+  },
+
+  "staleDetect": {
+    "enabled": true,
+    "silentMs": 30000
+  },
+
+  "logs": {
+    "enabled": false,
+    "dir": "~/.appman/logs",
+    "maxFiles": 5,
+    "maxBytesPerFile": 10000000
+  },
+
+  "envFiles": {},
+
+  "requestLog": { "enabled": false, "portOffset": 1000 },
+  "metrics": { "enabled": false },
+  "headless": false,
+
+  "overrides": {
+    "web-admin": {
+      "port": 4250,
+      "command": "npx nx serve web-admin --configuration=dev",
+      "env": { "API_BASE": "http://localhost:3000" },
+      "url": null
+    }
+  }
+}

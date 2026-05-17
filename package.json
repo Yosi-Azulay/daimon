@@ -1,10 +1,10 @@
 {
-  "name": "appman",
+  "name": "bosun",
   "version": "0.4.2",
-  "description": "Local Angular/Nx app manager with TUI, HTTP API, and CLI",
+  "description": "Local dev-server manager for Angular/Nx/Vite/Storybook — TUI, loopback HTTP API, JSON CLI, and MCP server for Claude Code",
   "type": "module",
   "bin": {
-    "appman": "./dist/cli.js"
+    "bosun": "./dist/cli.js"
   },
   "files": [
     "dist",

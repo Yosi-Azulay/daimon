@@ -56,7 +56,7 @@ export function buildSnapshot(registry: Registry, name: string): SnapshotPayload
 export function writeSnapshot(registry: Registry, name: string): { path: string; payload: SnapshotPayload } | null {
   const payload = buildSnapshot(registry, name);
   if (!payload) return null;
-  const dir = path.join(os.homedir(), '.appman', 'snapshots');
+  const dir = path.join(os.homedir(), '.bosun', 'snapshots');
   fs.mkdirSync(dir, { recursive: true });
   const ts = payload.takenAt.replace(/[:.]/g, '-');
   const file = path.join(dir, `${name}-${ts}.json`);

@@ -31,7 +31,7 @@ function fmtUptime(ms: number | null): string {
 }
 
 function tokenFilePath(port: number): string {
-  return path.join(os.homedir(), '.appman', `attach-token.${port}`);
+  return path.join(os.homedir(), '.bosun', `attach-token.${port}`);
 }
 
 function readCachedToken(port: number): string | null {
@@ -157,7 +157,7 @@ function AttachApp({ port, onExit }: AttachProps) {
   return (
     <Box flexDirection="column" width={cols}>
       <Box borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text bold color="cyan">appman attach</Text>
+        <Text bold color="cyan">bosun attach</Text>
         <Text dimColor>  •  http://127.0.0.1:{port}  •  HTTP-client TUI (q detaches, daemon keeps running)</Text>
       </Box>
 

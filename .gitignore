@@ -1,4 +1,7 @@
 node_modules
 dist
 appman.config.json
-bash.exe.stackdump
+bosun.config.json
+*.stackdump
+*.tsbuildinfo
+Microsoft/

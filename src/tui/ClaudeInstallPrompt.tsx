@@ -16,9 +16,9 @@ function Prompt({ onDone }: PromptProps) {
   const [cursor, setCursor] = useState(0);
   const [sel, setSel] = useState<Selection>({ skill: true, commands: true, agent: true });
   const items: Array<{ key: keyof Selection; label: string }> = [
-    { key: 'skill', label: 'Skill (~/.claude/skills/appman/SKILL.md)' },
-    { key: 'commands', label: 'Slash commands (~/.claude/commands/appman-*.md)' },
-    { key: 'agent', label: 'Subagent (~/.claude/agents/appman-runner.md)' },
+    { key: 'skill', label: 'Skill (~/.claude/skills/bosun/SKILL.md)' },
+    { key: 'commands', label: 'Slash commands (~/.claude/commands/bosun-*.md)' },
+    { key: 'agent', label: 'Subagent (~/.claude/agents/bosun-runner.md)' },
   ];
 
   useInput((input, key) => {

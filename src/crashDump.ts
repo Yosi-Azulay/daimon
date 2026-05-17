@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { APPMAN_VERSION } from './version.js';
-import { appmanDir } from './daemon.js';
+import { BOSUN_VERSION } from './version.js';
+import { bosunDir } from './daemon.js';
 import type { Registry } from './registry.js';
 import type { AppmanConfig } from './types.js';
 
@@ -34,7 +34,7 @@ function recentDaemonLogLines(registry: Registry | null, max = 200): string[] {
 }
 
 function crashesDir(): string {
-  const d = path.join(appmanDir(), 'crashes');
+  const d = path.join(bosunDir(), 'crashes');
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
@@ -44,8 +44,8 @@ export function writeCrashDump(err: unknown, registry: Registry | null, config: 
   const file = path.join(crashesDir(), `${ts}.txt`);
   const e: any = err;
   const parts = [
-    `appman crash dump @ ${new Date().toISOString()}`,
-    `version: ${APPMAN_VERSION}`,
+    `bosun crash dump @ ${new Date().toISOString()}`,
+    `version: ${BOSUN_VERSION}`,
     `node: ${process.version}`,
     `platform: ${process.platform} ${os.release()}`,
     `cwd: ${process.cwd()}`,
@@ -68,8 +68,8 @@ export function installCrashHandlers(opts: { getRegistry: () => Registry | null;
   const onFatal = (err: unknown) => {
     let file: string | null = null;
     try { file = writeCrashDump(err, opts.getRegistry(), opts.getConfig()); } catch {}
-    try { process.stderr.write(`[appman] fatal: ${(err as any)?.stack || err}\n`); } catch {}
-    if (file) try { process.stderr.write(`[appman] crash dump: ${file}\n`); } catch {}
+    try { process.stderr.write(`[bosun] fatal: ${(err as any)?.stack || err}\n`); } catch {}
+    if (file) try { process.stderr.write(`[bosun] crash dump: ${file}\n`); } catch {}
     process.exit(1);
   };
   process.on('uncaughtException', onFatal);

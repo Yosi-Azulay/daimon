@@ -2,14 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { APPMAN_VERSION } from './version.js';
+import { BOSUN_VERSION } from './version.js';
 import { CLI_SUBCOMMANDS, commandsTable } from './cliSurface.js';
-import { appmanDir } from './daemon.js';
+import { bosunDir } from './daemon.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 export interface Manifest {
-  'appman-version': string;
+  'bosun-version': string;
   'installed-at': string;
   skill?: { path: string } | null;
   commands?: string[];
@@ -34,7 +34,7 @@ export function defaultClaudeDir(): string {
 }
 
 export function manifestPath(dir: string): string {
-  return path.join(dir, 'appman.installed.json');
+  return path.join(dir, 'bosun.installed.json');
 }
 
 function templatesDir(): string {
@@ -53,7 +53,7 @@ function readTemplate(rel: string): string {
 function render(template: string, apiPort: number): string {
   const now = new Date().toISOString();
   return template
-    .replace(/\{\{appman_version\}\}/g, APPMAN_VERSION)
+    .replace(/\{\{bosun_version\}\}/g, BOSUN_VERSION)
     .replace(/\{\{api_port\}\}/g, String(apiPort))
     .replace(/\{\{generated_at\}\}/g, now)
     .replace(/\{\{commands_table\}\}/g, commandsTable());
@@ -81,14 +81,14 @@ export function writeManifest(dir: string, m: Manifest): void {
 export function install(opts: InstallOpts): { installed: string[]; manifestPath: string } {
   const installed: string[] = [];
   const manifest: Manifest = readManifest(opts.dir) ?? {
-    'appman-version': APPMAN_VERSION,
+    'bosun-version': BOSUN_VERSION,
     'installed-at': new Date().toISOString(),
   };
-  manifest['appman-version'] = APPMAN_VERSION;
+  manifest['bosun-version'] = BOSUN_VERSION;
   manifest['installed-at'] = new Date().toISOString();
 
   if (opts.skill) {
-    const rel = path.join('skills', 'appman', 'SKILL.md');
+    const rel = path.join('skills', 'bosun', 'SKILL.md');
     writeFile(path.join(opts.dir, rel), render(readTemplate('skill.md.tmpl'), opts.apiPort));
     manifest.skill = { path: rel.replace(/\\/g, '/') };
     installed.push(rel);
@@ -96,7 +96,7 @@ export function install(opts: InstallOpts): { installed: string[]; manifestPath:
   if (opts.commands) {
     const cmdList: string[] = [];
     for (const name of COMMAND_NAMES) {
-      const rel = path.join('commands', `appman-${name}.md`);
+      const rel = path.join('commands', `bosun-${name}.md`);
       writeFile(path.join(opts.dir, rel), render(readTemplate(path.join('commands', `${name}.md.tmpl`)), opts.apiPort));
       cmdList.push(name);
       installed.push(rel);
@@ -104,7 +104,7 @@ export function install(opts: InstallOpts): { installed: string[]; manifestPath:
     manifest.commands = cmdList;
   }
   if (opts.agent) {
-    const rel = path.join('agents', 'appman-runner.md');
+    const rel = path.join('agents', 'bosun-runner.md');
     writeFile(path.join(opts.dir, rel), render(readTemplate('agent.md.tmpl'), opts.apiPort));
     manifest.agent = { path: rel.replace(/\\/g, '/') };
     installed.push(rel);
@@ -128,7 +128,7 @@ export function uninstall(opts: { dir: string; selection: Partial<InstallSelecti
   }
   if ((all || opts.selection.commands) && m.commands) {
     for (const name of m.commands) {
-      const rel = path.join('commands', `appman-${name}.md`);
+      const rel = path.join('commands', `bosun-${name}.md`);
       try { fs.rmSync(path.join(opts.dir, rel), { force: true }); removed.push(rel); } catch {}
     }
     m.commands = [];
@@ -157,27 +157,27 @@ export function status(dir: string): { skill: { installed: boolean; version: str
     };
   }
   return {
-    skill: { installed: !!m.skill, version: m.skill ? m['appman-version'] : null, path: m.skill?.path ?? null },
-    commands: { installed: !!(m.commands && m.commands.length), version: m.commands && m.commands.length ? m['appman-version'] : null, names: m.commands ?? [] },
-    agent: { installed: !!m.agent, version: m.agent ? m['appman-version'] : null, path: m.agent?.path ?? null },
+    skill: { installed: !!m.skill, version: m.skill ? m['bosun-version'] : null, path: m.skill?.path ?? null },
+    commands: { installed: !!(m.commands && m.commands.length), version: m.commands && m.commands.length ? m['bosun-version'] : null, names: m.commands ?? [] },
+    agent: { installed: !!m.agent, version: m.agent ? m['bosun-version'] : null, path: m.agent?.path ?? null },
     manifestPath: manifestPath(dir),
   };
 }
 
-const NUDGE_FILE = path.join(appmanDir(), '.claude-nudge');
+const NUDGE_FILE = path.join(bosunDir(), '.claude-nudge');
 const NUDGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export function checkVersionDriftAndNudge(): void {
-  if (process.env.APPMAN_NO_CLAUDE_NUDGE === '1') return;
+  if (process.env.BOSUN_NO_CLAUDE_NUDGE === '1') return;
   const dir = defaultClaudeDir();
   const m = readManifest(dir);
   if (!m) return;
-  if (m['appman-version'] === APPMAN_VERSION) return;
+  if (m['bosun-version'] === BOSUN_VERSION) return;
   try {
     const stat = fs.statSync(NUDGE_FILE);
     if (Date.now() - stat.mtimeMs < NUDGE_INTERVAL_MS) return;
   } catch {}
-  process.stderr.write(`[appman] claude integration is from v${m['appman-version']} — run \`appman claude update\` to refresh\n`);
+  process.stderr.write(`[bosun] claude integration is from v${m['bosun-version']} — run \`bosun claude update\` to refresh\n`);
   try {
     fs.mkdirSync(path.dirname(NUDGE_FILE), { recursive: true });
     fs.writeFileSync(NUDGE_FILE, String(Date.now()));

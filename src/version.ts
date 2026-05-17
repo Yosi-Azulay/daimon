@@ -17,4 +17,4 @@ function readPkg(): { version?: string } {
   return {};
 }
 
-export const APPMAN_VERSION = readPkg().version || '0.0.0';
+export const BOSUN_VERSION = readPkg().version || '0.0.0';

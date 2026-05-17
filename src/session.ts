@@ -18,7 +18,7 @@ export class SessionRecorder {
 
   start(): { path: string } {
     if (this.file) return { path: this.file };
-    const dir = path.join(os.homedir(), '.appman', 'sessions');
+    const dir = path.join(os.homedir(), '.bosun', 'sessions');
     fs.mkdirSync(dir, { recursive: true });
     const f = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`);
     fs.writeFileSync(f, '');

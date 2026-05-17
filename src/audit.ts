@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { appmanDir } from './daemon.js';
+import { bosunDir } from './daemon.js';
 
 const MAX_BYTES = 1_000_000;
 
 function auditPath(): string {
-  return path.join(appmanDir(), 'audit.log');
+  return path.join(bosunDir(), 'audit.log');
 }
 
 function rotateIfNeeded(p: string): void {

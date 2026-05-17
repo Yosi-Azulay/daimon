@@ -5,7 +5,7 @@ import { runDoctor } from './doctor.js';
 import { findPortHolder, killHolder } from './portDiag.js';
 import { readSession } from './session.js';
 import { readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
-import { APPMAN_VERSION } from './version.js';
+import { BOSUN_VERSION } from './version.js';
 import { CLI_SUBCOMMANDS, findSubcommand, usageString } from './cliSurface.js';
 import {
   checkVersionDriftAndNudge,
@@ -19,7 +19,7 @@ import {
 
 const nodeMajor = Number((process.versions.node || '0').split('.')[0]);
 if (nodeMajor && nodeMajor < 20) {
-  process.stderr.write('appman requires Node >= 20\n');
+  process.stderr.write('bosun requires Node >= 20\n');
   process.exit(1);
 }
 
@@ -35,8 +35,8 @@ function out(obj: unknown): void {
 }
 
 function readApiPort(): number {
-  if (process.env.APPMAN_PORT) {
-    const p = Number(process.env.APPMAN_PORT);
+  if (process.env.BOSUN_PORT) {
+    const p = Number(process.env.BOSUN_PORT);
     if (Number.isFinite(p) && p > 0) return p;
   }
   const lock = readLock();
@@ -61,16 +61,16 @@ function getBaseUrl(): string {
 }
 
 async function ensureDaemon(): Promise<void> {
-  if (noSpawnFlag || process.env.APPMAN_NO_SPAWN === '1') return;
+  if (noSpawnFlag || process.env.BOSUN_NO_SPAWN === '1') return;
   if (readLock()) return;
   try {
-    const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
+    const port = process.env.BOSUN_PORT ? Number(process.env.BOSUN_PORT) : undefined;
     await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
   } catch {}
 }
 
 function authHeaders(): Record<string, string> {
-  const tok = process.env.APPMAN_TOKEN;
+  const tok = process.env.BOSUN_TOKEN;
   return tok ? { authorization: `Bearer ${tok}` } : {};
 }
 
@@ -82,7 +82,7 @@ async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch {
-    fail(JSON.stringify({ error: 'appman is not running — start it with: appman daemon start --detach' }));
+    fail(JSON.stringify({ error: 'bosun is not running — start it with: bosun daemon start --detach' }));
   }
 }
 
@@ -94,7 +94,7 @@ async function callJson(pathname: string, method: 'GET' | 'POST', payload: unkno
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch {
-    fail(JSON.stringify({ error: 'appman is not running — start it with: appman daemon start --detach' }));
+    fail(JSON.stringify({ error: 'bosun is not running — start it with: bosun daemon start --detach' }));
   }
 }
 
@@ -180,15 +180,15 @@ function durationToSeconds(s: string): number | null {
 function printHelp(): void {
   const w = Math.max(...CLI_SUBCOMMANDS.map(c => c.name.length));
   const lines = [
-    `appman v${APPMAN_VERSION}`,
-    'usage: appman <command> [args]',
+    `bosun v${BOSUN_VERSION}`,
+    'usage: bosun <command> [args]',
     '',
   ];
   for (const c of CLI_SUBCOMMANDS) {
     lines.push(`  ${c.name.padEnd(w)}  ${c.summary}`);
   }
   lines.push('');
-  lines.push('Flags: --no-spawn (skip auto-spawn), APPMAN_PORT=N (target a non-default daemon), APPMAN_NO_SPAWN=1');
+  lines.push('Flags: --no-spawn (skip auto-spawn), BOSUN_PORT=N (target a non-default daemon), BOSUN_NO_SPAWN=1');
   process.stdout.write(lines.join('\n') + '\n');
 }
 
@@ -210,7 +210,7 @@ function parseClaudeFlags(args: string[]): { positional: string[]; flags: Claude
 
 async function handleClaude(rest: string[]): Promise<void> {
   const sub = rest[0];
-  if (!sub) fail(JSON.stringify({ error: 'usage: appman claude <install|update|uninstall|status> [--skill] [--commands] [--agent] [--all] [--dir <path>] [--yes]' }));
+  if (!sub) fail(JSON.stringify({ error: 'usage: bosun claude <install|update|uninstall|status> [--skill] [--commands] [--agent] [--all] [--dir <path>] [--yes]' }));
   const { flags } = parseClaudeFlags(rest.slice(1));
   const dir = flags.dir ?? defaultClaudeDir();
   const apiPort = readApiPort();
@@ -234,26 +234,26 @@ async function handleClaude(rest: string[]): Promise<void> {
       selection = { skill: !!flags.skill, commands: !!flags.commands, agent: !!flags.agent };
     }
     const r = claudeInstall({ ...selection, dir, apiPort });
-    out({ installed: r.installed, manifest: r.manifestPath, version: APPMAN_VERSION });
+    out({ installed: r.installed, manifest: r.manifestPath, version: BOSUN_VERSION });
     return;
   }
 
   if (sub === 'update') {
     const m = readClaudeManifest(dir);
-    if (!m) fail(JSON.stringify({ error: 'no manifest at ' + dir + ' — run `appman claude install` first' }));
+    if (!m) fail(JSON.stringify({ error: 'no manifest at ' + dir + ' — run `bosun claude install` first' }));
     const selection = {
       skill: !!m!.skill,
       commands: !!(m!.commands && m!.commands.length),
       agent: !!m!.agent,
     };
     const r = claudeInstall({ ...selection, dir, apiPort });
-    out({ updated: r.installed, manifest: r.manifestPath, version: APPMAN_VERSION });
+    out({ updated: r.installed, manifest: r.manifestPath, version: BOSUN_VERSION });
     return;
   }
 
   if (sub === 'uninstall') {
     const anyFlag = flags.skill || flags.commands || flags.agent || flags.all;
-    if (!anyFlag) fail(JSON.stringify({ error: 'usage: appman claude uninstall [--all|--skill|--commands|--agent]' }));
+    if (!anyFlag) fail(JSON.stringify({ error: 'usage: bosun claude uninstall [--all|--skill|--commands|--agent]' }));
     const r = claudeUninstall({ dir, selection: { all: flags.all, skill: flags.skill, commands: flags.commands, agent: flags.agent } });
     out({ removed: r.removed, manifest: r.manifestPath });
     return;
@@ -279,7 +279,7 @@ async function handleDaemon(rest: string[]): Promise<void> {
         const existing = readLock();
         if (existing) { out({ ok: true, alreadyRunning: true, pid: existing.pid, port: existing.apiPort }); return; }
         try {
-          const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
+          const port = process.env.BOSUN_PORT ? Number(process.env.BOSUN_PORT) : undefined;
           const info = await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
           out({ ok: true, pid: info.pid, port: info.apiPort });
         } catch (err: any) {
@@ -317,7 +317,7 @@ async function handleDaemon(rest: string[]): Promise<void> {
         await waitForExit(lock.pid, 5000);
         removeLock();
       }
-      const port = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : undefined;
+      const port = process.env.BOSUN_PORT ? Number(process.env.BOSUN_PORT) : undefined;
       const info = await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
       out({ ok: true, pid: info.pid, port: info.apiPort, handoff: true });
       return;
@@ -337,7 +337,7 @@ async function handleDaemon(rest: string[]): Promise<void> {
       return;
     }
     default:
-      fail(JSON.stringify({ error: `usage: appman daemon <start|stop|status|restart|attach|install-service> [--detach] [--headless]` }));
+      fail(JSON.stringify({ error: `usage: bosun daemon <start|stop|status|restart|attach|install-service> [--detach] [--headless]` }));
   }
 }
 
@@ -352,7 +352,7 @@ async function main() {
   try { checkVersionDriftAndNudge(); } catch {}
 
   if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { printHelp(); return; }
-  if (cmd === '--version' || cmd === '-v') { out({ version: APPMAN_VERSION }); return; }
+  if (cmd === '--version' || cmd === '-v') { out({ version: BOSUN_VERSION }); return; }
 
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
   if (cmd === 'claude') { await handleClaude(rest); return; }
@@ -390,7 +390,7 @@ async function main() {
     case 'stop':
     case 'restart': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: `usage: appman ${cmd} <name>` }));
+      if (!name) fail(JSON.stringify({ error: `usage: bosun ${cmd} <name>` }));
       const suffix = cmd === 'status' ? '' : '/' + cmd;
       const method: 'GET' | 'POST' = cmd === 'status' ? 'GET' : 'POST';
       const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}`, method);
@@ -400,7 +400,7 @@ async function main() {
     }
     case 'start': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman start <name> [--with-deps]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun start <name> [--with-deps]' }));
       const qs = f.withDeps ? '?withDeps=1' : '';
       const r = await call(`/api/apps/${encodeURIComponent(name)}/start${qs}`, 'POST');
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
@@ -409,21 +409,21 @@ async function main() {
     }
     case 'history': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman history <name>' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun history <name>' }));
       const r = await call(`/api/history/summary/${encodeURIComponent(name)}`);
       out(r.body);
       return;
     }
     case 'why': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman why <name>' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun why <name>' }));
       const r = await call(`/api/history/why/${encodeURIComponent(name)}`);
       out(r.body);
       return;
     }
     case 'env': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman env <name> [--use <file>]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun env <name> [--use <file>]' }));
       if (f.use) {
         const r = await callJson(`/api/apps/${encodeURIComponent(name)}/env`, 'POST', { use: f.use });
         if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
@@ -437,7 +437,7 @@ async function main() {
     }
     case 'clean': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman clean <name> [--deep] [--yes]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun clean <name> [--deep] [--yes]' }));
       const qs = new URLSearchParams();
       if (f.deep) qs.set('deep', '1');
       if (f.yes) qs.set('yes', '1');
@@ -454,7 +454,7 @@ async function main() {
     }
     case 'replay': {
       const file = f.positional[0];
-      if (!file) fail(JSON.stringify({ error: 'usage: appman replay <session.jsonl> [--speed N]' }));
+      if (!file) fail(JSON.stringify({ error: 'usage: bosun replay <session.jsonl> [--speed N]' }));
       const speed = f.speed && f.speed > 0 ? f.speed : 1;
       let ops;
       try { ops = readSession(file); } catch (err: any) { fail(JSON.stringify({ error: err?.message || String(err) })); }
@@ -488,11 +488,11 @@ async function main() {
     }
     case 'free-port': {
       const port = Number(f.positional[0]);
-      if (!Number.isFinite(port) || port <= 0) fail(JSON.stringify({ error: 'usage: appman free-port <port> [--force]' }));
+      if (!Number.isFinite(port) || port <= 0) fail(JSON.stringify({ error: 'usage: bosun free-port <port> [--force]' }));
       const holder = findPortHolder(port);
       if (!holder) { out({ port, free: true }); return; }
       if (!f.force) { out({ port, free: false, holder }); return; }
-      if (holder.pid === process.pid) fail(JSON.stringify({ error: 'refuse to kill appman itself', holder }));
+      if (holder.pid === process.pid) fail(JSON.stringify({ error: 'refuse to kill bosun itself', holder }));
       const ok = await killHolder(holder);
       out({ port, killed: ok, holder });
       if (!ok) process.exit(1);
@@ -500,7 +500,7 @@ async function main() {
     }
     case 'snapshot': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman snapshot <name>' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun snapshot <name>' }));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/snapshot?write=1`, 'POST');
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
@@ -508,7 +508,7 @@ async function main() {
     }
     case 'tasks': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman tasks <name>' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun tasks <name>' }));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/tasks`);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
@@ -517,7 +517,7 @@ async function main() {
     case 'run': {
       const name = f.positional[0];
       const task = f.positional[1];
-      if (!name || !task) fail(JSON.stringify({ error: 'usage: appman run <name> <task> [--watch] [-- args...]' }));
+      if (!name || !task) fail(JSON.stringify({ error: 'usage: bosun run <name> <task> [--watch] [-- args...]' }));
       const body = { args: f.passthrough, watch: !!f.watch };
       const r = await callJson(`/api/apps/${encodeURIComponent(name)}/run/${encodeURIComponent(task)}`, 'POST', body);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
@@ -527,7 +527,7 @@ async function main() {
     }
     case 'errors': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]' }));
       const params = new URLSearchParams();
       let endpoint = `/api/apps/${encodeURIComponent(name)}/errors`;
       if (f.sinceLast) {
@@ -557,7 +557,7 @@ async function main() {
     }
     case 'wait': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]' }));
       const params = new URLSearchParams();
       if (f.until) params.set('until', f.until);
       let timeoutSec = 120;
@@ -617,7 +617,7 @@ async function main() {
     }
     case 'logs': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: appman logs <name> [--tail N] [--since 30s]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: bosun logs <name> [--tail N] [--since 30s]' }));
       const params = new URLSearchParams();
       if (f.tail != null && !Number.isNaN(f.tail)) params.set('tail', String(f.tail));
       if (f.since) params.set('since', f.since);

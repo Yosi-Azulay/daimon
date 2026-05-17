@@ -1,10 +1,10 @@
 ---
-name: appman-up
+name: bosun-up
 description: Bring up a profile or autoStart set. Cascades dependencies and blocks until each app is healthy (120s budget).
-appman-version: {{appman_version}}
+bosun-version: {{bosun_version}}
 generated-at: {{generated_at}}
 ---
 
-Run: `appman up $1` (or just `appman up` to use autoStart).
+Run: `bosun up $1` (or just `bosun up` to use autoStart).
 
-Returns an array of `{ name, status, health }`. Any entry with `status != "serving"` or `health != "healthy"` indicates a failure — follow up with `appman errors <name>` and `appman why <name>`.
+Returns an array of `{ name, status, health }`. Any entry with `status != "serving"` or `health != "healthy"` indicates a failure — follow up with `bosun errors <name>` and `bosun why <name>`.

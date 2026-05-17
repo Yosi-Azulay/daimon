@@ -1,17 +1,17 @@
 ---
-name: appman
-description: Manage local Angular/Nx/Vite dev servers via the appman CLI on the loopback API. Use for starting, stopping, inspecting status, surfacing dedup'd errors, tailing logs, and blocking until a target state is reached. Local-only; no remote access; no source-code mutation.
-appman-version: {{appman_version}}
+name: bosun
+description: Manage local Angular/Nx/Vite dev servers via the bosun CLI on the loopback API. Use for starting, stopping, inspecting status, surfacing dedup'd errors, tailing logs, and blocking until a target state is reached. Local-only; no remote access; no source-code mutation.
+bosun-version: {{bosun_version}}
 generated-at: {{generated_at}}
 ---
 
-# appman skill
+# bosun skill
 
-You are operating inside a repo managed by **appman** — a local daemon that owns the lifecycle of multiple dev-server processes. Use `appman` instead of running `npm start`, `nx serve`, or `ng serve` yourself.
+You are operating inside a repo managed by **bosun** — a local daemon that owns the lifecycle of multiple dev-server processes. Use `bosun` instead of running `npm start`, `nx serve`, or `ng serve` yourself.
 
 ## Available CLI surface
 
-The daemon auto-spawns the first time you call any CLI command. Suppress with `APPMAN_NO_SPAWN=1` for read-only scripts.
+The daemon auto-spawns the first time you call any CLI command. Suppress with `BOSUN_NO_SPAWN=1` for read-only scripts.
 
 ```
 {{commands_table}}
@@ -21,24 +21,24 @@ API base: `http://127.0.0.1:{{api_port}}`. All output is compact JSON.
 
 ## When to use what
 
-- **Find out what's running**: `appman list`
-- **Check one app**: `appman status <name>`
-- **Block until ready** (preferred over polling): `appman wait <name> --until healthy --timeout 60s`
-- **Show errors**: `appman errors <name> --since 5m` (or `--structured` for parsed TS errors, or `--since-last --client claude` for diff-mode)
-- **Tail logs**: `appman logs <name> --tail 100`
-- **Investigate failure**: `appman why <name>` returns the last status transition plus 5 preceding events
-- **Bring up a profile**: `appman up <profile>` — starts deps in order, blocks until healthy
-- **Sanity-check setup**: `appman doctor` (does not need the daemon)
+- **Find out what's running**: `bosun list`
+- **Check one app**: `bosun status <name>`
+- **Block until ready** (preferred over polling): `bosun wait <name> --until healthy --timeout 60s`
+- **Show errors**: `bosun errors <name> --since 5m` (or `--structured` for parsed TS errors, or `--since-last --client claude` for diff-mode)
+- **Tail logs**: `bosun logs <name> --tail 100`
+- **Investigate failure**: `bosun why <name>` returns the last status transition plus 5 preceding events
+- **Bring up a profile**: `bosun up <profile>` — starts deps in order, blocks until healthy
+- **Sanity-check setup**: `bosun doctor` (does not need the daemon)
 
 ## What not to do
 
 - Do not start `nx serve` / `ng serve` directly.
-- Do not parse log files — `appman errors` is already dedup'd and structured.
+- Do not parse log files — `bosun errors` is already dedup'd and structured.
 - Do not assume an app is healthy because it's "serving"; use `--until healthy`.
-- Do not retry on a timeout from `appman wait` without first calling `appman errors` and `appman why`.
+- Do not retry on a timeout from `bosun wait` without first calling `bosun errors` and `bosun why`.
 
 ## Exit codes
 
 - `0` success
 - `1` generic error (unknown app, daemon down, etc.)
-- `2` `appman wait` timed out
+- `2` `bosun wait` timed out

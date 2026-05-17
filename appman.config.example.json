@@ -1,8 +1,0 @@
-{
-  "searchRoots": [
-    "D:\\Synology\\SourceCode\\some-workspace"
-  ],
-  "portRange": [4200, 4299],
-  "apiPort": 4999,
-  "overrides": {}
-}

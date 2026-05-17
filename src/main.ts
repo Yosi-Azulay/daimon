@@ -33,32 +33,32 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   try {
     cfgResult = loadConfig();
   } catch (err: any) {
-    process.stderr.write(`[appman] config error: ${err.message}\n`);
+    process.stderr.write(`[bosun] config error: ${err.message}\n`);
     process.exit(1);
   }
 
   if (cfgResult.kind === 'stub-created') {
     const paths = configLookupPaths();
-    process.stdout.write(`[appman] no config found. Created stub at:\n  ${cfgResult.path}\n`);
-    process.stdout.write(`[appman] Edit it to add "searchRoots" pointing at your Nx/Angular workspace, then run again.\n`);
-    process.stdout.write(`[appman] (Local override path: ${paths.local})\n`);
+    process.stdout.write(`[bosun] no config found. Created stub at:\n  ${cfgResult.path}\n`);
+    process.stdout.write(`[bosun] Edit it to add "searchRoots" pointing at your Nx/Angular workspace, then run again.\n`);
+    process.stdout.write(`[bosun] (Local override path: ${paths.local})\n`);
     process.exit(0);
   }
 
   const { config, path: cfgPath } = cfgResult;
-  process.stdout.write(`[appman] config: ${cfgPath}\n`);
+  process.stdout.write(`[bosun] config: ${cfgPath}\n`);
 
   if (config.depends && Object.keys(config.depends).length) {
     const cycle = findCycle(config.depends);
     if (cycle) {
-      process.stderr.write(`[appman] config error: depends graph has a cycle: ${cycle.join(' -> ')}\n`);
+      process.stderr.write(`[bosun] config error: depends graph has a cycle: ${cycle.join(' -> ')}\n`);
       process.exit(1);
     }
   }
 
   const apps = discoverApps(config);
   if (apps.length === 0) {
-    process.stdout.write(`[appman] no serveable projects discovered in: ${config.searchRoots.join(', ') || '(none)'}\n`);
+    process.stdout.write(`[bosun] no serveable projects discovered in: ${config.searchRoots.join(', ') || '(none)'}\n`);
   }
 
   const persisted = loadPersistedState();
@@ -82,7 +82,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
 
   const handoff = consumeHandoff();
   if (handoff && handoff.apps.length) {
-    process.stdout.write(`[appman] state-handoff: restoring ${handoff.apps.map(a => a.name).join(', ')}\n`);
+    process.stdout.write(`[bosun] state-handoff: restoring ${handoff.apps.map(a => a.name).join(', ')}\n`);
     for (const h of handoff.apps) {
       portAlloc.pin(h.name, h.port);
     }
@@ -97,7 +97,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     const known = new Set(registry.names());
     for (const name of config.autoStart) {
       if (!known.has(name)) {
-        process.stderr.write(`[appman] warning: autoStart references unknown app "${name}"\n`);
+        process.stderr.write(`[bosun] warning: autoStart references unknown app "${name}"\n`);
         continue;
       }
       if (config.depends && config.depends[name] && config.depends[name].length) {
@@ -108,7 +108,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     }
   }
 
-  const apiPort = process.env.APPMAN_PORT ? Number(process.env.APPMAN_PORT) : config.apiPort;
+  const apiPort = process.env.BOSUN_PORT ? Number(process.env.BOSUN_PORT) : config.apiPort;
   const headless = !!opts.headless || !!config.headless || process.argv.includes('--headless');
 
   let shuttingDown = false;
@@ -152,15 +152,15 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
       return { ok: true, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired };
     },
   });
-  process.stdout.write(`[appman] api: http://127.0.0.1:${apiPort}\n`);
-  try { writeLock(buildLockInfo(apiPort, headless)); } catch (err: any) { process.stderr.write(`[appman] warning: could not write daemon.lock: ${err?.message || err}\n`); }
+  process.stdout.write(`[bosun] api: http://127.0.0.1:${apiPort}\n`);
+  try { writeLock(buildLockInfo(apiPort, headless)); } catch (err: any) { process.stderr.write(`[bosun] warning: could not write daemon.lock: ${err?.message || err}\n`); }
 
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });
   process.on('beforeExit', () => { void shutdown(); });
 
   if (headless) {
-    process.stdout.write(`[appman] headless mode — TUI suppressed. Dashboard: http://127.0.0.1:${apiPort}\n`);
+    process.stdout.write(`[bosun] headless mode — TUI suppressed. Dashboard: http://127.0.0.1:${apiPort}\n`);
     let lastSnapshot = '';
     const heartbeat = setInterval(() => {
       const summary = registry.list().map(s => ({ name: s.name, status: s.status, health: s.health, port: s.port }));
@@ -186,7 +186,7 @@ const invokedDirectly = (() => {
 
 if (invokedDirectly) {
   startInProcess().catch(err => {
-    process.stderr.write(`[appman] fatal: ${err?.stack || err}\n`);
+    process.stderr.write(`[bosun] fatal: ${err?.stack || err}\n`);
     process.exit(1);
   });
 }

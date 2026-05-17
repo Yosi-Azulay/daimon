@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const STATE_PATH = path.join(os.homedir(), '.appman', 'state.json');
+const STATE_PATH = path.join(os.homedir(), '.bosun', 'state.json');
 
 export interface PersistedState {
   ports: Record<string, number>;
@@ -34,7 +34,7 @@ export function savePersistedState(state: PersistedState): void {
       fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
       fs.writeFileSync(STATE_PATH, JSON.stringify(toWrite), 'utf8');
     } catch (err: any) {
-      process.stderr.write(`[appman] warning: state write failed: ${err.message}\n`);
+      process.stderr.write(`[bosun] warning: state write failed: ${err.message}\n`);
     }
   }, 500);
 }

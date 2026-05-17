@@ -153,7 +153,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     }
     else if (input === 'V') {
       const editor = process.env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi');
-      const tmp = path.join(os.tmpdir(), `appman-${current.name}-${Date.now()}.json`);
+      const tmp = path.join(os.tmpdir(), `bosun-${current.name}-${Date.now()}.json`);
       const cfg = registry.getConfig();
       const app = registry.getApp(current.name);
       const so = registry.getState(current.name)?.sessionOverrides ?? null;
@@ -202,7 +202,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   return (
     <Box flexDirection="column" width={cols}>
       <Box borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text bold color="cyan">appman</Text>
+        <Text bold color="cyan">bosun</Text>
         <Text dimColor>  •  api http://127.0.0.1:{apiPort}</Text>
       </Box>
 

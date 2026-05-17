@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { appmanDir } from './daemon.js';
+import { bosunDir } from './daemon.js';
 import type { Registry } from './registry.js';
 
 interface Handoff {
@@ -9,7 +9,7 @@ interface Handoff {
 }
 
 function handoffPath(): string {
-  return path.join(appmanDir(), 'state-handoff.json');
+  return path.join(bosunDir(), 'state-handoff.json');
 }
 
 export function writeHandoff(registry: Registry): string {

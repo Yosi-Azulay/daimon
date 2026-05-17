@@ -187,7 +187,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
 
   if (ownsWarnings && warnings.length) {
     for (const w of warnings) {
-      process.stderr.write(`[appman] warning: ${w}\n`);
+      process.stderr.write(`[bosun] warning: ${w}\n`);
     }
   }
 

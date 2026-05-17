@@ -36,7 +36,7 @@ export async function runInit(opts: InitOpts = {}): Promise<InitResult> {
     const searchRoots: any[] = [];
 
     if (markers.length) {
-      process.stdout.write(`[appman init] detected in ${cwd}: ${markers.join(', ')}\n`);
+      process.stdout.write(`[bosun init] detected in ${cwd}: ${markers.join(', ')}\n`);
       const useCwd = (await ask(rl, 'Add this folder as a searchRoot? [Y/n] ')) || 'y';
       if (useCwd.toLowerCase().startsWith('y')) {
         const label = await ask(rl, 'Optional label for this workspace (blank = none): ');
@@ -56,8 +56,8 @@ export async function runInit(opts: InitOpts = {}): Promise<InitResult> {
     const apiPortRaw = (await ask(rl, 'apiPort [4999]: ')) || '4999';
     const apiPort = Number(apiPortRaw) || 4999;
 
-    const targetAns = (await ask(rl, 'Write to (1) ./appman.config.json or (2) ~/.appman/config.json? [1] ')) || '1';
-    const target = targetAns.trim() === '2' ? path.join(os.homedir(), '.appman', 'config.json') : path.join(cwd, 'appman.config.json');
+    const targetAns = (await ask(rl, 'Write to (1) ./bosun.config.json or (2) ~/.bosun/config.json? [1] ')) || '1';
+    const target = targetAns.trim() === '2' ? path.join(os.homedir(), '.bosun', 'config.json') : path.join(cwd, 'bosun.config.json');
 
     if (fs.existsSync(target) && !opts.force) {
       throw new Error(`refusing to overwrite ${target} (pass --force to overwrite)`);
@@ -67,7 +67,7 @@ export async function runInit(opts: InitOpts = {}): Promise<InitResult> {
 
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, JSON.stringify(config, null, 2) + '\n', 'utf8');
-    process.stdout.write(`[appman init] wrote ${target}\n`);
+    process.stdout.write(`[bosun init] wrote ${target}\n`);
 
     const installClaudeAns = (await ask(rl, 'Install Claude Code integration? [Y/n] ')) || 'y';
     const installClaude = installClaudeAns.toLowerCase().startsWith('y');
