@@ -11,11 +11,13 @@ import type {
 } from './types.js';
 import { AppProcess } from './appProcess.js';
 import { PortAllocator, isPortFree } from './ports.js';
+import { DiskLogger } from './diskLogger.js';
 
 interface Entry {
   app: DiscoveredApp;
   state: AppState;
   proc: AppProcess | null;
+  logger?: DiskLogger;
 }
 
 const EVENT_BUFFER_MAX = 500;
@@ -192,6 +194,9 @@ export class Registry extends EventEmitter {
 
     e.state.health = 'unknown';
     e.state.lastHealthAt = null;
+    if (!e.logger && this.config.logs.enabled) {
+      e.logger = new DiskLogger(name, this.config.logs);
+    }
     const proc = new AppProcess({
       state: e.state,
       app: e.app,
@@ -202,6 +207,7 @@ export class Registry extends EventEmitter {
       onErrorRecorded: (entry, isNew) =>
         this.recordEvent({ app: name, type: isNew ? 'error-new' : 'error-recur', message: entry.message }),
       onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),
+      onLogLine: line => e.logger?.write(line),
     });
     e.proc = proc;
     this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'starting' });
@@ -246,6 +252,7 @@ export class Registry extends EventEmitter {
       Promise.all(tasks),
       new Promise<void>(resolve => setTimeout(resolve, timeoutMs)),
     ]);
+    for (const e of this.entries.values()) e.logger?.close();
   }
 
   waitFor(

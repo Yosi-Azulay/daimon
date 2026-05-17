@@ -1,6 +1,6 @@
 {
   "name": "appman",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local Angular/Nx app manager with TUI, HTTP API, and CLI",
   "type": "module",

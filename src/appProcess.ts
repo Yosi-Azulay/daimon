@@ -14,6 +14,7 @@ export interface AppProcessDeps {
   onStatusChange?: (from: AppStatus, to: AppStatus, message?: string) => void;
   onErrorRecorded?: (entry: ErrorEntry, isNew: boolean) => void;
   onExit?: (code: number | null, signal: NodeJS.Signals | null, stopping: boolean) => void;
+  onLogLine?: (line: string) => void;
 }
 
 export class AppProcess {
@@ -112,6 +113,7 @@ export class AppProcess {
       if (state.logBuffer.length > LOG_BUFFER_MAX) {
         state.logBuffer.splice(0, state.logBuffer.length - LOG_BUFFER_MAX);
       }
+      this.deps.onLogLine?.(clean);
       const prev = state.status;
       const r = parseLine(state, clean);
       if (r?.statusChanged) {
