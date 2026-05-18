@@ -42,7 +42,8 @@
     "cli": "node dist/cli.js",
     "mcp": "node dist/mcp.js",
     "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs",
-    "build:bundle": "esbuild src/cli.ts src/main.ts src/mcp.ts --bundle --platform=node --target=node20 --format=esm --minify --legal-comments=none --outdir=dist --packages=external",
+    "clean:dist": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build:bundle": "npm run clean:dist && esbuild src/cli.ts src/main.ts src/mcp.ts --bundle --platform=node --target=node20 --format=esm --minify --legal-comments=none --outdir=dist --packages=external",
     "prepublishOnly": "npm run build && npm test && npm run build:bundle"
   },
   "engines": {
