@@ -27,7 +27,7 @@
   ],
   "type": "module",
   "bin": {
-    "daimon": "./dist/cli.js"
+    "daimon": "dist/cli.js"
   },
   "files": [
     "dist",
