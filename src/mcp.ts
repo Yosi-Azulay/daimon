@@ -123,6 +123,53 @@ async function main() {
     });
   }
 
+  server.registerTool('overview', {
+    description: 'Decision-ready snapshot of the workspace: totals, byStatus, needsAttention (with first parsed error per failing app), recentlyChanged. The recommended first call in a session — answers "what is going on right now?" in one round-trip.',
+    inputSchema: { workspace: z.string().optional(), profile: z.string().optional() },
+  }, async ({ workspace, profile }) => {
+    const qs = new URLSearchParams();
+    if (workspace) qs.set('workspace', workspace);
+    if (profile) qs.set('profile', profile);
+    const q = qs.toString();
+    const r = await callJson('/api/overview' + (q ? '?' + q : ''));
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    return ok(r.body);
+  });
+
+  server.registerTool('ensure', {
+    description: 'One-call lifecycle: if the app is stopped/crashed/error, start it; then block until it reaches the target state. Idempotent — returns immediately on already-terminal apps. Replaces the list→status→start→wait→status sequence. Returns compact AppSummary plus _meta.startedFromState / waitedMs. On timeout the body is { error: "timeout", state, _meta: { timedOut: true } } — treat as exit 2 equivalent.',
+    inputSchema: {
+      name: z.string(),
+      until: z.enum(['serving', 'healthy']).optional(),
+      timeoutMs: z.number().int().positive().max(600_000).optional(),
+    },
+  }, async ({ name, until, timeoutMs }) => {
+    const qs = new URLSearchParams();
+    qs.set('until', until || 'healthy');
+    qs.set('timeoutMs', String(Math.min(timeoutMs ?? 180_000, 600_000)));
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}/ensure?${qs.toString()}`, 'POST');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    return ok(r.body);
+  });
+
+  server.registerTool('ensure_up', {
+    description: 'One-call profile bring-up: cascade-start every app in the profile (resolving deps) and block until each reaches the target. Returns per-app terminal state plus _meta.totalMs. Use this instead of daimon up + per-app waits.',
+    inputSchema: {
+      profile: z.string(),
+      until: z.enum(['serving', 'healthy']).optional(),
+      timeoutMs: z.number().int().positive().max(1_200_000).optional(),
+    },
+  }, async ({ profile, until, timeoutMs }) => {
+    const qs = new URLSearchParams();
+    qs.set('until', until || 'healthy');
+    qs.set('timeoutMs', String(Math.min(timeoutMs ?? 300_000, 1_200_000)));
+    const r = await callJson(`/api/profiles/${encodeURIComponent(profile)}/ensure-up?${qs.toString()}`, 'POST');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown profile');
+    return ok(r.body);
+  });
+
   server.registerTool('wait_for_app', {
     description: 'Block until app reaches the given state or timeout (max 600s).',
     inputSchema: {

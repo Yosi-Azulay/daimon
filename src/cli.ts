@@ -74,6 +74,30 @@ function authHeaders(): Record<string, string> {
   return tok ? { authorization: `Bearer ${tok}` } : {};
 }
 
+async function streamNdjson(pathname: string): Promise<void> {
+  try {
+    const res = await fetch(getBaseUrl() + pathname, { headers: authHeaders() });
+    if (!res.ok || !res.body) fail(JSON.stringify({ error: `stream failed: HTTP ${res.status}` }));
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        process.stdout.write(line + '\n');
+      }
+    }
+    if (buf.trim()) process.stdout.write(buf + '\n');
+  } catch (err: any) {
+    fail(JSON.stringify({ error: err?.message || String(err) }));
+  }
+}
+
 async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{ status: number; body: any }> {
   try {
     const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders() });
@@ -131,6 +155,9 @@ interface Flags {
   workspace?: string;
   full?: boolean;
   compact?: boolean;
+  profile?: string;
+  stream?: boolean;
+  explain?: boolean;
   passthrough: string[];
 }
 
@@ -163,6 +190,9 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--workspace') f.workspace = args[++i];
     else if (a === '--full') f.full = true;
     else if (a === '--compact') f.compact = true;
+    else if (a === '--profile') f.profile = args[++i];
+    else if (a === '--stream') f.stream = true;
+    else if (a === '--explain') f.explain = true;
     else f.positional.push(a);
   }
   return f;
@@ -424,8 +454,17 @@ async function main() {
   switch (cmd) {
     case 'list': {
       const needFull = f.full || ((f.tags.length || f.workspace) && !f.compact);
-      const qs = needFull ? '?format=full' : (f.compact ? '?format=compact' : '');
-      const r = await call('/api/apps' + qs);
+      const params = new URLSearchParams();
+      if (needFull) params.set('format', 'full');
+      else if (f.compact) params.set('format', 'compact');
+      if (f.stream) {
+        params.set('stream', 'ndjson');
+        const qs = params.toString();
+        await streamNdjson('/api/apps' + (qs ? '?' + qs : ''));
+        return;
+      }
+      const qs = params.toString();
+      const r = await call('/api/apps' + (qs ? '?' + qs : ''));
       let arr = Array.isArray(r.body) ? r.body : [];
       if (f.tags.length) arr = arr.filter((a: any) => f.tags.every(t => (a.tags || []).includes(t)));
       if (f.workspace) arr = arr.filter((a: any) => a.workspaceLabel === f.workspace);
@@ -599,8 +638,64 @@ async function main() {
       const params = new URLSearchParams();
       if (f.since) params.set('since', f.since);
       if (f.app) params.set('app', f.app);
+      if (f.stream) {
+        params.set('stream', 'ndjson');
+        const qs = params.toString();
+        await streamNdjson('/api/events' + (qs ? '?' + qs : ''));
+        return;
+      }
       const qs = params.toString();
       const r = await call('/api/events' + (qs ? '?' + qs : ''));
+      out(r.body);
+      return;
+    }
+    case 'ensure': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon ensure <name> [--until serving|healthy] [--timeout 180s]' }));
+      const params = new URLSearchParams();
+      const until = (f.until || 'healthy').toLowerCase();
+      if (until !== 'serving' && until !== 'healthy') fail(JSON.stringify({ error: 'ensure --until must be serving|healthy' }));
+      params.set('until', until);
+      let timeoutSec = 180;
+      if (f.timeout) {
+        const t = durationToSeconds(f.timeout);
+        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        timeoutSec = Math.min(t, 600);
+      }
+      params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/ensure?${params.toString()}`, 'POST');
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      if (r.body?.error === 'timeout') process.exit(2);
+      return;
+    }
+    case 'ensure-up': {
+      const profile = f.positional[0];
+      if (!profile) fail(JSON.stringify({ error: 'usage: daimon ensure-up <profile> [--until serving|healthy] [--timeout 300s]' }));
+      const params = new URLSearchParams();
+      const until = (f.until || 'healthy').toLowerCase();
+      if (until !== 'serving' && until !== 'healthy') fail(JSON.stringify({ error: 'ensure-up --until must be serving|healthy' }));
+      params.set('until', until);
+      let timeoutSec = 300;
+      if (f.timeout) {
+        const t = durationToSeconds(f.timeout);
+        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        timeoutSec = Math.min(t, 1200);
+      }
+      params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
+      const r = await call(`/api/profiles/${encodeURIComponent(profile)}/ensure-up?${params.toString()}`, 'POST');
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown profile' }));
+      out(r.body);
+      const anyTimeout = Array.isArray(r.body?.apps) && r.body.apps.some((a: any) => a.timedOut);
+      if (anyTimeout) process.exit(2);
+      return;
+    }
+    case 'overview': {
+      const params = new URLSearchParams();
+      if (f.workspace) params.set('workspace', f.workspace);
+      if (f.profile) params.set('profile', f.profile);
+      const qs = params.toString();
+      const r = await call('/api/overview' + (qs ? '?' + qs : ''));
       out(r.body);
       return;
     }

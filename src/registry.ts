@@ -216,6 +216,7 @@ export class Registry extends EventEmitter {
   recordEvent(ev: Omit<AppEvent, 'ts'> & { ts?: number }): void {
     const full: AppEvent = { ts: ev.ts ?? Date.now(), ...ev } as AppEvent;
     this.eventBuffer.push(full);
+    this.emit('event', full);
     if (this.eventBuffer.length > EVENT_BUFFER_MAX) {
       this.eventBuffer.splice(0, this.eventBuffer.length - EVENT_BUFFER_MAX);
     }

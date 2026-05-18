@@ -7,11 +7,14 @@ export interface CliSubcommand {
 }
 
 export const CLI_SUBCOMMANDS: CliSubcommand[] = [
-  { name: 'list', args: '[--tag <name>] [--workspace <label>] [--full|--compact]', summary: 'List apps. Compact by default (name,status,port,health,errCount,lastChangeMs); --full for v0.4 shape.', example: 'daimon list', needsDaemon: true },
+  { name: 'list', args: '[--tag <name>] [--workspace <label>] [--full|--compact] [--stream]', summary: 'List apps. Compact by default (name,status,port,health,errCount,lastChangeMs); --full for v0.4 shape; --stream for NDJSON.', example: 'daimon list', needsDaemon: true },
   { name: 'status', args: '<name> [--full|--compact]', summary: 'Get the current status of one app. Compact by default.', example: 'daimon status web-admin', needsDaemon: true },
   { name: 'errors', args: '<name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact]', summary: 'Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}).', example: 'daimon errors web-admin --since 5m', needsDaemon: true },
-  { name: 'events', args: '[--since 1h] [--app <name>]', summary: 'Get the event log.', example: 'daimon events --since 1h', needsDaemon: true },
+  { name: 'events', args: '[--since 1h] [--app <name>] [--stream]', summary: 'Get the event log. --stream emits NDJSON until SIGINT.', example: 'daimon events --since 1h', needsDaemon: true },
   { name: 'wait', args: '<name> [--until serving|healthy|stopped|error] [--timeout 60s]', summary: 'Block until app reaches the given state.', example: 'daimon wait web-admin --until healthy', needsDaemon: true },
+  { name: 'ensure', args: '<name> [--until serving|healthy] [--timeout 180s]', summary: 'One-call: start if needed, block to target state, return terminal state. Idempotent.', example: 'daimon ensure web-admin', needsDaemon: true },
+  { name: 'ensure-up', args: '<profile> [--until serving|healthy] [--timeout 300s]', summary: 'One-call: cascade-start every app in the profile and wait for each to reach target.', example: 'daimon ensure-up fullstack', needsDaemon: true },
+  { name: 'overview', args: '[--workspace <label>] [--profile <name>]', summary: 'Decision-ready snapshot: totals, byStatus, needsAttention (with first parsed error), recentlyChanged. First call in a session.', example: 'daimon overview', needsDaemon: true },
   { name: 'logs', args: '<name> [--tail N] [--since 30s]', summary: 'Recent log lines for an app.', example: 'daimon logs web-admin --tail 100', needsDaemon: true },
   { name: 'start', args: '<name> [--with-deps]', summary: 'Start an app.', example: 'daimon start web-admin', needsDaemon: true },
   { name: 'stop', args: '<name>', summary: 'Stop an app.', example: 'daimon stop web-admin', needsDaemon: true },

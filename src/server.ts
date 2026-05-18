@@ -252,6 +252,19 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
         const sinceMs = parseDuration(url.searchParams.get('since'));
         const app = url.searchParams.get('app') || undefined;
+        if (url.searchParams.get('stream') === 'ndjson') {
+          res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+          const seed = registry.events({ sinceMs, app });
+          for (const ev of seed) res.write(JSON.stringify(ev) + '\n');
+          const onEvent = (ev: any) => {
+            if (app && ev.app !== app) return;
+            res.write(JSON.stringify(ev) + '\n');
+          };
+          registry.on('event', onEvent);
+          const keepalive = setInterval(() => { try { res.write('\n'); } catch {} }, 30_000);
+          req.on('close', () => { registry.off('event', onEvent); clearInterval(keepalive); try { res.end(); } catch {} });
+          return;
+        }
         const memEvents = registry.events({ sinceMs, app });
         const h = registry.getHistory();
         if (h && sinceMs && memEvents.length < 500) {
@@ -331,6 +344,102 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'profiles' && parts[3] === 'ensure-up' && method === 'POST') {
+        const profile = decodeURIComponent(parts[2]);
+        const cfg = opts.getConfig?.();
+        const list = cfg?.profiles?.[profile];
+        if (!list) { sendJson(res, 404, { error: 'unknown profile' }); return; }
+        const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
+        if (!['serving', 'healthy'].includes(untilRaw)) { sendJson(res, 400, { error: 'until must be serving|healthy' }); return; }
+        const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
+        let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 300_000;
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 300_000;
+        timeoutMs = Math.min(timeoutMs, 1_200_000);
+        const probeEnabled = cfg?.healthProbe?.enabled ?? true;
+        const effectiveUntil = (untilRaw === 'healthy' && !probeEnabled) ? 'serving' : (untilRaw as 'serving' | 'healthy');
+        const start = Date.now();
+        for (const n of list) {
+          const s = registry.summary(n);
+          if (!s) continue;
+          if (s.status !== 'serving' && s.status !== 'starting' && s.status !== 'compiling') {
+            await registry.startWithDeps(n);
+          }
+        }
+        const apps = await Promise.all(list.map(async n => {
+          const remaining = Math.max(1000, timeoutMs - (Date.now() - start));
+          const summary0 = registry.summary(n);
+          if (!summary0) return { name: n, state: null, until: effectiveUntil, reachedTargetMs: null, timedOut: false, error: 'unknown' };
+          const r = await registry.waitFor(n, effectiveUntil, remaining);
+          const s = registry.summary(n);
+          return {
+            name: n,
+            state: s ? compactStatus(s) : null,
+            until: effectiveUntil,
+            reachedTargetMs: r.timedOut ? null : r.waitedMs,
+            timedOut: r.timedOut,
+          };
+        }));
+        sendJson(res, 200, { profile, apps, _meta: { totalMs: Date.now() - start, until: effectiveUntil } });
+        return;
+      }
+
+      if (parts[0] === 'api' && parts[1] === 'overview' && method === 'GET') {
+        const cfg = opts.getConfig?.();
+        const all = registry.list();
+        const workspace = url.searchParams.get('workspace');
+        const profile = url.searchParams.get('profile');
+        let filtered = all;
+        if (workspace) filtered = filtered.filter(a => a.workspaceLabel === workspace);
+        if (profile) {
+          const list = cfg?.profiles?.[profile] ?? null;
+          if (list) filtered = filtered.filter(a => list.includes(a.name));
+        }
+        const totals = {
+          apps: filtered.length,
+          serving: filtered.filter(a => a.status === 'serving').length,
+          errors: filtered.filter(a => a.status === 'error').length,
+          stopped: filtered.filter(a => a.status === 'stopped').length,
+          totalErrCount: filtered.reduce((acc, a) => acc + a.errorCount, 0),
+          totalCpuPct: Math.round(filtered.reduce((acc, a) => acc + (a.cpu ?? 0), 0) * 10) / 10,
+          totalMemMb: Math.round(filtered.reduce((acc, a) => acc + (a.memMB ?? 0), 0)),
+        };
+        const byStatus: Record<string, string[]> = {};
+        for (const a of filtered) {
+          (byStatus[a.status] ??= []).push(a.name);
+        }
+        const needsAttention = filtered
+          .filter(a => a.status === 'error' || a.errorCount > 0)
+          .map(a => {
+            const errs = registry.errors(a.name) ?? [];
+            const first = errs[errs.length - 1];
+            const parsed = first?.parsed;
+            return {
+              name: a.name,
+              status: a.status,
+              errCount: a.errorCount,
+              firstError: parsed
+                ? { file: parsed.file ?? null, line: parsed.line ?? null, code: parsed.code ?? null, message: parsed.message ?? first?.message ?? '' }
+                : first
+                  ? { file: null, line: null, code: null, message: first.message }
+                  : null,
+            };
+          });
+        const fiveMinAgo = Date.now() - 5 * 60_000;
+        const recentlyChanged = registry
+          .events({ sinceMs: 5 * 60_000 })
+          .filter(ev => ev.type === 'status' && ev.ts >= fiveMinAgo)
+          .filter(ev => (workspace ? filtered.some(a => a.name === ev.app) : true))
+          .filter(ev => (profile ? filtered.some(a => a.name === ev.app) : true))
+          .slice(-5)
+          .map(ev => ({ name: ev.app, transition: `${ev.from ?? '?'}→${ev.to ?? '?'}`, msAgo: Date.now() - ev.ts }));
+        const out: any = { ts: Date.now(), totals, byStatus, needsAttention, recentlyChanged };
+        if (totals.apps === 0) {
+          out._meta = { suggestion: "no apps registered. run 'daimon doctor' for recommended next step, or 'daimon init --auto' from a workspace folder." };
+        }
+        sendJson(res, 200, out);
+        return;
+      }
+
       if (parts[0] !== 'api' || parts[1] !== 'apps') {
         sendJson(res, 404, { error: 'not found' });
         return;
@@ -343,7 +452,14 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         const fmt = resolveFormat(url, opts.getConfig);
         const all = registry.list();
-        sendJson(res, 200, fmt === 'full' ? all : all.map(compactSummary));
+        const rows = fmt === 'full' ? all : all.map(compactSummary);
+        if (url.searchParams.get('stream') === 'ndjson') {
+          res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+          for (const row of rows) res.write(JSON.stringify(row) + '\n');
+          res.end();
+          return;
+        }
+        sendJson(res, 200, rows);
         return;
       }
 
@@ -455,6 +571,47 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         timeoutSec = Math.min(timeoutSec, 600);
         const result = await registry.waitFor(name, untilRaw as any, timeoutSec * 1000);
         sendJson(res, 200, result);
+        return;
+      }
+
+      if (sub === 'ensure' && method === 'POST') {
+        const s0 = registry.summary(name);
+        if (!s0) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
+        if (!['serving', 'healthy'].includes(untilRaw)) {
+          sendJson(res, 400, { error: 'until must be serving|healthy' });
+          return;
+        }
+        const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
+        let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 180_000;
+        timeoutMs = Math.min(timeoutMs, 600_000);
+        const probeEnabled = opts.getConfig?.().healthProbe?.enabled ?? true;
+        let effectiveUntil: 'serving' | 'healthy' = untilRaw as any;
+        let warning: string | undefined;
+        if (effectiveUntil === 'healthy' && !probeEnabled) {
+          effectiveUntil = 'serving';
+          warning = 'no health probe; treated serving as terminal';
+        }
+        const alreadyTerminal =
+          (effectiveUntil === 'serving' && s0.status === 'serving') ||
+          (effectiveUntil === 'healthy' && s0.status === 'serving' && s0.health === 'healthy');
+        if (alreadyTerminal) {
+          sendJson(res, 200, { ...compactStatus(s0), _meta: { format: 'compact', startedFromState: null, warning, waitedMs: 0 } });
+          return;
+        }
+        const startFromState = s0.status;
+        if (s0.status !== 'starting' && s0.status !== 'compiling') {
+          await registry.start(name);
+        }
+        const r = await registry.waitFor(name, effectiveUntil, timeoutMs);
+        const sFinal = registry.summary(name);
+        const compact = sFinal ? compactStatus(sFinal) : { name, status: r.status, port: null, url: null, health: r.health, errCount: 0, lastChangeMs: null, uptime: null };
+        if (r.timedOut) {
+          sendJson(res, 200, { error: 'timeout', state: compact, _meta: { format: 'compact', startedFromState: startFromState, warning, waitedMs: r.waitedMs, timedOut: true } });
+          return;
+        }
+        sendJson(res, 200, { ...compact, _meta: { format: 'compact', startedFromState: startFromState, warning, waitedMs: r.waitedMs } });
         return;
       }
 
