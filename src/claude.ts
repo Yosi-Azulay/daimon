@@ -14,6 +14,7 @@ export interface Manifest {
   skill?: { path: string } | null;
   commands?: string[];
   agent?: { path: string } | null;
+  migrated?: { removedCommands?: string[]; backedUpCommands?: string[] };
 }
 
 export interface InstallSelection {
@@ -25,9 +26,16 @@ export interface InstallSelection {
 export interface InstallOpts extends InstallSelection {
   dir: string;
   apiPort: number;
+  onMigrationEvent?: (ev: { kind: 'removed' | 'backed-up'; file: string }) => void;
 }
 
 export const COMMAND_NAMES = ['status', 'start', 'stop', 'restart', 'errors', 'logs', 'up', 'doctor', 'why', 'wait'];
+
+const LEGACY_COMMAND_FILES = [
+  'daimon-status.md', 'daimon-start.md', 'daimon-stop.md', 'daimon-restart.md',
+  'daimon-errors.md', 'daimon-logs.md', 'daimon-up.md', 'daimon-doctor.md',
+  'daimon-why.md', 'daimon-wait.md',
+];
 
 export function defaultClaudeDir(): string {
   return path.join(os.homedir(), '.claude');
@@ -78,30 +86,60 @@ export function writeManifest(dir: string, m: Manifest): void {
   writeFile(manifestPath(dir), JSON.stringify(m, null, 2) + '\n');
 }
 
-export function install(opts: InstallOpts): { installed: string[]; manifestPath: string } {
+export function migrateLegacyCommands(opts: { dir: string; priorInstalledAt?: string; onEvent?: (ev: { kind: 'removed' | 'backed-up'; file: string }) => void }): { removed: string[]; backedUp: string[] } {
+  const removed: string[] = [];
+  const backedUp: string[] = [];
+  const baseline = opts.priorInstalledAt ? Date.parse(opts.priorInstalledAt) : 0;
+  for (const file of LEGACY_COMMAND_FILES) {
+    const full = path.join(opts.dir, 'commands', file);
+    let stat: fs.Stats;
+    try { stat = fs.statSync(full); } catch { continue; }
+    if (!stat.isFile()) continue;
+    // mtime within 5s of the recorded install time means the user did not touch it.
+    const modified = baseline > 0 ? stat.mtimeMs > baseline + 5000 : false;
+    try {
+      if (modified) {
+        fs.renameSync(full, full + '.bak');
+        backedUp.push(file);
+        opts.onEvent?.({ kind: 'backed-up', file });
+      } else {
+        fs.rmSync(full, { force: true });
+        removed.push(file);
+        opts.onEvent?.({ kind: 'removed', file });
+      }
+    } catch {}
+  }
+  return { removed, backedUp };
+}
+
+export function install(opts: InstallOpts): { installed: string[]; manifestPath: string; migrated?: { removed: string[]; backedUp: string[] } } {
   const installed: string[] = [];
-  const manifest: Manifest = readManifest(opts.dir) ?? {
+  const prior = readManifest(opts.dir);
+  const manifest: Manifest = prior ?? {
     'daimon-version': DAIMON_VERSION,
     'installed-at': new Date().toISOString(),
   };
   manifest['daimon-version'] = DAIMON_VERSION;
   manifest['installed-at'] = new Date().toISOString();
 
+  const migrated = migrateLegacyCommands({
+    dir: opts.dir,
+    priorInstalledAt: prior?.['installed-at'],
+    onEvent: opts.onMigrationEvent,
+  });
+  manifest.commands = [];
+  if (migrated.removed.length || migrated.backedUp.length) {
+    manifest.migrated = {
+      removedCommands: migrated.removed,
+      backedUpCommands: migrated.backedUp,
+    };
+  }
+
   if (opts.skill) {
     const rel = path.join('skills', 'daimon', 'SKILL.md');
     writeFile(path.join(opts.dir, rel), render(readTemplate('skill.md.tmpl'), opts.apiPort));
     manifest.skill = { path: rel.replace(/\\/g, '/') };
     installed.push(rel);
-  }
-  if (opts.commands) {
-    const cmdList: string[] = [];
-    for (const name of COMMAND_NAMES) {
-      const rel = path.join('commands', `daimon-${name}.md`);
-      writeFile(path.join(opts.dir, rel), render(readTemplate(path.join('commands', `${name}.md.tmpl`)), opts.apiPort));
-      cmdList.push(name);
-      installed.push(rel);
-    }
-    manifest.commands = cmdList;
   }
   if (opts.agent) {
     const rel = path.join('agents', 'daimon-runner.md');
@@ -111,7 +149,7 @@ export function install(opts: InstallOpts): { installed: string[]; manifestPath:
   }
 
   writeManifest(opts.dir, manifest);
-  return { installed, manifestPath: manifestPath(opts.dir) };
+  return { installed, manifestPath: manifestPath(opts.dir), migrated };
 }
 
 export function uninstall(opts: { dir: string; selection: Partial<InstallSelection> & { all?: boolean } }): { removed: string[]; manifestPath: string | null } {

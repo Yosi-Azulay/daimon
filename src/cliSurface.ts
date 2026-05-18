@@ -7,9 +7,9 @@ export interface CliSubcommand {
 }
 
 export const CLI_SUBCOMMANDS: CliSubcommand[] = [
-  { name: 'list', args: '[--tag <name>] [--workspace <label>]', summary: 'List apps with current status, port, health.', example: 'daimon list', needsDaemon: true },
-  { name: 'status', args: '<name>', summary: 'Get the current status of one app.', example: 'daimon status web-admin', needsDaemon: true },
-  { name: 'errors', args: '<name> [--since 2m] [--since-last] [--client <id>] [--structured]', summary: 'Get deduplicated errors for an app.', example: 'daimon errors web-admin --since 5m', needsDaemon: true },
+  { name: 'list', args: '[--tag <name>] [--workspace <label>] [--full|--compact]', summary: 'List apps. Compact by default (name,status,port,health,errCount,lastChangeMs); --full for v0.4 shape.', example: 'daimon list', needsDaemon: true },
+  { name: 'status', args: '<name> [--full|--compact]', summary: 'Get the current status of one app. Compact by default.', example: 'daimon status web-admin', needsDaemon: true },
+  { name: 'errors', args: '<name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact]', summary: 'Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}).', example: 'daimon errors web-admin --since 5m', needsDaemon: true },
   { name: 'events', args: '[--since 1h] [--app <name>]', summary: 'Get the event log.', example: 'daimon events --since 1h', needsDaemon: true },
   { name: 'wait', args: '<name> [--until serving|healthy|stopped|error] [--timeout 60s]', summary: 'Block until app reaches the given state.', example: 'daimon wait web-admin --until healthy', needsDaemon: true },
   { name: 'logs', args: '<name> [--tail N] [--since 30s]', summary: 'Recent log lines for an app.', example: 'daimon logs web-admin --tail 100', needsDaemon: true },

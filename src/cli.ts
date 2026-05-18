@@ -129,6 +129,8 @@ interface Flags {
   headless?: boolean;
   detach?: boolean;
   workspace?: string;
+  full?: boolean;
+  compact?: boolean;
   passthrough: string[];
 }
 
@@ -159,9 +161,17 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--headless') f.headless = true;
     else if (a === '--detach') f.detach = true;
     else if (a === '--workspace') f.workspace = args[++i];
+    else if (a === '--full') f.full = true;
+    else if (a === '--compact') f.compact = true;
     else f.positional.push(a);
   }
   return f;
+}
+
+function formatQuery(f: Flags): string {
+  if (f.full) return '?format=full';
+  if (f.compact) return '?format=compact';
+  return '';
 }
 
 function durationToSeconds(s: string): number | null {
@@ -224,16 +234,22 @@ async function handleClaude(rest: string[]): Promise<void> {
     let selection: { skill: boolean; commands: boolean; agent: boolean };
     const anyFlag = flags.skill || flags.commands || flags.agent || flags.all;
     if (flags.all || flags.yes || (!anyFlag && !process.stdin.isTTY)) {
-      selection = { skill: true, commands: true, agent: true };
+      selection = { skill: true, commands: false, agent: true };
     } else if (!anyFlag) {
       const { promptClaudeInstall } = await import('./tui/ClaudeInstallPrompt.js');
       const picked = await promptClaudeInstall();
       if (!picked) { out({ cancelled: true }); return; }
-      selection = picked;
+      selection = { skill: picked.skill, commands: false, agent: picked.agent };
     } else {
-      selection = { skill: !!flags.skill, commands: !!flags.commands, agent: !!flags.agent };
+      selection = { skill: !!flags.skill, commands: false, agent: !!flags.agent };
     }
-    const r = claudeInstall({ ...selection, dir, apiPort });
+    const r = claudeInstall({
+      ...selection, dir, apiPort,
+      onMigrationEvent: ev => {
+        if (ev.kind === 'removed') out({ removed: ev.file });
+        else out({ warning: `${ev.file} was modified; backing up to ${ev.file}.bak` });
+      },
+    });
     out({ installed: r.installed, manifest: r.manifestPath, version: DAIMON_VERSION });
     return;
   }
@@ -243,10 +259,16 @@ async function handleClaude(rest: string[]): Promise<void> {
     if (!m) fail(JSON.stringify({ error: 'no manifest at ' + dir + ' — run `daimon claude install` first' }));
     const selection = {
       skill: !!m!.skill,
-      commands: !!(m!.commands && m!.commands.length),
+      commands: false,
       agent: !!m!.agent,
     };
-    const r = claudeInstall({ ...selection, dir, apiPort });
+    const r = claudeInstall({
+      ...selection, dir, apiPort,
+      onMigrationEvent: ev => {
+        if (ev.kind === 'removed') out({ removed: ev.file });
+        else out({ warning: `${ev.file} was modified; backing up to ${ev.file}.bak` });
+      },
+    });
     out({ updated: r.installed, manifest: r.manifestPath, version: DAIMON_VERSION });
     return;
   }
@@ -364,7 +386,13 @@ async function main() {
       out({ path: r.path, installClaude: r.installClaude });
       if (r.installClaude) {
         const apiPort = readApiPort();
-        const inst = claudeInstall({ skill: true, commands: true, agent: true, dir: defaultClaudeDir(), apiPort });
+        const inst = claudeInstall({
+          skill: true, commands: false, agent: true, dir: defaultClaudeDir(), apiPort,
+          onMigrationEvent: ev => {
+            if (ev.kind === 'removed') out({ removed: ev.file });
+            else out({ warning: `${ev.file} was modified; backing up to ${ev.file}.bak` });
+          },
+        });
         out({ claudeInstalled: inst.installed });
       }
       // A running daemon was spawned with a different cwd / config path; without this
@@ -395,7 +423,9 @@ async function main() {
 
   switch (cmd) {
     case 'list': {
-      const r = await call('/api/apps');
+      const needFull = f.full || ((f.tags.length || f.workspace) && !f.compact);
+      const qs = needFull ? '?format=full' : (f.compact ? '?format=compact' : '');
+      const r = await call('/api/apps' + qs);
       let arr = Array.isArray(r.body) ? r.body : [];
       if (f.tags.length) arr = arr.filter((a: any) => f.tags.every(t => (a.tags || []).includes(t)));
       if (f.workspace) arr = arr.filter((a: any) => a.workspaceLabel === f.workspace);
@@ -409,7 +439,8 @@ async function main() {
       if (!name) fail(JSON.stringify({ error: `usage: daimon ${cmd} <name>` }));
       const suffix = cmd === 'status' ? '' : '/' + cmd;
       const method: 'GET' | 'POST' = cmd === 'status' ? 'GET' : 'POST';
-      const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}`, method);
+      const qs = cmd === 'status' ? formatQuery(f) : '';
+      const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}${qs}`, method);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
       return;
@@ -543,7 +574,7 @@ async function main() {
     }
     case 'errors': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact]' }));
       const params = new URLSearchParams();
       let endpoint = `/api/apps/${encodeURIComponent(name)}/errors`;
       if (f.sinceLast) {
@@ -552,6 +583,8 @@ async function main() {
       } else if (f.since) {
         params.set('since', f.since);
       }
+      if (f.full) params.set('format', 'full');
+      else if (f.compact) params.set('format', 'compact');
       const qs = params.toString();
       const r = await call(endpoint + (qs ? '?' + qs : ''));
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));

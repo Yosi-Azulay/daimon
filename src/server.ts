@@ -9,7 +9,7 @@ import { buildSnapshot, writeSnapshot } from './snapshot.js';
 import { executeClean, planClean } from './clean.js';
 import { exportMetrics } from './metrics.js';
 import type { RequestLog } from './requestLog.js';
-import type { AppmanConfig } from './types.js';
+import type { AppmanConfig, AppSummary, ErrorEntry } from './types.js';
 import { appendAuditEntry } from './audit.js';
 import { listPresets } from './presets.js';
 import { writeHandoff } from './stateHandoff.js';
@@ -46,6 +46,46 @@ function parseDuration(s: string | null): number | undefined {
     case 'h': return n * 60 * 60 * 1000;
   }
   return undefined;
+}
+
+function resolveFormat(url: URL, getConfig?: () => AppmanConfig): 'compact' | 'full' {
+  const q = (url.searchParams.get('format') || '').toLowerCase();
+  if (q === 'full') return 'full';
+  if (q === 'compact') return 'compact';
+  const def = getConfig?.().output?.format;
+  return def === 'full' ? 'full' : 'compact';
+}
+
+function compactSummary(s: AppSummary): Record<string, unknown> {
+  return {
+    name: s.name,
+    status: s.status,
+    port: s.port,
+    health: s.health,
+    errCount: s.errorCount,
+    lastChangeMs: s.lastChangeMs ?? null,
+  };
+}
+
+function compactStatus(s: AppSummary): Record<string, unknown> {
+  return {
+    name: s.name,
+    status: s.status,
+    port: s.port,
+    url: s.url,
+    health: s.health,
+    errCount: s.errorCount,
+    lastChangeMs: s.lastChangeMs ?? null,
+    uptime: s.uptimeMs,
+  };
+}
+
+function compactError(e: ErrorEntry): Record<string, unknown> {
+  const p = e.parsed;
+  if (p && (p.file || p.code)) {
+    return { file: p.file ?? null, line: p.line ?? null, col: p.col ?? null, code: p.code ?? null, message: p.message ?? e.message };
+  }
+  return { file: null, line: null, col: null, code: null, message: e.message };
 }
 
 function parseSinceParam(s: string | null): { sinceMs?: number; sinceTs?: number } {
@@ -301,7 +341,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           sendJson(res, 405, { error: 'method not allowed' });
           return;
         }
-        sendJson(res, 200, registry.list());
+        const fmt = resolveFormat(url, opts.getConfig);
+        const all = registry.list();
+        sendJson(res, 200, fmt === 'full' ? all : all.map(compactSummary));
         return;
       }
 
@@ -319,7 +361,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           sendJson(res, 404, { error: 'unknown app' });
           return;
         }
-        sendJson(res, 200, s);
+        const fmt = resolveFormat(url, opts.getConfig);
+        if (fmt === 'full') {
+          sendJson(res, 200, { ...s, _meta: { format: 'full' } });
+        } else {
+          sendJson(res, 200, { ...compactStatus(s), _meta: { format: 'compact' } });
+        }
         return;
       }
 
@@ -330,23 +377,25 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
         const newest = errs.reduce((acc, e) => Math.max(acc, e.lastSeen), cursor);
         if (newest > cursor) cursors.setErrorCursor(client, name, newest);
-        sendJson(res, 200, errs);
+        const fmt = resolveFormat(url, opts.getConfig);
+        sendJson(res, 200, fmt === 'full' ? errs : errs.map(compactError));
         return;
       }
 
       if (sub === 'errors' && !sub2 && method === 'GET') {
         const sinceRaw = url.searchParams.get('since');
+        const fmt = resolveFormat(url, opts.getConfig);
         if (sinceRaw) {
           const { sinceMs, sinceTs } = parseSinceParam(sinceRaw);
           const cutoff = sinceTs ?? (sinceMs != null ? Date.now() - sinceMs : 0);
           const errs = registry.errorsSince(name, cutoff);
           if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
-          sendJson(res, 200, errs);
+          sendJson(res, 200, fmt === 'full' ? errs : errs.map(compactError));
           return;
         }
         const errs = registry.errors(name);
         if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
-        sendJson(res, 200, errs);
+        sendJson(res, 200, fmt === 'full' ? errs : errs.map(compactError));
         return;
       }
 

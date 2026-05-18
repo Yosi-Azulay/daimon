@@ -217,7 +217,7 @@ async function toggleDrawer(name) {
 window.toggleDrawer = toggleDrawer;
 async function fetchErrors(name) {
   try {
-    const r = await fetch('/api/apps/' + encodeURIComponent(name) + '/errors');
+    const r = await fetch('/api/apps/' + encodeURIComponent(name) + '/errors?format=full');
     if (r.ok) errorCache.set(name, await r.json());
   } catch {}
 }
@@ -368,7 +368,7 @@ document.querySelectorAll('[data-cfgtab]').forEach(t => t.addEventListener('clic
   document.getElementById('cfg-global').style.display = t.dataset.cfgtab === 'global' ? '' : 'none';
 }));
 async function renderAllErrors() {
-  const r = await fetch('/api/apps');
+  const r = await fetch('/api/apps?format=full');
   if (!r.ok) return;
   const apps = await r.json();
   await Promise.all(apps.map(a => fetchErrors(a.name)));
@@ -404,7 +404,7 @@ async function renderAllErrors() {
 async function tick() {
   if (currentTab === 'all-errors') { await renderAllErrors(); document.getElementById('meta').textContent = 'all errors — last updated ' + new Date().toLocaleTimeString(); return; }
   try {
-    const res = await fetch('/api/apps');
+    const res = await fetch('/api/apps?format=full');
     const apps = await res.json();
     window.__appNames = apps.map(a => a.name);
     const tbody = document.getElementById('rows');

@@ -14,10 +14,9 @@ interface PromptProps {
 function Prompt({ onDone }: PromptProps) {
   const { exit } = useApp();
   const [cursor, setCursor] = useState(0);
-  const [sel, setSel] = useState<Selection>({ skill: true, commands: true, agent: true });
+  const [sel, setSel] = useState<Selection>({ skill: true, commands: false, agent: true });
   const items: Array<{ key: keyof Selection; label: string }> = [
     { key: 'skill', label: 'Skill (~/.claude/skills/daimon/SKILL.md)' },
-    { key: 'commands', label: 'Slash commands (~/.claude/commands/daimon-*.md)' },
     { key: 'agent', label: 'Subagent (~/.claude/agents/daimon-runner.md)' },
   ];
 

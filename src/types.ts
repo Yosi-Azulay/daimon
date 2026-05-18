@@ -49,6 +49,11 @@ export interface EditorConfig {
   scheme: string;
 }
 
+export interface OutputConfig {
+  format: 'compact' | 'full';
+  ndjson: boolean;
+}
+
 export interface LogsConfig {
   enabled: boolean;
   dir: string;
@@ -78,6 +83,7 @@ export interface AppmanConfig {
   metrics: MetricsConfig;
   editor: EditorConfig;
   apiToken: string | null;
+  output: OutputConfig;
 }
 
 export interface SearchRoot {
@@ -213,4 +219,5 @@ export interface AppSummary {
   dependsOn: string[];
   activeEnvFile: string | null;
   workspaceLabel: string | null;
+  lastChangeMs?: number;
 }

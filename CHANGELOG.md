@@ -4,6 +4,11 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed — v0.5 M26 (breaking)
+- **`/api/apps` and `/api/apps/:name` are compact by default.** F54. List rows are `{name,status,port,health,errCount,lastChangeMs}`; status is `{name,status,port,url,health,errCount,lastChangeMs,uptime,_meta:{format:"compact"}}`. Pass `?format=full` (HTTP) or `--full` (CLI) to get the v0.4 shape back. Same for `/api/apps/:name/errors` (compact form: `{file,line,col,code,message}`). MCP tools `list_apps`/`get_status` now return compact; new `list_apps_full`/`get_status_full` are exposed for the rare full case. `output.format` (config) accepts `"compact"` (default) or `"full"` to flip the project-wide default.
+  - **Migration:** any external automation parsing `daimon list` or `daimon status` must either add `--full` (CLI) / `?format=full` (HTTP) or migrate to the compact field names (note `errorCount` → `errCount`, `uptimeMs` → `uptime`, and new `lastChangeMs`). The dashboard is unchanged because it now requests `?format=full` explicitly.
+- **Claude integration: one skill instead of eleven.** F53/F63. `daimon claude install` now writes a single `~/.claude/skills/daimon/SKILL.md` that documents every CLI verb inline (~120 useful tokens). The ten legacy `~/.claude/commands/daimon-*.md` files are removed on install; if a file's mtime indicates the user customized it, it is renamed to `.bak` instead of deleted. Removal/backup events are printed as `{"removed":"…"}` / `{"warning":"…"}` lines and recorded in the manifest at `~/.claude/daimon.installed.json`. The `--commands` install flag is now a no-op (kept for backwards compatibility).
+
 ### Changed
 - **License changed from MIT to PolyForm Noncommercial 1.0.0.** Free for personal, academic, and noncommercial-organization use; commercial use requires a separate license. The MIT-licensed history remains in git for anyone who obtained it before this change.
 - **Renamed from `appman` to `daimon`.** Binary, package, environment variables (`APPMAN_*` → `DAIMON_*`), config file (`appman.config.json` → `daimon.config.json`), state directory (`~/.appman/` → `~/.daimon/`), and Claude integration paths (`~/.claude/skills/appman/` → `~/.claude/skills/daimon/`) all changed. No automated migration — first OSS release does not have prior public users.

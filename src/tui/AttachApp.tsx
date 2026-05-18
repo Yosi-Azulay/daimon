@@ -81,7 +81,7 @@ function AttachApp({ port, onExit }: AttachProps) {
   useEffect(() => {
     let stopped = false;
     const tick = async () => {
-      const r = await fetchJson('/api/apps');
+      const r = await fetchJson('/api/apps?format=full');
       if (stopped) return;
       if (r.status === 0) { setError(r.body?.error || 'daemon unreachable'); return; }
       if (r.status === 401) { setPromptingToken(true); return; }

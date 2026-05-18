@@ -143,6 +143,11 @@ export class Registry extends EventEmitter {
       || e.resolvedUrl
       || s.announcedUrl
       || (s.port ? `http://127.0.0.1:${s.port}` : null);
+    let lastChangeMs: number | undefined;
+    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
+      const ev = this.eventBuffer[i];
+      if (ev.app === name && ev.type === 'status') { lastChangeMs = Date.now() - ev.ts; break; }
+    }
     return {
       name: s.name,
       status: s.status,
@@ -167,6 +172,7 @@ export class Registry extends EventEmitter {
       dependsOn: [...s.dependsOn],
       activeEnvFile: s.activeEnvFile,
       workspaceLabel: s.workspaceLabel,
+      lastChangeMs,
     };
   }
 

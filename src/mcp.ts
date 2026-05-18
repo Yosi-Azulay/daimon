@@ -54,13 +54,25 @@ function err(message: string): { content: { type: 'text'; text: string }[]; isEr
 async function main() {
   const server = new McpServer({ name: 'daimon', version: DAIMON_VERSION });
 
-  server.registerTool('list_apps', { description: 'List all known apps with current status, port, health, etc.', inputSchema: {} }, async () => {
-    const r = await callJson('/api/apps');
+  server.registerTool('list_apps', { description: 'List apps in compact form: name, status, port, health, errCount, lastChangeMs. Use list_apps_full for the verbose v0.4 shape.', inputSchema: {} }, async () => {
+    const r = await callJson('/api/apps?format=compact');
     return r.status === 0 ? err(r.body?.error || 'unknown') : ok(r.body);
   });
 
-  server.registerTool('get_status', { description: 'Get the current status of one app.', inputSchema: { name: z.string() } }, async ({ name }) => {
-    const r = await callJson(`/api/apps/${encodeURIComponent(name)}`);
+  server.registerTool('list_apps_full', { description: 'List apps in the verbose v0.4 form (uptimeMs, lastCompileMs, metrics, etc.). Heavier — prefer list_apps unless you need extra fields.', inputSchema: {} }, async () => {
+    const r = await callJson('/api/apps?format=full');
+    return r.status === 0 ? err(r.body?.error || 'unknown') : ok(r.body);
+  });
+
+  server.registerTool('get_status', { description: 'Compact status: name, status, port, url, health, errCount, lastChangeMs, uptime. Use get_status_full for the verbose v0.4 shape.', inputSchema: { name: z.string() } }, async ({ name }) => {
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}?format=compact`);
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    return ok(r.body);
+  });
+
+  server.registerTool('get_status_full', { description: 'Verbose v0.4 status form including events, compile history, metrics. Prefer get_status unless you need extra fields.', inputSchema: { name: z.string() } }, async ({ name }) => {
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}?format=full`);
     if (r.status === 0) return err(r.body?.error || 'unknown');
     if (r.status === 404) return err('unknown app');
     return ok(r.body);

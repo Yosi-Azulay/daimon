@@ -52,6 +52,7 @@ function defaultConfig(): AppmanConfig {
     metrics: { enabled: false },
     editor: { scheme: 'vscode' },
     apiToken: null,
+    output: { format: 'compact', ndjson: false },
   };
 }
 
@@ -179,6 +180,11 @@ function validate(raw: unknown, source: string): AppmanConfig {
   }
   if (typeof obj.apiToken === 'string' || obj.apiToken === null) {
     cfg.apiToken = obj.apiToken as string | null;
+  }
+  if (obj.output && typeof obj.output === 'object') {
+    const o = obj.output as Partial<AppmanConfig['output']>;
+    if (o.format === 'compact' || o.format === 'full') cfg.output.format = o.format;
+    if (typeof o.ndjson === 'boolean') cfg.output.ndjson = o.ndjson;
   }
 
   return cfg;
