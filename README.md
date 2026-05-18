@@ -187,4 +187,10 @@ Four small `node:test` files cover dependency-graph math, bundle parsing, notifi
 
 ## License
 
-MIT — see `LICENSE`.
+**[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)** — see `LICENSE`.
+
+- Free for personal, hobby, academic, and other noncommercial use
+- Free for charities, schools, government, and other noncommercial organizations
+- **Not licensed for commercial use** (use by or for a for-profit business)
+
+For a commercial license, contact yosi@flycotech.com.
