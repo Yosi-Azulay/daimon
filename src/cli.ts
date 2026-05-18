@@ -367,6 +367,22 @@ async function main() {
         const inst = claudeInstall({ skill: true, commands: true, agent: true, dir: defaultClaudeDir(), apiPort });
         out({ claudeInstalled: inst.installed });
       }
+      // A running daemon was spawned with a different cwd / config path; without this
+      // restart, the just-written config has no effect and `daimon list` returns [].
+      const lock = readLock();
+      if (lock) {
+        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/snapshot-state`, { method: 'POST', headers: authHeaders() }); } catch {}
+        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST', headers: authHeaders() }); } catch {}
+        await waitForExit(lock.pid, 5000);
+        removeLock();
+        try {
+          const port = process.env.DAIMON_PORT ? Number(process.env.DAIMON_PORT) : undefined;
+          const info = await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
+          out({ daemonRestarted: true, pid: info.pid, port: info.apiPort });
+        } catch (err: any) {
+          out({ daemonRestarted: false, error: err?.message || String(err) });
+        }
+      }
     } catch (err: any) {
       fail(JSON.stringify({ error: err?.message || String(err) }));
     }
