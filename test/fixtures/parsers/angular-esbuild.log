@@ -1,0 +1,19 @@
+Initial chunk files | Names | Raw size
+Application bundle generation failed. [1.247 seconds]
+
+✘ [ERROR] TS2724: '"./types"' has no exported member named 'AppmanConfig'. Did you mean 'AppmanCfg'?
+    apps/editor/src/app/app.ts:3:9:
+      3 │ import { AppmanConfig } from './types';
+        ╵          ~~~~~~~~~~~~
+
+✘ [ERROR] TS2304: Cannot find name 'foo'.
+    apps/editor/src/app/widgets/button.ts:42:12:
+     42 │     return foo();
+        ╵            ~~~
+
+✘ [ERROR] TS2552: Cannot find name 'bar'. Did you mean 'baz'?
+    apps/editor/src/app/widgets/input.ts:17:5:
+     17 │     bar = 1;
+        ╵     ~~~
+
+Watch mode enabled. Watching for file changes...

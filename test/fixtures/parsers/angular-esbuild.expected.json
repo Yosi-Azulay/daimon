@@ -1,0 +1,9 @@
+{
+  "tool": "esbuild",
+  "status": "error",
+  "errors": [
+    { "file": "apps/editor/src/app/app.ts", "line": 3, "col": 9, "code": "TS2724" },
+    { "file": "apps/editor/src/app/widgets/button.ts", "line": 42, "col": 12, "code": "TS2304" },
+    { "file": "apps/editor/src/app/widgets/input.ts", "line": 17, "col": 5, "code": "TS2552" }
+  ]
+}

@@ -1,0 +1,12 @@
+> api@1.0.0 dev
+> node --watch src/server.ts
+
+Server running at http://localhost:3000
+
+Error: ENOENT: no such file or directory, open 'D:\work\api\config.json'
+    at Object.openSync (node:fs:594:3)
+    at Object.readFileSync (node:fs:462:35)
+    at loadConfig (D:\work\api\src\server.ts:14:23)
+    at Object.<anonymous> (D:\work\api\src\server.ts:42:5)
+TypeError: Cannot read properties of undefined (reading 'host')
+    at start (D:\work\api\src\bootstrap.ts:9:18)

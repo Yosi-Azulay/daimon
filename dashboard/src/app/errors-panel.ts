@@ -23,7 +23,7 @@ interface RawError {
   count: number;
   firstSeen?: number;
   lastSeen?: number;
-  parsed?: { file?: string; line?: number; col?: number; code?: string; message?: string };
+  parsed?: { file?: string; line?: number; col?: number; code?: string; message?: string; tool?: string };
 }
 
 interface FlatError {
@@ -35,10 +35,11 @@ interface FlatError {
   code: string;
   message: string;
   count: number;
+  tool: string;
 }
 
 type Severity = 'all' | 'with-errors' | 'code:TS' | 'code:other';
-type GroupBy = 'app' | 'file' | 'code';
+type GroupBy = 'app' | 'file' | 'code' | 'tool';
 
 const WS_KEY = 'daimon.workspace';
 
@@ -253,6 +254,39 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                 </mat-expansion-panel>
               }
             }
+            @case ('tool') {
+              @for (g of byTool(); track g.key) {
+                <mat-expansion-panel class="dm-panel" expanded>
+                  <mat-expansion-panel-header>
+                    <mat-panel-title>
+                      <span class="tool-chip" [attr.data-tool]="g.key">{{ g.key }}</span>
+                      <span class="eb">{{ g.errors.length }}</span>
+                    </mat-panel-title>
+                  </mat-expansion-panel-header>
+                  <div class="rows">
+                    @for (e of g.errors; track $index) {
+                      <div class="row">
+                        <a class="loc" [routerLink]="['/apps', e.app]"
+                           (click)="$event.stopPropagation()">
+                          <dm-mono>{{ e.app }}</dm-mono>
+                        </a>
+                        @if (e.file) {
+                          <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)"
+                             [matTooltip]="e.file">
+                            <dm-mono>{{ shortPath(e.file) }}@if (e.line) {<span class="dim">:{{ e.line }}@if (e.col) {:{{ e.col }}}</span>}</dm-mono>
+                          </a>
+                        } @else {
+                          <span class="loc dim"><dm-mono>—</dm-mono></span>
+                        }
+                        @if (e.code) { <span class="code"><dm-mono>{{ e.code }}</dm-mono></span> }
+                        <span class="msg" [matTooltip]="e.message">{{ e.message }}</span>
+                        @if (e.count > 1) { <span class="cnt">×{{ e.count }}</span> }
+                      </div>
+                    }
+                  </div>
+                </mat-expansion-panel>
+              }
+            }
           }
         </div>
       }
@@ -315,6 +349,11 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .dim{color:var(--mat-sys-on-surface-variant)}
     .ln{justify-self:end}
     .code{display:inline-flex;align-items:center;padding:1px 8px;border-radius:6px;background:color-mix(in oklch,var(--mat-sys-tertiary) 14%,transparent);color:var(--mat-sys-tertiary);border:1px solid color-mix(in oklch,var(--mat-sys-tertiary) 28%,transparent);font-weight:500}
+    .tool-chip{display:inline-flex;align-items:center;padding:2px 10px;border-radius:6px;background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface);border:1px solid var(--mat-sys-outline-variant);font:600 .8125rem/1.125rem Roboto;text-transform:lowercase;letter-spacing:.02rem}
+    .tool-chip[data-tool="esbuild"],.tool-chip[data-tool="vite"]{color:var(--mat-sys-primary);border-color:color-mix(in oklch,var(--mat-sys-primary) 36%,transparent)}
+    .tool-chip[data-tool="jest"],.tool-chip[data-tool="nx"]{color:var(--mat-sys-secondary);border-color:color-mix(in oklch,var(--mat-sys-secondary) 36%,transparent)}
+    .tool-chip[data-tool="storybook"],.tool-chip[data-tool="webpack"]{color:var(--mat-sys-tertiary);border-color:color-mix(in oklch,var(--mat-sys-tertiary) 36%,transparent)}
+    .tool-chip[data-tool="node"],.tool-chip[data-tool="typescript"]{color:var(--mat-sys-on-surface-variant)}
     .msg{color:var(--mat-sys-on-surface);font-size:.875rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
     .cnt{color:var(--mat-sys-on-surface-variant);font:500 .75rem/1rem Roboto;justify-self:end}
     .dm-card-sk{background:var(--mat-sys-surface-container-low);border:1px solid var(--mat-sys-outline-variant);border-radius:14px;overflow:hidden}
@@ -348,6 +387,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
     { key: 'app', label: 'app' },
     { key: 'file', label: 'file' },
     { key: 'code', label: 'code' },
+    { key: 'tool', label: 'tool' },
   ];
   readonly tone = workspaceTone;
 
@@ -372,6 +412,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
           code: e.parsed?.code ?? '',
           message: e.parsed?.message ?? e.message ?? '',
           count: e.count ?? 1,
+          tool: e.parsed?.tool ?? '',
         });
       }
     }
@@ -446,6 +487,19 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
     const groups = new Map<string, FlatError[]>();
     for (const e of this.filteredFlat()) {
       const k = e.code || '(no-code)';
+      const arr = groups.get(k);
+      if (arr) arr.push(e);
+      else groups.set(k, [e]);
+    }
+    return Array.from(groups.entries())
+      .map(([key, errors]) => ({ key, errors }))
+      .sort((a, b) => b.errors.length - a.errors.length);
+  });
+
+  readonly byTool = computed(() => {
+    const groups = new Map<string, FlatError[]>();
+    for (const e of this.filteredFlat()) {
+      const k = e.tool || '(unknown)';
       const arr = groups.get(k);
       if (arr) arr.push(e);
       else groups.set(k, [e]);

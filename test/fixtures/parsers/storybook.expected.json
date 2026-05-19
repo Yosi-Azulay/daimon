@@ -1,0 +1,8 @@
+{
+  "tool": "storybook",
+  "status": "error",
+  "errors": [
+    { "file": "D:\\work\\stories\\src\\index.ts", "line": 12, "col": 8 },
+    { "file": "src/stories/Button.stories.tsx", "line": 21, "col": 3 }
+  ]
+}

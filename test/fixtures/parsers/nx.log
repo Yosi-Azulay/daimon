@@ -1,0 +1,21 @@
+>  NX   Running target build for 3 projects:
+
+   - web
+   - api
+   - shared
+
+> nx run web:build
+✘ [ERROR] TS2304: Cannot find name 'foo'.
+    apps/web/src/main.ts:12:5:
+     12 │     foo();
+        ╵     ~~~
+
+> nx run api:build
+src/server/index.ts(10,3): error TS2322: Type 'string' is not assignable to type 'number'.
+
+>  NX   Running target build failed
+
+   Failed tasks:
+
+   - web:build
+   - api:build

@@ -1,0 +1,8 @@
+@storybook/cli v8.4.2
+info => Starting manager..
+info => Starting preview..
+ERR! Error: Cannot find module './foo.stories.ts'
+ERR!     at Function.Module._resolveFilename (node:internal/modules/cjs/loader:1098:15)
+ERR!     at handler (D:\work\stories\src\index.ts:12:8)
+WARN Storybook builder-vite encountered an error
+ERR! [plugin:vite:react-swc] Expected ';' got 'export' (src/stories/Button.stories.tsx:21:3)

@@ -1,12 +1,14 @@
 import crypto from 'node:crypto';
-import type { AppState, ErrorEntry, ParsedError } from './types.js';
+import type { AppState, ErrorEntry, ParsedError, ParserTool } from './types.js';
 
 const SERVING_PATTERNS = [
   /Local:\s+http/i,
   /Application bundle generation complete/i,
   /compiled successfully/i,
-  /webpack compiled/i,
+  /webpack compiled\s+(?:successfully|in\b)/i,
   /Angular Live Development Server is listening/i,
+  /Storybook\s+[\d.]+\s+(?:for\s+\S+\s+)?started/i,
+  /VITE\s+v[\d.]+\s+ready/i,
 ];
 
 const COMPILING_PATTERNS = [
@@ -22,16 +24,50 @@ const ERROR_PATTERNS = [
   /✘/,
   /\[ERROR\]/,
   /Cannot find module/i,
+  /^FAIL\s+\S+/,
+  /^\s*●\s+/,
+  /^\s*>\s+NX\s+.*failed/i,
+  /\bModule not found:/,
+  /\[vite\]\s+(?:Internal server error|Pre-transform error)/i,
+  /\[plugin:[^\]]+\]/i,
+  /^\s*ERR!\s+/,
+  /^\s*(?:Uncaught\s+)?(?:Error|TypeError|SyntaxError|ReferenceError|RangeError):\s+/,
 ];
 
 const TS_CODE_RX = /\berror TS(\d+)/;
 const ESBUILD_TS_RX = /✘\s*\[ERROR\]\s*TS(\d+)/;
 const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+)/;
+// Stack-trace style: "at handler (D:\\app\\src\\index.ts:42:10)" or "at file:///D:/...:42:10".
+const PAREN_LOCATION_RX = /\(([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+)\)/;
+// TSC report format: "src/foo.ts(10,3): error TS2322: ...".
+const TSC_LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte))\((\d+),(\d+)\)\s*:/;
+// Jest "FAIL src/foo.test.ts" — captures file only.
+const JEST_FAIL_FILE_RX = /^FAIL\s+(\S+\.(?:tsx?|jsx?|mjs|cjs))(?:\s|$)/;
+// Webpack "ERROR in ./src/foo.ts[:L:C]" or "ERROR in ./src/foo.ts L:C" — captures file (and L:C when present).
+const WEBPACK_ERROR_RX = /^ERROR in\s+(\S+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte))(?:[:\s](\d+):(\d+))?/;
 // Esbuild prints the file path on its own indented line just below the error line:
 //   ✘ [ERROR] TS2724: ...
 //       apps/editor/src/app/app.ts:3:9:
 // Match a whole-line "<path>:<line>:<col>:" with optional indentation and trailing colon.
 const BARE_LOCATION_LINE_RX = /^\s+([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+):?\s*$/;
+
+const TOOL_RULES: { tool: ParserTool; rx: RegExp }[] = [
+  { tool: 'vite', rx: /\[vite\]|\[plugin:vite:|transformWithEsbuild/i },
+  { tool: 'storybook', rx: /\bstorybook\b|^\s*ERR!\s|builder-vite/i },
+  { tool: 'jest', rx: /^FAIL\s|^\s*●\s+|\bjest\b/i },
+  { tool: 'nx', rx: />\s+NX\s+|Failed tasks:|Nx errored/i },
+  { tool: 'webpack', rx: /\bModule not found:|webpack compiled|webpack-dev-server/i },
+  { tool: 'esbuild', rx: /✘\s*\[ERROR\]|esbuild/i },
+  { tool: 'typescript', rx: /\berror TS\d+/ },
+  { tool: 'node', rx: /^\s*(?:Uncaught\s+)?(?:Error|TypeError|SyntaxError|ReferenceError|RangeError):/ },
+];
+
+function detectTool(line: string): ParserTool | undefined {
+  for (const { tool, rx } of TOOL_RULES) {
+    if (rx.test(line)) return tool;
+  }
+  return undefined;
+}
 
 const ANNOUNCED_LOCAL_RX = /Local:\s+(https?:\/\/\S+)/i;
 const ANNOUNCED_SERVER_RX = /Server running at\s+(https?:\/\/\S+)/i;
@@ -50,12 +86,27 @@ function parseStructured(line: string): ParsedError {
   const out: ParsedError = { message: line };
   const codeMatch = line.match(ESBUILD_TS_RX) || line.match(TS_CODE_RX);
   if (codeMatch) out.code = `TS${codeMatch[1]}`;
-  const locMatch = line.match(LOCATION_RX);
+  const locMatch =
+    line.match(TSC_LOCATION_RX) ||
+    line.match(PAREN_LOCATION_RX) ||
+    line.match(LOCATION_RX);
   if (locMatch) {
     out.file = locMatch[1];
     out.line = Number(locMatch[2]);
     out.col = Number(locMatch[3]);
+  } else {
+    const webpackErr = line.match(WEBPACK_ERROR_RX);
+    if (webpackErr) {
+      out.file = webpackErr[1];
+      if (webpackErr[2]) out.line = Number(webpackErr[2]);
+      if (webpackErr[3]) out.col = Number(webpackErr[3]);
+    } else {
+      const jestFail = line.match(JEST_FAIL_FILE_RX);
+      if (jestFail) out.file = jestFail[1];
+    }
   }
+  const tool = detectTool(line);
+  if (tool) out.tool = tool;
   return out;
 }
 
@@ -126,14 +177,16 @@ function parseBundleLine(state: AppState, trimmed: string): boolean {
 export function parseLine(state: AppState, line: string): ParseResult | null {
   // Back-fill: an indented "path:line:col:" line right after an error patches its parsed location.
   const bareLoc = line.match(BARE_LOCATION_LINE_RX);
-  if (bareLoc && state.lastErrorHash) {
+  const parenLoc = !bareLoc ? line.match(PAREN_LOCATION_RX) : null;
+  const backfill = bareLoc ?? parenLoc;
+  if (backfill && state.lastErrorHash) {
     const prevEntry = state.errors.get(state.lastErrorHash);
     if (prevEntry && (!prevEntry.parsed?.file)) {
       prevEntry.parsed = {
         ...(prevEntry.parsed ?? { message: prevEntry.message }),
-        file: bareLoc[1],
-        line: Number(bareLoc[2]),
-        col: Number(bareLoc[3]),
+        file: backfill[1],
+        line: Number(backfill[2]),
+        col: Number(backfill[3]),
       };
     }
   }

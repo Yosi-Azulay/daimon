@@ -4,6 +4,16 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (M33) — Parser depth
+
+- **P1 — Parser corpus + tests.** New `test/fixtures/parsers/*.log` for Vite, Storybook, Jest, Nx, Angular esbuild, webpack, and Node native, each paired with a `.expected.json` of `{tool, status, errors:[{file,line,col,code}]}`. New `test/parser-corpus.test.mjs` replays every fixture through `parseLine` and asserts ≥95% capture rate on file-bearing lines plus tool tagging. Captures parser regressions in CI instead of via screenshots.
+- **P2 — Multi-tool parsers.** `parseLine` now detects and tags errors from Vite (`[vite]`, `[plugin:vite:…]`, `transformWithEsbuild`), Storybook (`ERR!`, `builder-vite`), Jest (`FAIL <path>`, `● <test>`), Nx (`>  NX … failed`, `Failed tasks:`), webpack (`Module not found:`, `ERROR in <path>[:L:C|<sp>L:C]`), Node native (`Error|TypeError|… at <file>:<L>:<C>`), and TSC-style `file(line,col): error TSnnn`. Parsed entries gain a new optional `tool` field (`ParserTool` in `types.ts`). Stack-trace style `(file:line:col)` locations are extracted and also back-fill the most-recent error entry that has no file.
+- **P3 — Errors-panel grouping by tool.** Dashboard `Errors` page gains a fourth `Group by` tab: `tool`. Each tool group renders with a colored chip per tool (esbuild/vite → primary, jest/nx → secondary, storybook/webpack → tertiary, node/typescript → neutral) and lists per-app, per-file rows.
+
+### Fixed (M33)
+
+- **Webpack "compiled with N errors" no longer clears the error map.** The serving pattern was loosened to `webpack compiled (?:successfully|in)` so a build summary that includes errors does not transition the state to `serving` and wipe collected errors.
+
 ## [0.5.0] — 2026-05-19
 
 Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**

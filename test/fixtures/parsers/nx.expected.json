@@ -1,0 +1,8 @@
+{
+  "tool": "nx",
+  "status": "error",
+  "errors": [
+    { "file": "apps/web/src/main.ts", "line": 12, "col": 5, "code": "TS2304" },
+    { "file": "src/server/index.ts", "line": 10, "col": 3, "code": "TS2322" }
+  ]
+}

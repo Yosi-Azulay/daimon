@@ -1,0 +1,9 @@
+  VITE v5.4.10  ready in 312 ms
+
+  ➜  Local:   http://localhost:5173/
+[vite] Internal server error: Failed to parse source for import analysis because the content contains invalid JS syntax. (src/app/main.tsx:8:14)
+[plugin:vite:react-swc] x Expected ',', got ';' (src/app/header.tsx:42:9)
+
+  Plugin: vite:react-swc
+  File: D:/work/web/src/app/header.tsx:42:9
+[vite] hmr update /src/app/main.tsx (x2)

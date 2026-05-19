@@ -1,0 +1,8 @@
+{
+  "tool": "webpack",
+  "status": "error",
+  "errors": [
+    { "file": "./src/index.ts", "line": 12, "col": 8 },
+    { "file": "./src/components/Card.tsx" }
+  ]
+}

@@ -129,12 +129,23 @@ export interface DiscoveredApp {
   workspaceLabel?: string;
 }
 
+export type ParserTool =
+  | 'esbuild'
+  | 'vite'
+  | 'storybook'
+  | 'jest'
+  | 'nx'
+  | 'webpack'
+  | 'node'
+  | 'typescript';
+
 export interface ParsedError {
   file?: string;
   line?: number;
   col?: number;
   code?: string;
   message: string;
+  tool?: ParserTool;
 }
 
 export interface ErrorEntry {

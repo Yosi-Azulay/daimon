@@ -1,0 +1,21 @@
+PASS src/utils/format.test.ts
+FAIL src/services/user.test.ts
+  ● UserService › creates a user
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "alice"
+    Received: undefined
+
+      at Object.<anonymous> (src/services/user.test.ts:24:18)
+      at runMicrotasks (<anonymous>)
+
+  ● UserService › rejects duplicates
+
+    TypeError: Cannot read properties of undefined (reading 'email')
+
+      at UserService.create (src/services/user.ts:42:21)
+      at Object.<anonymous> (src/services/user.test.ts:33:5)
+
+Test Suites: 1 failed, 1 passed
+Tests:       2 failed, 4 passed

@@ -1,0 +1,9 @@
+{
+  "tool": "jest",
+  "status": "error",
+  "errors": [
+    { "file": "src/services/user.test.ts" },
+    { "file": "src/services/user.test.ts", "line": 24, "col": 18 },
+    { "file": "src/services/user.ts", "line": 42, "col": 21 }
+  ]
+}

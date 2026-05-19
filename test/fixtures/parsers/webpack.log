@@ -1,0 +1,9 @@
+webpack 5.95.0 compiled with 2 errors in 432 ms
+
+ERROR in ./src/index.ts:12:8
+Module not found: Error: Can't resolve 'lodash-es' in 'D:\app\src'
+
+ERROR in ./src/components/Card.tsx 5:9
+Module not found: Error: Can't resolve './styles.css'
+
+webpack compiled with 2 errors
