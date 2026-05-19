@@ -28,8 +28,19 @@ function toFgPath(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
+export interface DiscoveryStats {
+  scanned: number;
+  rejected: Record<string, number>;
+}
+
 export interface DiscoverOptions {
   warnings?: string[];
+  stats?: DiscoveryStats;
+}
+
+function bump(stats: DiscoveryStats | undefined, reason: string): void {
+  if (!stats) return;
+  stats.rejected[reason] = (stats.rejected[reason] ?? 0) + 1;
 }
 
 export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): DiscoveredApp[] {
@@ -44,6 +55,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
     const root = path.resolve(rootRaw);
     if (!fs.existsSync(root)) {
       warnings.push(`searchRoot does not exist: ${root}`);
+      bump(opts.stats, 'searchRoot missing');
       continue;
     }
 
@@ -59,12 +71,15 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
       });
 
       for (const pf of projectFiles) {
+        if (opts.stats) opts.stats.scanned += 1;
         const pj = readJson(pf);
-        if (!pj || !hasServeTarget(pj)) continue;
+        if (!pj) { bump(opts.stats, 'unreadable project.json'); continue; }
+        if (!hasServeTarget(pj)) { bump(opts.stats, 'no serve target'); continue; }
         const name: string | undefined = pj.name || path.basename(path.dirname(pf));
-        if (!name) continue;
+        if (!name) { bump(opts.stats, 'project has no name'); continue; }
         if (found.has(name)) {
           warnings.push(`duplicate project name "${name}" — keeping first`);
+          bump(opts.stats, 'duplicate name');
           continue;
         }
         found.set(name, {
@@ -157,7 +172,10 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
       matched = true;
     }
 
-    if (!matched) warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook: ${root}`);
+    if (!matched) {
+      warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook: ${root}`);
+      bump(opts.stats, 'no project markers');
+    }
   }
 
   for (const [name, ov] of Object.entries(config.overrides || {})) {

@@ -20,15 +20,40 @@ function detectMarkers(cwd: string): string[] {
 export interface InitOpts {
   cwd?: string;
   force?: boolean;
+  auto?: boolean;
 }
 
 export interface InitResult {
   path: string;
   installClaude: boolean;
   config: any;
+  auto?: boolean;
+}
+
+export async function runInitAuto(opts: InitOpts = {}): Promise<InitResult> {
+  const cwd = opts.cwd ?? process.cwd();
+  const markers = detectMarkers(cwd);
+  const searchRoots: any[] = [];
+  let label: string | undefined;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+    if (typeof pkg.name === 'string') label = pkg.name;
+  } catch {}
+  if (markers.length) {
+    searchRoots.push(label ? { path: cwd, label } : cwd);
+  }
+  const target = path.join(cwd, 'daimon.config.json');
+  if (fs.existsSync(target) && !opts.force) {
+    throw new Error(`refusing to overwrite ${target} (pass --force to overwrite)`);
+  }
+  const config: any = { searchRoots, portRange: [4200, 4299], apiPort: 4999 };
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  return { path: target, installClaude: false, config, auto: true };
 }
 
 export async function runInit(opts: InitOpts = {}): Promise<InitResult> {
+  if (opts.auto) return runInitAuto(opts);
   const cwd = opts.cwd ?? process.cwd();
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {

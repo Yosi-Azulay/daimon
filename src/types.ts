@@ -54,6 +54,20 @@ export interface OutputConfig {
   ndjson: boolean;
 }
 
+export interface DoctorAutoFixConfig {
+  onInit: boolean;
+  permitted: string[];
+}
+
+export interface DoctorConfig {
+  autoFix: DoctorAutoFixConfig;
+}
+
+export interface DashboardConfig {
+  theme: 'auto' | 'light' | 'dark';
+  density: 'comfortable' | 'compact';
+}
+
 export interface LogsConfig {
   enabled: boolean;
   dir: string;
@@ -84,6 +98,8 @@ export interface AppmanConfig {
   editor: EditorConfig;
   apiToken: string | null;
   output: OutputConfig;
+  doctor: DoctorConfig;
+  dashboard: DashboardConfig;
 }
 
 export interface SearchRoot {

@@ -158,6 +158,10 @@ interface Flags {
   profile?: string;
   stream?: boolean;
   explain?: boolean;
+  autoFix?: boolean;
+  dryRun?: boolean;
+  auto?: boolean;
+  redacted?: boolean;
   passthrough: string[];
 }
 
@@ -193,6 +197,10 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--profile') f.profile = args[++i];
     else if (a === '--stream') f.stream = true;
     else if (a === '--explain') f.explain = true;
+    else if (a === '--auto-fix') f.autoFix = true;
+    else if (a === '--dry-run') f.dryRun = true;
+    else if (a === '--auto') f.auto = true;
+    else if (a === '--redacted') f.redacted = true;
     else f.positional.push(a);
   }
   return f;
@@ -412,8 +420,8 @@ async function main() {
     const { runInit } = await import('./init.js');
     const fParsed = parseFlags(rest);
     try {
-      const r = await runInit({ force: !!fParsed.force });
-      out({ path: r.path, installClaude: r.installClaude });
+      const r = await runInit({ force: !!fParsed.force, auto: !!fParsed.auto });
+      out({ path: r.path, installClaude: r.installClaude, auto: r.auto });
       if (r.installClaude) {
         const apiPort = readApiPort();
         const inst = claudeInstall({
@@ -441,6 +449,32 @@ async function main() {
           out({ daemonRestarted: false, error: err?.message || String(err) });
         }
       }
+      // F59 smoke test: ask the (now-current) daemon to run a discovery pass and report counts.
+      try {
+        await ensureDaemon();
+        const explainR = await fetch(getBaseUrl() + '/api/discovery/explain', { headers: authHeaders() });
+        if (explainR.ok) {
+          const exp: any = await explainR.json();
+          const byKind: Record<string, number> = {};
+          try {
+            const lr = await fetch(getBaseUrl() + '/api/apps?format=full', { headers: authHeaders() });
+            const arr = await lr.json();
+            if (Array.isArray(arr)) {
+              for (const a of arr) {
+                const kind = a.workspaceType ?? 'unknown';
+                byKind[kind] = (byKind[kind] ?? 0) + 1;
+              }
+            }
+          } catch {}
+          const apps = exp.appsFound ?? 0;
+          const smoke: any = { init: 'ok', configPath: r.path, discovered: { apps, byKind } };
+          if (apps === 0) {
+            smoke._meta = { searchRoots: exp.searchRoots, scanned: exp.scanned, rejected: exp.rejected, suggestion: exp.suggestion };
+            smoke.warning = 'discovery found 0 apps; see _meta.suggestion';
+          }
+          out(smoke);
+        }
+      } catch {}
     } catch (err: any) {
       fail(JSON.stringify({ error: err?.message || String(err) }));
     }
@@ -457,6 +491,7 @@ async function main() {
       const params = new URLSearchParams();
       if (needFull) params.set('format', 'full');
       else if (f.compact) params.set('format', 'compact');
+      if (f.explain) params.set('explain', '1');
       if (f.stream) {
         params.set('stream', 'ndjson');
         const qs = params.toString();
@@ -465,10 +500,20 @@ async function main() {
       }
       const qs = params.toString();
       const r = await call('/api/apps' + (qs ? '?' + qs : ''));
+      if (f.explain) {
+        // explain returns { apps, _meta }; do not apply tag/workspace filters here.
+        out(r.body);
+        return;
+      }
       let arr = Array.isArray(r.body) ? r.body : [];
       if (f.tags.length) arr = arr.filter((a: any) => f.tags.every(t => (a.tags || []).includes(t)));
       if (f.workspace) arr = arr.filter((a: any) => a.workspaceLabel === f.workspace);
       out(arr);
+      return;
+    }
+    case 'why-empty': {
+      const r = await call('/api/apps?explain=1');
+      out(r.body);
       return;
     }
     case 'status':
@@ -561,6 +606,14 @@ async function main() {
     case 'doctor': {
       const cfgR = loadConfig();
       if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
+      if (f.autoFix) {
+        const { runAutoFix, ALL_AUTO_FIX } = await import('./autoFix.js');
+        const permitted = (cfgR.config.doctor?.autoFix?.permitted ?? ALL_AUTO_FIX) as any;
+        const r = await runAutoFix({ permitted, dryRun: !!f.dryRun });
+        out(r);
+        if (r.errors.length) process.exit(1);
+        return;
+      }
       const warnings: string[] = [];
       const apps = discoverApps(cfgR.config, { warnings });
       const result = await runDoctor(cfgR.config, apps);

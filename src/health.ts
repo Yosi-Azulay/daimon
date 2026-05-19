@@ -154,7 +154,14 @@ export class HealthMonitor {
       const isHttps = url.startsWith('https://');
       const lib = isHttps ? https : http;
       const opts: any = { timeout: this.cfg.timeoutMs };
-      if (isHttps) opts.rejectUnauthorized = !!this.cfg.rejectUnauthorized;
+      if (isHttps) {
+        const u = safeUrl(url);
+        const host = u?.hostname?.replace(/^\[|\]$/g, '') ?? '';
+        const isLoopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
+        // Dev servers using mkcert / self-signed certs on loopback would otherwise fail with
+        // UNABLE_TO_VERIFY_LEAF_SIGNATURE. Strict checks still apply off-loopback.
+        opts.rejectUnauthorized = isLoopback ? false : !!this.cfg.rejectUnauthorized;
+      }
       try {
         const req = lib.get(url, opts, (res: any) => {
           const code = res.statusCode ?? 0;

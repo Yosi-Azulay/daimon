@@ -11,6 +11,8 @@ export interface LockInfo {
   version: string;
   startedAt: number;
   headless: boolean;
+  cwd?: string;
+  configPath?: string;
 }
 
 const DAIMON_DIR = path.join(os.homedir(), '.daimon');
@@ -92,12 +94,14 @@ export async function waitForExit(pid: number, timeoutMs: number): Promise<boole
   return !isPidAlive(pid);
 }
 
-export function buildLockInfo(apiPort: number, headless: boolean): LockInfo {
+export function buildLockInfo(apiPort: number, headless: boolean, configPath?: string): LockInfo {
   return {
     pid: process.pid,
     apiPort,
     version: DAIMON_VERSION,
     startedAt: Date.now(),
     headless,
+    cwd: process.cwd(),
+    configPath,
   };
 }

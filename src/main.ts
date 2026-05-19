@@ -153,7 +153,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     },
   });
   process.stdout.write(`[daimon] api: http://127.0.0.1:${apiPort}\n`);
-  try { writeLock(buildLockInfo(apiPort, headless)); } catch (err: any) { process.stderr.write(`[daimon] warning: could not write daemon.lock: ${err?.message || err}\n`); }
+  try { writeLock(buildLockInfo(apiPort, headless, cfgPath)); } catch (err: any) { process.stderr.write(`[daimon] warning: could not write daemon.lock: ${err?.message || err}\n`); }
 
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });

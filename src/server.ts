@@ -383,6 +383,29 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'discovery' && parts[2] === 'explain' && method === 'GET') {
+        const cfg = opts.getConfig?.();
+        if (!cfg) { sendJson(res, 200, { searchRoots: [], scanned: 0, rejected: {}, warnings: [], suggestion: 'no config loaded' }); return; }
+        const { discoverApps } = await import('./discovery.js');
+        const stats = { scanned: 0, rejected: {} as Record<string, number> };
+        const warnings: string[] = [];
+        const apps = discoverApps(cfg, { warnings, stats });
+        const roots = cfg.searchRoots.map(s => typeof s === 'string' ? s : s.path);
+        sendJson(res, 200, {
+          searchRoots: roots,
+          scanned: stats.scanned,
+          rejected: stats.rejected,
+          warnings,
+          appsFound: apps.length,
+          suggestion: apps.length === 0
+            ? (roots.length === 0
+              ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder."
+              : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook.")
+            : `${apps.length} apps discovered`,
+        });
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'overview' && method === 'GET') {
         const cfg = opts.getConfig?.();
         const all = registry.list();
@@ -457,6 +480,31 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
           for (const row of rows) res.write(JSON.stringify(row) + '\n');
           res.end();
+          return;
+        }
+        if (url.searchParams.get('explain') === '1') {
+          const cfg = opts.getConfig?.();
+          let meta: any = { format: fmt };
+          if (cfg) {
+            const { discoverApps } = await import('./discovery.js');
+            const stats = { scanned: 0, rejected: {} as Record<string, number> };
+            const warnings: string[] = [];
+            discoverApps(cfg, { warnings, stats });
+            const roots = cfg.searchRoots.map(s => typeof s === 'string' ? s : s.path);
+            meta = {
+              format: fmt,
+              searchRoots: roots,
+              scanned: stats.scanned,
+              rejected: stats.rejected,
+              warnings,
+              suggestion: rows.length === 0
+                ? (roots.length === 0
+                  ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder to add the current cwd."
+                  : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook, then run 'daimon doctor'.")
+                : 'apps discovered; _meta is informational.',
+            };
+          }
+          sendJson(res, 200, { apps: rows, _meta: meta });
           return;
         }
         sendJson(res, 200, rows);

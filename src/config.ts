@@ -53,6 +53,8 @@ function defaultConfig(): AppmanConfig {
     editor: { scheme: 'vscode' },
     apiToken: null,
     output: { format: 'compact', ndjson: false },
+    doctor: { autoFix: { onInit: false, permitted: ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db'] } },
+    dashboard: { theme: 'auto', density: 'comfortable' },
   };
 }
 
@@ -185,6 +187,18 @@ function validate(raw: unknown, source: string): AppmanConfig {
     const o = obj.output as Partial<AppmanConfig['output']>;
     if (o.format === 'compact' || o.format === 'full') cfg.output.format = o.format;
     if (typeof o.ndjson === 'boolean') cfg.output.ndjson = o.ndjson;
+  }
+  if (obj.doctor && typeof obj.doctor === 'object') {
+    const d = (obj.doctor as any).autoFix;
+    if (d && typeof d === 'object') {
+      if (typeof d.onInit === 'boolean') cfg.doctor.autoFix.onInit = d.onInit;
+      if (Array.isArray(d.permitted)) cfg.doctor.autoFix.permitted = d.permitted.filter((x: unknown) => typeof x === 'string');
+    }
+  }
+  if (obj.dashboard && typeof obj.dashboard === 'object') {
+    const d = obj.dashboard as Partial<AppmanConfig['dashboard']>;
+    if (d.theme === 'auto' || d.theme === 'light' || d.theme === 'dark') cfg.dashboard.theme = d.theme;
+    if (d.density === 'comfortable' || d.density === 'compact') cfg.dashboard.density = d.density;
   }
 
   return cfg;
