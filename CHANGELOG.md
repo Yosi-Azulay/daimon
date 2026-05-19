@@ -44,6 +44,20 @@ Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**
 - **F70 — Material motion polish.** Material 3 motion tokens (`--dm-motion-easing`, `--dm-motion-short/medium`) drive transitions on card hover (translate + elevation), route enter (fade-up), and card mount (fade + scale). `@media (prefers-reduced-motion: reduce)` collapses all animations to ~instant.
 - **Theme toggle** (auto / light / dark) persisted in `localStorage`, applied via `color-scheme` on the document root.
 
+### Added (M32) — Dashboard final polish
+
+- **Settings → Discovery** now renders `searchRoots` (Array&lt;{path,label}&gt;) as one editable row per entry instead of a useless `[object Object]` chip. New `path-objects` field kind in the form editor.
+- **Doctor → System Overview** shows the live daemon version (`/api/overview` now returns `version`).
+- **Errors page** auto-collapses the file column when no error in a group has a file path, replaces `(unknown)` with a dimmed `—`, and surfaces a one-line hint with a switch-to-group-by-app shortcut.
+- **Events page** type-chips no longer wrap to two lines for long event kinds (`compile-regression`).
+- **Material 3 density** set to `-2` and global overrides tighten slide-toggle, button-toggle, form-field, expansion-panel-header, and in-button icon sizes so the dashboard feels like a dev tool, not an app launcher.
+- **Global `mat-icon` fontSet** defaults to `material-symbols-outlined`, fixing leftover icons that previously rendered their ligature name as text (`se Dry-run`, `bu Fix`).
+
+### Fixed (M32)
+
+- **Error parser back-fills file paths.** Esbuild prints `path:line:col:` on the indented line *after* `✘ [ERROR] TSnnn: …`. The parser now matches that bare-location line and attaches it to the most-recent error entry that lacks a file. Errors emitted by the Angular esbuild plugin now click through to VS Code at the right line.
+- **`/api/doctor/auto-fix` endpoint** added (was 404 from the dashboard despite the CLI command working).
+
 ### Added (M31) — Polish CLI features
 
 - **F66 — `daimon why-empty`** shipped early in M28 as an alias of `daimon list --explain`.

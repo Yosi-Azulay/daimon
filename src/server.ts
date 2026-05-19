@@ -13,6 +13,7 @@ import type { AppmanConfig, AppSummary, ErrorEntry } from './types.js';
 import { appendAuditEntry } from './audit.js';
 import { listPresets } from './presets.js';
 import { writeHandoff } from './stateHandoff.js';
+import { DAIMON_VERSION } from './version.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -509,7 +510,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           .filter(ev => (profile ? filtered.some(a => a.name === ev.app) : true))
           .slice(-5)
           .map(ev => ({ name: ev.app, transition: `${ev.from ?? '?'}→${ev.to ?? '?'}`, msAgo: Date.now() - ev.ts }));
-        const out: any = { ts: Date.now(), totals, byStatus, needsAttention, recentlyChanged };
+        const out: any = { ts: Date.now(), version: DAIMON_VERSION, totals, byStatus, needsAttention, recentlyChanged };
         if (totals.apps === 0) {
           out._meta = { suggestion: "no apps registered. run 'daimon doctor' for recommended next step, or 'daimon init --auto' from a workspace folder." };
         }

@@ -211,6 +211,37 @@ const MODE_KEY = 'daimon.config.mode';
                           </mat-form-field>
                         </div>
                       }
+                      @case ('path-objects') {
+                        <div class="dm-array">
+                          @for (item of getObjArr(f.key); track $index; let i = $index) {
+                            <div class="dm-path-row">
+                              <mat-form-field appearance="outline" subscriptSizing="dynamic" class="dm-path-input">
+                                <input matInput class="dm-mono"
+                                       [value]="item.path"
+                                       (input)="setObjAt(f.key, i, 'path', $any($event.target).value)" />
+                              </mat-form-field>
+                              <mat-form-field appearance="outline" subscriptSizing="dynamic" class="dm-path-label">
+                                <mat-label>label</mat-label>
+                                <input matInput
+                                       [value]="item.label ?? ''"
+                                       (input)="setObjAt(f.key, i, 'label', $any($event.target).value || null)" />
+                              </mat-form-field>
+                              <button mat-icon-button type="button" (click)="removeAt(f.key, i)" matTooltip="Remove">
+                                <mat-icon fontSet="material-symbols-outlined">delete</mat-icon>
+                              </button>
+                            </div>
+                          }
+                          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="dm-array-input">
+                            <input matInput class="dm-mono"
+                                   [placeholder]="f.placeholder ?? 'Add absolute path and press Enter'"
+                                   #addObjInput
+                                   (keydown.enter)="addObj(f.key, addObjInput.value); addObjInput.value = ''; $event.preventDefault();" />
+                            <button matSuffix mat-icon-button type="button" (click)="addObj(f.key, addObjInput.value); addObjInput.value = '';">
+                              <mat-icon fontSet="material-symbols-outlined">add</mat-icon>
+                            </button>
+                          </mat-form-field>
+                        </div>
+                      }
                     }
                   </div>
                   <div class="dm-field-help">{{ f.help }}</div>
@@ -307,6 +338,9 @@ const MODE_KEY = 'daimon.config.mode';
     .dm-suffix { color: var(--mat-sys-on-surface-variant); margin-left: .25rem; font: 400 .75rem/1rem Roboto; }
     .dm-array { display: flex; flex-direction: column; gap: .5rem; }
     .dm-array-input { max-width: 32rem; }
+    .dm-path-row { display: grid; grid-template-columns: minmax(0, 1fr) 12rem auto; gap: .5rem; align-items: center; }
+    .dm-path-input input { font-family: var(--dm-mono); }
+    @media (max-width: 700px) { .dm-path-row { grid-template-columns: 1fr; } }
     .dm-mono input.dm-mono, input.dm-mono { font-family: var(--dm-mono); }
     .dm-advanced-note {
       margin-top: .5rem; padding: 1rem 1.25rem;
@@ -407,6 +441,28 @@ export class ConfigEditorComponent implements OnInit {
   protected getVal(k: string): any { return fget(this.working(), k); }
   protected getStrOrEmpty(k: string): string { const v = this.getVal(k); return v == null ? '' : String(v); }
   protected getArr(k: string): string[] { const v = this.getVal(k); return Array.isArray(v) ? v : []; }
+  protected getObjArr(k: string): Array<{ path: string; label?: string | null }> {
+    const v = this.getVal(k);
+    if (!Array.isArray(v)) return [];
+    return v.map(it => typeof it === 'string'
+      ? { path: it }
+      : { path: String(it?.path ?? ''), label: it?.label ?? null });
+  }
+  protected setObjAt(k: string, idx: number, field: 'path' | 'label', value: any): void {
+    const arr = this.getObjArr(k);
+    if (!arr[idx]) return;
+    const next = arr.slice();
+    next[idx] = { ...next[idx], [field]: value };
+    if (field === 'label' && (value === '' || value == null)) delete (next[idx] as any).label;
+    this.setVal(k, next);
+  }
+  protected addObj(k: string, raw: string): void {
+    const p = raw.trim();
+    if (!p) return;
+    const arr = this.getObjArr(k);
+    if (arr.some(x => x.path === p)) return;
+    this.setVal(k, [...arr, { path: p }]);
+  }
   protected getPair(k: string): [number, number] {
     const v = this.getVal(k);
     return Array.isArray(v) && v.length >= 2 ? [Number(v[0]) || 0, Number(v[1]) || 0] : [0, 0];
@@ -442,7 +498,9 @@ export class ConfigEditorComponent implements OnInit {
     this.setVal(k, arr);
   }
   protected removeAt(k: string, idx: number): void {
-    const arr = [...this.getArr(k)];
+    const cur = this.getVal(k);
+    if (!Array.isArray(cur)) return;
+    const arr = cur.slice();
     arr.splice(idx, 1);
     this.setVal(k, arr);
   }

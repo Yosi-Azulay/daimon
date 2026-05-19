@@ -190,7 +190,7 @@ function relTime(ms: number, now: number): string {
     }
     .dm-event {
       display: grid;
-      grid-template-columns: 7.5rem 5rem 10rem 1fr;
+      grid-template-columns: 7.5rem max-content 10rem 1fr;
       gap: .75rem; align-items: center;
       height: 28px; padding: 0 .75rem;
       border-top: 1px solid var(--mat-sys-outline-variant);
@@ -205,6 +205,7 @@ function relTime(ms: number, now: number): string {
       font: 500 .6875rem/1rem Roboto; letter-spacing: .03rem;
       border: 1px solid var(--mat-sys-outline-variant);
       text-transform: lowercase;
+      white-space: nowrap;
     }
     .dm-type[data-kind="status"], .dm-chip[data-kind="status"].dm-chip-active {
       background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);

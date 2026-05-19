@@ -148,6 +148,12 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
         <dm-empty icon="filter_alt_off" title="No matches"
                   hint="Try clearing the search or severity filter"></dm-empty>
       } @else {
+        @if (groupBy() === 'file' && allFilesMissing()) {
+          <div class="dm-hint">
+            <span class="material-symbols-outlined">info</span>
+            <span>None of these errors include a file path on the same line as the error. Try <button type="button" class="dm-link" (click)="setGroupBy('app')">group by app</button>.</span>
+          </div>
+        }
         <div class="dm-cards">
           @switch (groupBy()) {
             @case ('app') {
@@ -168,13 +174,17 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                       </a>
                     </mat-panel-description>
                   </mat-expansion-panel-header>
-                  <div class="rows">
+                  <div class="rows" [class.rows-nofile]="g.allMissingFile">
                     @for (e of g.errors; track $index) {
                       <div class="row">
-                        <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)"
-                           [matTooltip]="e.file">
-                          <dm-mono>{{ shortPath(e.file) }}@if (e.line) {<span class="dim">:{{ e.line }}@if (e.col) {:{{ e.col }}}</span>}</dm-mono>
-                        </a>
+                        @if (e.file) {
+                          <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)"
+                             [matTooltip]="e.file">
+                            <dm-mono>{{ shortPath(e.file) }}@if (e.line) {<span class="dim">:{{ e.line }}@if (e.col) {:{{ e.col }}}</span>}</dm-mono>
+                          </a>
+                        } @else if (!g.allMissingFile) {
+                          <span class="loc dim"><dm-mono>—</dm-mono></span>
+                        }
                         @if (e.code) { <span class="code"><dm-mono>{{ e.code }}</dm-mono></span> }
                         <span class="msg" [matTooltip]="e.message">{{ e.message }}</span>
                         @if (e.count > 1) { <span class="cnt">×{{ e.count }}</span> }
@@ -277,6 +287,9 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .dm-chip:hover{color:var(--mat-sys-on-surface)}
     .dm-chip.active{background:var(--mat-sys-surface);color:var(--mat-sys-primary);box-shadow:var(--mat-sys-level1)}
     .dm-cards{display:flex;flex-direction:column;gap:.75rem}
+    .dm-hint{display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;border-radius:10px;background:color-mix(in oklch,var(--mat-sys-tertiary) 10%,transparent);border:1px solid color-mix(in oklch,var(--mat-sys-tertiary) 24%,transparent);color:var(--mat-sys-on-surface);font:400 .8125rem/1.25rem Roboto}
+    .dm-hint .material-symbols-outlined{font-size:18px;color:var(--mat-sys-tertiary)}
+    .dm-hint .dm-link{background:transparent;border:0;padding:0;color:var(--mat-sys-primary);cursor:pointer;font:500 .8125rem/1.25rem Roboto;text-decoration:underline}
     .dm-panel{background:var(--mat-sys-surface-container-low)!important;border:1px solid var(--mat-sys-outline-variant);border-radius:14px!important;overflow:hidden;box-shadow:none!important}
     .dm-panel.mat-expanded{box-shadow:var(--mat-sys-level1)!important}
     ::ng-deep .dm-panel .mat-expansion-panel-header{padding:0 1rem;height:56px;background:var(--mat-sys-surface-container-low)}
@@ -294,6 +307,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .lnk .material-symbols-outlined{font-size:16px}
     .rows{display:flex;flex-direction:column}
     .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto minmax(0,2fr) auto;align-items:center;gap:.75rem;padding:.5rem .25rem;border-bottom:1px solid var(--mat-sys-outline-variant)}
+    .rows-nofile .row{grid-template-columns:auto minmax(0,1fr) auto}
     .row:last-child{border-bottom:0}
     .row:hover{background:var(--mat-sys-surface-container)}
     .loc{color:var(--mat-sys-primary);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
@@ -404,6 +418,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
         app: apps.get(key) ?? null,
         workspaceLabel: apps.get(key)?.workspaceLabel ?? null,
         errors,
+        allMissingFile: errors.every(e => !e.file),
       }))
       .sort((a, b) => b.errors.length - a.errors.length);
   });
@@ -411,7 +426,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
   readonly byFile = computed(() => {
     const groups = new Map<string, FlatError[]>();
     for (const e of this.filteredFlat()) {
-      const k = e.file || '(unknown)';
+      const k = e.file || '(no file detected)';
       const arr = groups.get(k);
       if (arr) arr.push(e);
       else groups.set(k, [e]);
@@ -419,6 +434,12 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
     return Array.from(groups.entries())
       .map(([key, errors]) => ({ key, errors }))
       .sort((a, b) => b.errors.length - a.errors.length);
+  });
+
+  readonly allFilesMissing = computed(() => {
+    const fs = this.filteredFlat();
+    if (!fs.length) return false;
+    return fs.every(e => !e.file);
   });
 
   readonly byCode = computed(() => {
@@ -474,7 +495,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
 
   // Truncate to last two path segments for display while keeping full path in tooltip.
   shortPath(file: string): string {
-    if (!file) return '(unknown)';
+    if (!file) return '—';
     const parts = file.split(/[\\/]/);
     if (parts.length <= 3) return file;
     return '…/' + parts.slice(-2).join('/');

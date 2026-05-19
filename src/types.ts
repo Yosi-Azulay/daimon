@@ -209,6 +209,7 @@ export interface AppState {
   dependsOn: string[];
   recoveringFromError?: boolean;
   workspaceLabel: string | null;
+  lastErrorHash?: string | null;
 }
 
 export interface AppSummary {

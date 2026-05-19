@@ -448,11 +448,11 @@ export class DoctorPageComponent implements OnInit {
       ]);
       if (cfg && cfg.config) {
         this.configLoaded.set(true);
-        this.daemonVersion.set(cfg.config.version || cfg.config.daemonVersion || '');
         this.daemonPort.set(cfg.config.apiPort ?? cfg.config.api?.port ?? null);
       }
       this.discovery.set(disc);
       this.overview.set(overview);
+      if (overview?.version) this.daemonVersion.set(overview.version);
       if (!this.api.apps().length) await this.api.refresh();
     } finally {
       this.loading.set(false);

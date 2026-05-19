@@ -1,4 +1,4 @@
-export type FieldKind = 'string' | 'number' | 'boolean' | 'enum' | 'string-array' | 'number-pair' | 'path' | 'token';
+export type FieldKind = 'string' | 'number' | 'boolean' | 'enum' | 'string-array' | 'number-pair' | 'path' | 'token' | 'path-objects';
 
 export interface FieldDef {
   key: string;
@@ -39,7 +39,7 @@ export const SECTIONS: Section[] = [
     icon: 'travel_explore',
     description: 'Which folders daimon scans for Angular / Nx / Vite / Storybook projects.',
     fields: [
-      { key: 'searchRoots', label: 'Search roots', kind: 'string-array', help: 'Absolute paths to workspace folders. daimon will look for nx.json / angular.json / vite.config.* / .storybook in each. Soft-reloaded on save — no daemon restart needed.', placeholder: 'C:\\path\\to\\workspace' },
+      { key: 'searchRoots', label: 'Search roots', kind: 'path-objects', help: 'Absolute paths to workspace folders. daimon will look for nx.json / angular.json / vite.config.* / .storybook in each. Soft-reloaded on save — no daemon restart needed.', placeholder: 'C:\\path\\to\\workspace' },
     ],
   },
   {

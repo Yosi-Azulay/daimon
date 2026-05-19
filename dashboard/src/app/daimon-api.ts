@@ -22,6 +22,7 @@ export interface AppRow {
 
 export interface Overview {
   ts: number;
+  version?: string;
   totals: { apps: number; serving: number; errors: number; stopped: number; totalErrCount: number; totalCpuPct?: number; totalMemMb?: number };
   byStatus: Record<string, string[]>;
   needsAttention: { name: string; status: string; errCount: number; firstError: { file: string | null; line: number | null; code: string | null; message: string } | null }[];

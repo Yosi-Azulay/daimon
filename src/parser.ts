@@ -27,6 +27,11 @@ const ERROR_PATTERNS = [
 const TS_CODE_RX = /\berror TS(\d+)/;
 const ESBUILD_TS_RX = /✘\s*\[ERROR\]\s*TS(\d+)/;
 const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+)/;
+// Esbuild prints the file path on its own indented line just below the error line:
+//   ✘ [ERROR] TS2724: ...
+//       apps/editor/src/app/app.ts:3:9:
+// Match a whole-line "<path>:<line>:<col>:" with optional indentation and trailing colon.
+const BARE_LOCATION_LINE_RX = /^\s+([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+):?\s*$/;
 
 const ANNOUNCED_LOCAL_RX = /Local:\s+(https?:\/\/\S+)/i;
 const ANNOUNCED_SERVER_RX = /Server running at\s+(https?:\/\/\S+)/i;
@@ -119,6 +124,20 @@ function parseBundleLine(state: AppState, trimmed: string): boolean {
 }
 
 export function parseLine(state: AppState, line: string): ParseResult | null {
+  // Back-fill: an indented "path:line:col:" line right after an error patches its parsed location.
+  const bareLoc = line.match(BARE_LOCATION_LINE_RX);
+  if (bareLoc && state.lastErrorHash) {
+    const prevEntry = state.errors.get(state.lastErrorHash);
+    if (prevEntry && (!prevEntry.parsed?.file)) {
+      prevEntry.parsed = {
+        ...(prevEntry.parsed ?? { message: prevEntry.message }),
+        file: bareLoc[1],
+        line: Number(bareLoc[2]),
+        col: Number(bareLoc[3]),
+      };
+    }
+  }
+
   const trimmed = line.trim();
   if (!trimmed) return null;
 
@@ -187,6 +206,7 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
       state.errors.set(hash, entry);
       isNew = true;
     }
+    state.lastErrorHash = hash;
     errorResult = { entry, isNew };
     state.status = 'error';
   }
