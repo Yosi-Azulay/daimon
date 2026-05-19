@@ -29,6 +29,7 @@ type ActionKind = 'start' | 'stop' | 'restart';
 
 const VIEW_KEY = 'daimon.apps.view';
 const WS_KEY = 'daimon.workspace';
+const TAGS_KEY = 'daimon.apps.tags';
 
 @Component({
   selector: 'dm-apps-cards',
@@ -342,6 +343,20 @@ export class AppsListViewComponent {
             </button>
           }
         </div>
+        @if (allTags().length) {
+          <div class="dm-chips dm-tag-row" role="group" aria-label="Tag filter">
+            @for (t of allTags(); track t) {
+              <button type="button" class="dm-chip" [class.active]="isTagSelected(t)"
+                      [attr.aria-pressed]="isTagSelected(t)" (click)="toggleTag(t)">{{ t }}</button>
+            }
+            @if (selectedTags().size) {
+              <button type="button" class="dm-chip dm-chip-clear" (click)="clearTags()"
+                      aria-label="Clear tag filter">
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            }
+          </div>
+        }
       </div>
 
       @if (!api.ready()) {
@@ -432,6 +447,9 @@ export class AppsListViewComponent {
     .dm-empty-actions{margin-top:.75rem}
     .dm-link-btn{display:inline-flex;align-items:center;gap:.375rem;padding:6px 14px;border-radius:10px;background:var(--mat-sys-primary);color:var(--mat-sys-on-primary);text-decoration:none;font:500 .875rem/1.25rem Roboto}
     .dm-link-btn .material-symbols-outlined{font-size:18px}
+    .dm-tag-row{flex-wrap:wrap;gap:4px;max-width:100%}
+    .dm-chip-clear{padding:5px 6px;color:var(--mat-sys-on-surface-variant)}
+    .dm-chip-clear .material-symbols-outlined{font-size:16px}
   `],
 })
 export class AppsListComponent implements AfterViewInit {
@@ -448,6 +466,13 @@ export class AppsListComponent implements AfterViewInit {
   readonly workspace = signal<string | null>(null);
   readonly focusedIndex = signal<number>(0);
   readonly busyMap = signal<Record<string, Record<string, boolean>>>({});
+  readonly selectedTags = signal<Set<string>>(new Set<string>());
+
+  readonly allTags = computed<string[]>(() => {
+    const seen = new Set<string>();
+    for (const a of this.api.apps()) for (const t of a.tags ?? []) seen.add(t);
+    return Array.from(seen).sort();
+  });
 
   readonly skeletonItems = Array.from({ length: 6 }, (_, i) => i);
   readonly statusFilters: { key: StatusFilter; label: string }[] = [
@@ -461,11 +486,16 @@ export class AppsListComponent implements AfterViewInit {
     const q = this.query().trim().toLowerCase();
     const s = this.status();
     const ws = this.workspace();
+    const tags = this.selectedTags();
     return this.api.apps().filter(a => {
       if (ws && a.workspaceLabel !== ws) return false;
       if (s === 'serving' && a.status !== 'serving') return false;
       if (s === 'errors' && a.status !== 'error' && a.errorCount === 0) return false;
       if (s === 'stopped' && a.status !== 'stopped') return false;
+      if (tags.size) {
+        const at = a.tags ?? [];
+        for (const t of tags) if (!at.includes(t)) return false;
+      }
       if (q) {
         const hay = [a.name, a.workspaceLabel ?? '', ...(a.tags ?? [])].join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
@@ -477,6 +507,8 @@ export class AppsListComponent implements AfterViewInit {
   constructor() {
     this.view.set((localStorage.getItem(VIEW_KEY) as ViewMode) === 'list' ? 'list' : 'cards');
     this.workspace.set(localStorage.getItem(WS_KEY));
+    const storedTags = (localStorage.getItem(TAGS_KEY) ?? '').split(',').map(s => s.trim()).filter(Boolean);
+    if (storedTags.length) this.selectedTags.set(new Set(storedTags));
 
     effect(() => {
       const max = this.filtered().length;
@@ -514,6 +546,27 @@ export class AppsListComponent implements AfterViewInit {
   setStatus(s: StatusFilter): void {
     this.status.set(s);
     this.focusedIndex.set(0);
+  }
+
+  isTagSelected(t: string): boolean { return this.selectedTags().has(t); }
+
+  toggleTag(t: string): void {
+    const next = new Set(this.selectedTags());
+    if (next.has(t)) next.delete(t); else next.add(t);
+    this.selectedTags.set(next);
+    this.persistTags(next);
+    this.focusedIndex.set(0);
+  }
+
+  clearTags(): void {
+    this.selectedTags.set(new Set());
+    this.persistTags(new Set());
+    this.focusedIndex.set(0);
+  }
+
+  private persistTags(s: Set<string>): void {
+    if (s.size) localStorage.setItem(TAGS_KEY, Array.from(s).join(','));
+    else localStorage.removeItem(TAGS_KEY);
   }
 
   onQuery(q: string): void {

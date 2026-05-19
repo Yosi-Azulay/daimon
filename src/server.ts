@@ -437,6 +437,29 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'doctor' && parts[2] === 'auto-fix' && method === 'POST') {
+        if (!requireAuth()) return;
+        let body: any = {};
+        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+          await new Promise<void>(resolve => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(c));
+            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+          });
+        }
+        const { runAutoFix, ALL_AUTO_FIX } = await import('./autoFix.js');
+        const cfg = opts.getConfig?.();
+        const defaults = (cfg?.doctor?.autoFix?.permitted as any) ?? ALL_AUTO_FIX;
+        const permitted = Array.isArray(body.permitted) && body.permitted.length ? body.permitted : defaults;
+        try {
+          const r = await runAutoFix({ permitted, dryRun: !!body.dryRun });
+          sendJson(res, 200, r);
+        } catch (err: any) {
+          sendJson(res, 500, { error: err?.message ?? String(err) });
+        }
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'overview' && method === 'GET') {
         const cfg = opts.getConfig?.();
         const all = registry.list();

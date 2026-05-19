@@ -13,6 +13,7 @@ const ENTRIES: NavEntry[] = [
   { path: '/doctor',   icon: 'medical_services',     label: 'Doctor',  shortcut: 'g d' },
   { path: '/config',   icon: 'tune',                 label: 'Config',  shortcut: 'g c' },
   { path: '/history',  icon: 'query_stats',          label: 'History', shortcut: 'g h' },
+  { path: '/sessions', icon: 'radio_button_checked', label: 'Sessions', shortcut: 'g s' },
 ];
 
 const KEY = 'daimon.nav.expanded';

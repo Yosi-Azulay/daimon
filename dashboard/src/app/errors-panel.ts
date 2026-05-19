@@ -1,99 +1,511 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  HostListener,
+  OnDestroy,
+  OnInit,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { firstValueFrom } from 'rxjs';
-import { MatCardModule } from '@angular/material/card';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatIconModule } from '@angular/material/icon';
-import { DaimonApi } from './daimon-api';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { AppRow, DaimonApi } from './daimon-api';
+import { EmptyStateComponent, MonoComponent, SkeletonComponent, StatusPillComponent } from './ui-primitives';
+import { workspaceTone } from './workspace-tone';
 
-interface PanelError {
+interface RawError {
+  message: string;
+  count: number;
+  firstSeen?: number;
+  lastSeen?: number;
+  parsed?: { file?: string; line?: number; col?: number; code?: string; message?: string };
+}
+
+interface FlatError {
   app: string;
-  file?: string | null;
-  line?: number | null;
-  code?: string | null;
+  workspaceLabel: string | null;
+  file: string;
+  line: number | null;
+  col: number | null;
+  code: string;
   message: string;
   count: number;
 }
+
+type Severity = 'all' | 'with-errors' | 'code:TS' | 'code:other';
+type GroupBy = 'app' | 'file' | 'code';
+
+const WS_KEY = 'daimon.workspace';
+
+const TS_CODE_DESCRIPTIONS: Record<string, string> = {
+  TS2322: 'Type is not assignable to target type',
+  TS2345: 'Argument type mismatch',
+  TS2339: 'Property does not exist on type',
+  TS18046: 'Variable is of type unknown',
+  TS2304: 'Cannot find name',
+  TS7006: 'Parameter implicitly has an any type',
+  TS6133: 'Declared but never used',
+  TS2769: 'No overload matches this call',
+};
 
 @Component({
   selector: 'dm-errors-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, MatCardModule, MatExpansionModule, MatIconModule],
+  imports: [
+    RouterLink,
+    MatExpansionModule,
+    MatIconModule,
+    MatTooltipModule,
+    StatusPillComponent,
+    SkeletonComponent,
+    EmptyStateComponent,
+    MonoComponent,
+  ],
   template: `
-    <mat-card>
-      <mat-card-header><mat-card-title>Errors across apps</mat-card-title></mat-card-header>
-      <mat-card-content>
-        @if (grouped().length === 0) {
-          <div style="color:var(--mat-sys-on-surface-variant);">No errors recorded across the workspace.</div>
-        }
-        <mat-accordion multi>
-          @for (g of grouped(); track g.app) {
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title>
-                  <a [routerLink]="['/apps', g.app]" style="color:inherit;text-decoration:none;">{{ g.app }}</a>
-                </mat-panel-title>
-                <mat-panel-description>{{ g.errors.length }} errors</mat-panel-description>
-              </mat-expansion-panel-header>
-              @for (e of g.errors; track $index) {
-                <div style="padding:.5rem 0;border-bottom:1px solid var(--mat-sys-outline-variant);">
-                  @if (e.file) {
-                    <a [href]="editorUrl(e.file!, e.line, null)" style="font-weight:500;text-decoration:none;color:var(--mat-sys-primary);">
-                      {{ e.file }}@if (e.line) {:{{ e.line }}}
-                    </a>
-                    @if (e.code) { <span style="margin-left:.5rem;color:var(--mat-sys-tertiary);">{{ e.code }}</span> }
-                  }
-                  <div style="font-family:monospace;font-size:.875rem;">{{ e.message }}</div>
-                  <div style="font-size:.75rem;color:var(--mat-sys-on-surface-variant);">×{{ e.count }}</div>
-                </div>
-              }
-            </mat-expansion-panel>
+    <div class="dm-page">
+      <header class="dm-page-header">
+        <div>
+          <h1>Errors</h1>
+          <div class="dm-page-sub">
+            @if (loading()) {
+              <dm-skeleton width="14rem" height=".875rem"></dm-skeleton>
+            } @else {
+              {{ totalErrors() }} {{ totalErrors() === 1 ? 'error' : 'errors' }}
+              across {{ appsWithErrors() }} {{ appsWithErrors() === 1 ? 'app' : 'apps' }}
+              @if (workspace()) { · workspace <dm-mono>{{ workspace() }}</dm-mono> }
+            }
+          </div>
+        </div>
+        <div class="dm-header-actions">
+          <button type="button" class="ib" (click)="refresh()" [disabled]="loading()"
+                  matTooltip="Refresh" aria-label="Refresh">
+            <span class="material-symbols-outlined" [class.spin]="loading()">refresh</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="dm-filterbar">
+        <div class="dm-search">
+          <span class="material-symbols-outlined dm-search-icon">search</span>
+          <input type="search" placeholder="Filter by file, code, or message…"
+                 [value]="query()" (input)="onQuery($any($event.target).value)"
+                 aria-label="Filter errors" />
+          @if (query()) {
+            <button type="button" class="dm-search-clear" (click)="onQuery('')" aria-label="Clear">
+              <span class="material-symbols-outlined">close</span>
+            </button>
           }
-        </mat-accordion>
-      </mat-card-content>
-    </mat-card>
+        </div>
+        <div class="dm-chips" role="tablist" aria-label="Severity filter">
+          @for (f of severityFilters; track f.key) {
+            <button type="button" role="tab" [attr.aria-selected]="severity() === f.key"
+                    class="dm-chip" [class.active]="severity() === f.key"
+                    (click)="setSeverity(f.key)">{{ f.label }}</button>
+          }
+        </div>
+        <div class="dm-chips" role="tablist" aria-label="Group by">
+          <span class="dm-chips-label">Group by</span>
+          @for (g of groupOptions; track g.key) {
+            <button type="button" role="tab" [attr.aria-selected]="groupBy() === g.key"
+                    class="dm-chip" [class.active]="groupBy() === g.key"
+                    (click)="setGroupBy(g.key)">{{ g.label }}</button>
+          }
+        </div>
+      </div>
+
+      @if (loading() && !raw().size) {
+        <div class="dm-cards">
+          @for (i of skeletonItems; track i) {
+            <article class="dm-card-sk">
+              <div class="dm-sk-accent"></div>
+              <div class="dm-sk-body">
+                <dm-skeleton width="40%" height="1.125rem"></dm-skeleton>
+                <dm-skeleton width="70%" height=".875rem"></dm-skeleton>
+                <dm-skeleton width="55%" height=".875rem"></dm-skeleton>
+              </div>
+            </article>
+          }
+        </div>
+      } @else if (api.apps().length === 0) {
+        <dm-empty icon="error" title="No apps to scan" hint="Discover some apps first">
+          <div class="dm-empty-actions">
+            <a routerLink="/" class="dm-link-btn">
+              <span class="material-symbols-outlined">home</span>Go home
+            </a>
+          </div>
+        </dm-empty>
+      } @else if (totalErrors() === 0) {
+        <dm-empty icon="check_circle"
+                  [title]="'Clean — 0 errors across ' + api.apps().length + ' apps'"
+                  hint="The last build was clean. Keep going."></dm-empty>
+      } @else if (filteredFlat().length === 0) {
+        <dm-empty icon="filter_alt_off" title="No matches"
+                  hint="Try clearing the search or severity filter"></dm-empty>
+      } @else {
+        <div class="dm-cards">
+          @switch (groupBy()) {
+            @case ('app') {
+              @for (g of byApp(); track g.key) {
+                <mat-expansion-panel class="dm-panel" expanded>
+                  <mat-expansion-panel-header>
+                    <mat-panel-title>
+                      <div class="ac" [style.background]="tone(g.workspaceLabel)"></div>
+                      <span class="ttl"><dm-mono>{{ g.key }}</dm-mono></span>
+                      @if (g.app) {
+                        <dm-status-pill [status]="g.app.status" [health]="g.app.health"></dm-status-pill>
+                      }
+                      <span class="eb">{{ g.errors.length }}</span>
+                    </mat-panel-title>
+                    <mat-panel-description>
+                      <a class="lnk" [routerLink]="['/apps', g.key]" (click)="$event.stopPropagation()">
+                        Open app<span class="material-symbols-outlined">chevron_right</span>
+                      </a>
+                    </mat-panel-description>
+                  </mat-expansion-panel-header>
+                  <div class="rows">
+                    @for (e of g.errors; track $index) {
+                      <div class="row">
+                        <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)"
+                           [matTooltip]="e.file">
+                          <dm-mono>{{ shortPath(e.file) }}@if (e.line) {<span class="dim">:{{ e.line }}@if (e.col) {:{{ e.col }}}</span>}</dm-mono>
+                        </a>
+                        @if (e.code) { <span class="code"><dm-mono>{{ e.code }}</dm-mono></span> }
+                        <span class="msg" [matTooltip]="e.message">{{ e.message }}</span>
+                        @if (e.count > 1) { <span class="cnt">×{{ e.count }}</span> }
+                      </div>
+                    }
+                  </div>
+                </mat-expansion-panel>
+              }
+            }
+            @case ('file') {
+              @for (g of byFile(); track g.key) {
+                <mat-expansion-panel class="dm-panel" expanded>
+                  <mat-expansion-panel-header>
+                    <mat-panel-title>
+                      <span class="ttl"><dm-mono>{{ shortPath(g.key) }}</dm-mono></span>
+                      <span class="eb">{{ g.errors.length }}</span>
+                    </mat-panel-title>
+                  </mat-expansion-panel-header>
+                  <div class="rows">
+                    @for (e of g.errors; track $index) {
+                      <div class="row">
+                        <a class="loc" [routerLink]="['/apps', e.app]"
+                           (click)="$event.stopPropagation()">
+                          <dm-mono>{{ e.app }}</dm-mono>
+                        </a>
+                        @if (e.code) { <span class="code"><dm-mono>{{ e.code }}</dm-mono></span> }
+                        <span class="msg" [matTooltip]="e.message">{{ e.message }}</span>
+                        @if (e.line) {
+                          <a class="dim ln" [href]="editorUrl(e)" (click)="openEditor($event, e)">
+                            <dm-mono>:{{ e.line }}@if (e.col) {:{{ e.col }}}</dm-mono>
+                          </a>
+                        }
+                        @if (e.count > 1) { <span class="cnt">×{{ e.count }}</span> }
+                      </div>
+                    }
+                  </div>
+                </mat-expansion-panel>
+              }
+            }
+            @case ('code') {
+              @for (g of byCode(); track g.key) {
+                <mat-expansion-panel class="dm-panel" expanded>
+                  <mat-expansion-panel-header>
+                    <mat-panel-title>
+                      <span class="ttl"><dm-mono>{{ g.key }}</dm-mono></span>
+                      @if (codeHint(g.key); as h) { <span class="hint">{{ h }}</span> }
+                      <span class="eb">{{ g.errors.length }}</span>
+                    </mat-panel-title>
+                  </mat-expansion-panel-header>
+                  <div class="rows">
+                    @for (e of g.errors; track $index) {
+                      <div class="row">
+                        <a class="loc" [routerLink]="['/apps', e.app]"
+                           (click)="$event.stopPropagation()">
+                          <dm-mono>{{ e.app }}</dm-mono>
+                        </a>
+                        <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)"
+                           [matTooltip]="e.file">
+                          <dm-mono>{{ shortPath(e.file) }}@if (e.line) {<span class="dim">:{{ e.line }}@if (e.col) {:{{ e.col }}}</span>}</dm-mono>
+                        </a>
+                        <span class="msg" [matTooltip]="e.message">{{ e.message }}</span>
+                        @if (e.count > 1) { <span class="cnt">×{{ e.count }}</span> }
+                      </div>
+                    }
+                  </div>
+                </mat-expansion-panel>
+              }
+            }
+          }
+        </div>
+      }
+    </div>
   `,
+  styles: [`
+    :host{display:block}
+    .dm-page{display:flex;flex-direction:column;gap:1rem}
+    .dm-page-header{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem}
+    .dm-page-header h1{margin:0;font:400 1.5rem/2rem Roboto}
+    .dm-page-sub{font:400 .8125rem/1.25rem Roboto;color:var(--mat-sys-on-surface-variant);margin-top:.25rem;display:flex;gap:.25rem;flex-wrap:wrap;align-items:center}
+    .dm-header-actions{display:flex;gap:.5rem}
+    .ib{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;background:transparent;border:1px solid var(--mat-sys-outline-variant);border-radius:10px;color:var(--mat-sys-on-surface-variant);cursor:pointer}
+    .ib:hover:not(:disabled){background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface)}
+    .ib:disabled{opacity:.55;cursor:not-allowed}
+    .ib .material-symbols-outlined{font-size:20px}
+    .spin{animation:dm-spin 1s linear infinite}
+    @keyframes dm-spin{to{transform:rotate(360deg)}}
+    @media (prefers-reduced-motion:reduce){.spin{animation:none}}
+    .dm-filterbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding:.5rem;background:var(--mat-sys-surface);border:1px solid var(--mat-sys-outline-variant);border-radius:12px}
+    .dm-search{position:relative;flex:1;min-width:220px;display:inline-flex;align-items:center;background:var(--mat-sys-surface-container);border:1px solid var(--mat-sys-outline-variant);border-radius:10px}
+    .dm-search:focus-within{border-color:var(--mat-sys-primary)}
+    .dm-search input{flex:1;border:0;outline:0;background:transparent;padding:8px 36px;font:400 .875rem/1.25rem Roboto;color:var(--mat-sys-on-surface)}
+    .dm-search input::placeholder{color:var(--mat-sys-on-surface-variant)}
+    .dm-search-icon{position:absolute;left:10px;pointer-events:none;font-size:18px;color:var(--mat-sys-on-surface-variant)}
+    .dm-search-clear{position:absolute;right:6px;background:transparent;border:0;cursor:pointer;color:var(--mat-sys-on-surface-variant);width:24px;height:24px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center}
+    .dm-search-clear:hover{background:var(--mat-sys-surface-container-high)}
+    .dm-search-clear .material-symbols-outlined{font-size:16px}
+    .dm-chips{display:inline-flex;align-items:center;padding:2px;border-radius:10px;background:var(--mat-sys-surface-container);border:1px solid var(--mat-sys-outline-variant);gap:2px}
+    .dm-chips-label{font:500 .6875rem/1rem Roboto;text-transform:uppercase;letter-spacing:.04rem;color:var(--mat-sys-on-surface-variant);padding:0 .5rem 0 .25rem}
+    .dm-chip{display:inline-flex;align-items:center;gap:.375rem;padding:5px 10px;border-radius:8px;background:transparent;border:0;color:var(--mat-sys-on-surface-variant);cursor:pointer;font:500 .8125rem/1rem Roboto}
+    .dm-chip:hover{color:var(--mat-sys-on-surface)}
+    .dm-chip.active{background:var(--mat-sys-surface);color:var(--mat-sys-primary);box-shadow:var(--mat-sys-level1)}
+    .dm-cards{display:flex;flex-direction:column;gap:.75rem}
+    .dm-panel{background:var(--mat-sys-surface-container-low)!important;border:1px solid var(--mat-sys-outline-variant);border-radius:14px!important;overflow:hidden;box-shadow:none!important}
+    .dm-panel.mat-expanded{box-shadow:var(--mat-sys-level1)!important}
+    ::ng-deep .dm-panel .mat-expansion-panel-header{padding:0 1rem;height:56px;background:var(--mat-sys-surface-container-low)}
+    ::ng-deep .dm-panel .mat-expansion-panel-header:hover{background:var(--mat-sys-surface-container)!important}
+    ::ng-deep .dm-panel .mat-expansion-panel-body{padding:0 1rem 1rem}
+    ::ng-deep .dm-panel .mat-expansion-panel-content{background:var(--mat-sys-surface-container-low)}
+    .ac{width:4px;height:24px;border-radius:2px;margin-right:.5rem}
+    .ttl{font:500 .9375rem/1.25rem Roboto;display:inline-flex;align-items:center;gap:.5rem}
+    .hint{font:400 .75rem/1rem Roboto;color:var(--mat-sys-on-surface-variant);margin-left:.5rem}
+    mat-panel-title{display:flex;align-items:center;gap:.5rem;flex:1;min-width:0}
+    mat-panel-description{justify-content:flex-end;color:var(--mat-sys-on-surface-variant)}
+    .eb{display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem Roboto;background:color-mix(in oklch,var(--mat-sys-error) 14%,transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent);margin-left:.25rem}
+    .lnk{display:inline-flex;align-items:center;gap:.125rem;color:var(--mat-sys-primary);text-decoration:none;font:500 .8125rem/1.25rem Roboto}
+    .lnk:hover{text-decoration:underline}
+    .lnk .material-symbols-outlined{font-size:16px}
+    .rows{display:flex;flex-direction:column}
+    .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto minmax(0,2fr) auto;align-items:center;gap:.75rem;padding:.5rem .25rem;border-bottom:1px solid var(--mat-sys-outline-variant)}
+    .row:last-child{border-bottom:0}
+    .row:hover{background:var(--mat-sys-surface-container)}
+    .loc{color:var(--mat-sys-primary);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+    .loc:hover{text-decoration:underline}
+    .dim{color:var(--mat-sys-on-surface-variant)}
+    .ln{justify-self:end}
+    .code{display:inline-flex;align-items:center;padding:1px 8px;border-radius:6px;background:color-mix(in oklch,var(--mat-sys-tertiary) 14%,transparent);color:var(--mat-sys-tertiary);border:1px solid color-mix(in oklch,var(--mat-sys-tertiary) 28%,transparent);font-weight:500}
+    .msg{color:var(--mat-sys-on-surface);font-size:.875rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+    .cnt{color:var(--mat-sys-on-surface-variant);font:500 .75rem/1rem Roboto;justify-self:end}
+    .dm-card-sk{background:var(--mat-sys-surface-container-low);border:1px solid var(--mat-sys-outline-variant);border-radius:14px;overflow:hidden}
+    .dm-sk-accent{height:4px;background:var(--mat-sys-surface-container)}
+    .dm-sk-body{padding:1rem;display:flex;flex-direction:column;gap:.5rem}
+    .dm-empty-actions{margin-top:.75rem}
+    .dm-link-btn{display:inline-flex;align-items:center;gap:.375rem;padding:6px 14px;border-radius:10px;background:var(--mat-sys-primary);color:var(--mat-sys-on-primary);text-decoration:none;font:500 .875rem/1.25rem Roboto}
+    .dm-link-btn .material-symbols-outlined{font-size:18px}
+    @media (max-width:760px){.row{grid-template-columns:1fr;gap:.25rem}.ln{justify-self:start}.cnt{justify-self:start}}
+  `],
 })
 export class ErrorsPanelComponent implements OnInit, OnDestroy {
-  private readonly api = inject(DaimonApi);
-  private readonly http = inject(HttpClient);
-  private timer?: ReturnType<typeof setInterval>;
-  private readonly raw = signal<{ app: string; errors: PanelError[] }[]>([]);
+  readonly api = inject(DaimonApi);
+  private readonly destroyRef = inject(DestroyRef);
 
-  grouped = computed(() => this.raw().filter(g => g.errors.length));
+  readonly raw = signal<Map<string, RawError[]>>(new Map());
+  readonly loading = signal<boolean>(false);
+  readonly query = signal<string>('');
+  readonly severity = signal<Severity>('with-errors');
+  readonly groupBy = signal<GroupBy>('app');
+  readonly workspace = signal<string | null>(null);
 
-  editorUrl(file: string, line: number | null | undefined, col: number | null): string {
-    const l = line ?? 1;
-    const c = col ?? 1;
-    return `vscode://file/${file}:${l}:${c}`;
+  readonly skeletonItems = [0, 1, 2];
+  readonly severityFilters: { key: Severity; label: string }[] = [
+    { key: 'all', label: 'all' },
+    { key: 'with-errors', label: 'with-errors' },
+    { key: 'code:TS', label: 'code:TS*' },
+    { key: 'code:other', label: 'code:other' },
+  ];
+  readonly groupOptions: { key: GroupBy; label: string }[] = [
+    { key: 'app', label: 'app' },
+    { key: 'file', label: 'file' },
+    { key: 'code', label: 'code' },
+  ];
+  readonly tone = workspaceTone;
+
+  private readonly appsByName = computed<Map<string, AppRow>>(() => {
+    const m = new Map<string, AppRow>();
+    for (const a of this.api.apps()) m.set(a.name, a);
+    return m;
+  });
+
+  readonly flat = computed<FlatError[]>(() => {
+    const out: FlatError[] = [];
+    const apps = this.appsByName();
+    for (const [name, errs] of this.raw()) {
+      const app = apps.get(name);
+      for (const e of errs) {
+        out.push({
+          app: name,
+          workspaceLabel: app?.workspaceLabel ?? null,
+          file: e.parsed?.file ?? '',
+          line: e.parsed?.line ?? null,
+          col: e.parsed?.col ?? null,
+          code: e.parsed?.code ?? '',
+          message: e.parsed?.message ?? e.message ?? '',
+          count: e.count ?? 1,
+        });
+      }
+    }
+    return out;
+  });
+
+  readonly totalErrors = computed(() => this.flat().reduce((acc, e) => acc + e.count, 0));
+  readonly appsWithErrors = computed(() => {
+    const s = new Set<string>();
+    for (const e of this.flat()) s.add(e.app);
+    return s.size;
+  });
+
+  readonly filteredFlat = computed<FlatError[]>(() => {
+    const q = this.query().trim().toLowerCase();
+    const sev = this.severity();
+    const ws = this.workspace();
+    return this.flat().filter(e => {
+      if (ws && e.workspaceLabel !== ws) return false;
+      if (sev === 'with-errors' && !e.code && !e.file) {
+        // keep — every flat error is "with errors" by definition, fall through
+      }
+      if (sev === 'code:TS' && !/^TS\d+/i.test(e.code)) return false;
+      if (sev === 'code:other' && /^TS\d+/i.test(e.code)) return false;
+      if (q) {
+        const hay = `${e.file} ${e.code} ${e.message}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  });
+
+  readonly byApp = computed(() => {
+    const groups = new Map<string, FlatError[]>();
+    for (const e of this.filteredFlat()) {
+      const arr = groups.get(e.app);
+      if (arr) arr.push(e);
+      else groups.set(e.app, [e]);
+    }
+    const apps = this.appsByName();
+    return Array.from(groups.entries())
+      .map(([key, errors]) => ({
+        key,
+        app: apps.get(key) ?? null,
+        workspaceLabel: apps.get(key)?.workspaceLabel ?? null,
+        errors,
+      }))
+      .sort((a, b) => b.errors.length - a.errors.length);
+  });
+
+  readonly byFile = computed(() => {
+    const groups = new Map<string, FlatError[]>();
+    for (const e of this.filteredFlat()) {
+      const k = e.file || '(unknown)';
+      const arr = groups.get(k);
+      if (arr) arr.push(e);
+      else groups.set(k, [e]);
+    }
+    return Array.from(groups.entries())
+      .map(([key, errors]) => ({ key, errors }))
+      .sort((a, b) => b.errors.length - a.errors.length);
+  });
+
+  readonly byCode = computed(() => {
+    const groups = new Map<string, FlatError[]>();
+    for (const e of this.filteredFlat()) {
+      const k = e.code || '(no-code)';
+      const arr = groups.get(k);
+      if (arr) arr.push(e);
+      else groups.set(k, [e]);
+    }
+    return Array.from(groups.entries())
+      .map(([key, errors]) => ({ key, errors }))
+      .sort((a, b) => b.errors.length - a.errors.length);
+  });
+
+  constructor() {
+    this.workspace.set(localStorage.getItem(WS_KEY));
+    const onWs = (e: Event) => this.workspace.set(((e as CustomEvent).detail as string | null) ?? null);
+    window.addEventListener('daimon:workspace', onWs);
+    this.destroyRef.onDestroy(() => window.removeEventListener('daimon:workspace', onWs));
+
+    // Re-fetch whenever the apps list changes (membership-keyed so equal lists don't re-trigger).
+    effect(() => {
+      const key = this.api.apps().map(a => a.name).sort().join('|');
+      if (key) void this.fetchAll();
+    });
   }
 
   async ngOnInit(): Promise<void> {
-    await this.refresh();
-    this.timer = setInterval(() => void this.refresh(), 3000);
+    if (this.api.apps().length === 0 && !this.api.ready()) {
+      await this.api.refresh();
+    } else {
+      await this.fetchAll();
+    }
   }
-  ngOnDestroy(): void { if (this.timer) clearInterval(this.timer); }
 
-  private async refresh(): Promise<void> {
+  ngOnDestroy(): void {}
+
+  @HostListener('window:storage', ['$event'])
+  onStorage(ev: StorageEvent): void {
+    if (ev.key === WS_KEY) this.workspace.set(ev.newValue);
+  }
+
+  refresh(): void { void this.fetchAll(); }
+
+  onQuery(q: string): void { this.query.set(q); }
+  setSeverity(s: Severity): void { this.severity.set(s); }
+  setGroupBy(g: GroupBy): void { this.groupBy.set(g); }
+
+  codeHint(code: string): string {
+    return TS_CODE_DESCRIPTIONS[code] ?? '';
+  }
+
+  // Truncate to last two path segments for display while keeping full path in tooltip.
+  shortPath(file: string): string {
+    if (!file) return '(unknown)';
+    const parts = file.split(/[\\/]/);
+    if (parts.length <= 3) return file;
+    return '…/' + parts.slice(-2).join('/');
+  }
+
+  editorUrl(e: FlatError): string {
+    if (!e.file) return '#';
+    const l = e.line ?? 1;
+    const c = e.col ?? 1;
+    return `vscode://file/${e.file}:${l}:${c}`;
+  }
+
+  openEditor(ev: MouseEvent, e: FlatError): void {
+    if (!e.file) { ev.preventDefault(); return; }
+    ev.preventDefault();
+    window.open(this.editorUrl(e), '_self');
+  }
+
+  private async fetchAll(): Promise<void> {
+    if (this.loading()) return;
+    this.loading.set(true);
     try {
       const apps = this.api.apps();
-      const results = await Promise.all(apps.map(async a => {
-        const errs = await firstValueFrom(this.http.get<any[]>(`/api/apps/${encodeURIComponent(a.name)}/errors?format=full`));
-        return {
-          app: a.name,
-          errors: (Array.isArray(errs) ? errs : []).map(e => ({
-            app: a.name,
-            file: e.parsed?.file ?? null,
-            line: e.parsed?.line ?? null,
-            code: e.parsed?.code ?? null,
-            message: e.parsed?.message ?? e.message ?? '',
-            count: e.count ?? 1,
-          })) as PanelError[],
-        };
-      }));
-      this.raw.set(results);
-    } catch {}
+      const pairs = await Promise.all(
+        apps.map(async a => [a.name, await this.api.appErrors(a.name)] as const),
+      );
+      const next = new Map<string, RawError[]>();
+      for (const [name, errs] of pairs) next.set(name, errs as RawError[]);
+      this.raw.set(next);
+    } finally {
+      this.loading.set(false);
+    }
   }
 }
