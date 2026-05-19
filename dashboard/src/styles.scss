@@ -9,7 +9,7 @@ html {
       tertiary: mat.$blue-palette,
     ),
     typography: Roboto,
-    density: 0,
+    density: -2,
   ));
 }
 
@@ -58,6 +58,36 @@ router-outlet + * {
 .mat-mdc-card:hover { box-shadow: var(--mat-sys-level2) !important; }
 .mat-mdc-button-base { border-radius: 10px !important; }
 .mat-mdc-snack-bar-container .mdc-snackbar__surface { border-radius: 10px !important; }
+
+// Icons should size with surrounding text rather than the 24px default.
+.mat-mdc-icon-button .mat-icon,
+.mat-mdc-button .mat-icon,
+.mat-mdc-unelevated-button .mat-icon,
+.mat-mdc-outlined-button .mat-icon,
+.mat-mdc-stroked-button .mat-icon { font-size: 18px; width: 18px; height: 18px; line-height: 18px; }
+
+// Tighter form fields for a dense settings UI.
+.mat-mdc-form-field { line-height: 1.25; }
+.mat-mdc-form-field-infix { min-height: 36px !important; padding-top: 8px !important; padding-bottom: 8px !important; }
+.mat-mdc-text-field-wrapper .mat-mdc-form-field-flex { align-items: center; }
+
+// Slide-toggle: shrink the thumb track footprint and surrounding label.
+.mat-mdc-slide-toggle { transform: scale(0.85); transform-origin: left center; }
+.mat-mdc-slide-toggle .mdc-form-field { font: 500 .75rem/1.25rem Roboto; }
+
+// Button-toggle group: tighter heights for inline picker rows.
+.mat-button-toggle-group { border-radius: 999px !important; min-height: 32px; }
+.mat-button-toggle { font: 500 .8125rem/1.25rem Roboto !important; }
+.mat-button-toggle-button { padding: 0 12px !important; }
+
+// Expansion panel headers — Material's default is too tall for a settings list.
+.mat-expansion-panel-header { height: 56px !important; }
+.mat-expansion-panel-header.mat-expanded { height: 56px !important; }
+.mat-expansion-panel-body { padding: 0 16px 16px !important; }
+mat-panel-description { justify-content: flex-end; flex: 1 0 0; padding-right: .5rem; }
+
+// Chip set spacing.
+.mat-mdc-chip-set { gap: .25rem !important; }
 
 // Page header pattern.
 .dm-page-header {

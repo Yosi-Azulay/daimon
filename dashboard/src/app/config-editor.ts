@@ -270,18 +270,21 @@ const MODE_KEY = 'daimon.config.mode';
     .dm-banner-info mat-icon { color: var(--mat-sys-tertiary); }
     .dm-restart-key { margin-left: .35rem; }
     .dm-skel { display: flex; flex-direction: column; gap: .75rem; }
-    .dm-settings { display: flex; flex-direction: column; gap: .75rem; }
-    .dm-sec-title { margin-left: .5rem; font: 500 1rem/1.5rem Roboto; }
-    mat-expansion-panel { border-radius: 14px !important; box-shadow: var(--mat-sys-level1) !important; }
+    .dm-settings { display: flex; flex-direction: column; gap: .5rem; }
+    .dm-sec-title { margin-left: .5rem; font: 500 .9375rem/1.25rem Roboto; }
+    mat-expansion-panel { border-radius: 12px !important; box-shadow: var(--mat-sys-level1) !important; }
     mat-expansion-panel-header mat-icon { color: var(--mat-sys-primary); }
-    mat-panel-description { color: var(--mat-sys-on-surface-variant); }
-    .dm-fields { display: flex; flex-direction: column; gap: 1.5rem; padding: 0 .5rem; }
-    .dm-field { display: grid; grid-template-columns: minmax(0, 280px) 1fr; gap: .25rem 2rem; align-items: start; }
-    .dm-field-label-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; padding-top: .25rem; }
-    .dm-field-label { font: 500 .9375rem/1.5rem Roboto; color: var(--mat-sys-on-surface); }
+    mat-panel-description {
+      color: var(--mat-sys-on-surface-variant);
+      font: 400 .8125rem/1.25rem Roboto;
+    }
+    .dm-fields { display: flex; flex-direction: column; gap: .875rem; padding: .25rem 0; }
+    .dm-field { display: grid; grid-template-columns: minmax(0, 200px) 1fr; gap: .125rem 1.25rem; align-items: start; }
+    .dm-field-label-row { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; padding-top: .4rem; }
+    .dm-field-label { font: 500 .875rem/1.25rem Roboto; color: var(--mat-sys-on-surface); }
     .dm-field-tag {
-      font: 500 .6875rem/1rem Roboto; letter-spacing: .05em; text-transform: uppercase;
-      padding: 2px 8px; border-radius: 999px;
+      font: 500 .625rem/.875rem Roboto; letter-spacing: .04em; text-transform: uppercase;
+      padding: 1px 6px; border-radius: 999px;
       background: var(--mat-sys-surface-container);
       color: var(--mat-sys-on-surface-variant);
       border: 1px solid var(--mat-sys-outline-variant);
@@ -294,8 +297,9 @@ const MODE_KEY = 'daimon.config.mode';
     .dm-field-help {
       grid-column: 2;
       color: var(--mat-sys-on-surface-variant);
-      font: 400 .8125rem/1.25rem Roboto;
-      max-width: 56ch;
+      font: 400 .75rem/1.125rem Roboto;
+      max-width: 64ch;
+      margin-top: -.125rem;
     }
     .dm-field-dirty .dm-field-label { color: var(--mat-sys-tertiary); }
     .dm-pair { display: flex; align-items: center; gap: .5rem; }

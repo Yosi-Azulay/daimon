@@ -241,21 +241,20 @@ const ROUTINES: RoutineDef[] = [
     </section>
   `,
   styles: [`
-    :host { display: block; padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+    :host { display: block; max-width: 1200px; margin: 0 auto; }
 
-    .dm-section { margin-bottom: 2rem; }
+    .dm-section { margin-bottom: 1.25rem; }
     .dm-section-title {
-      margin: 0 0 .75rem;
-      font: 500 1rem/1.5rem Roboto;
+      margin: 0 0 .5rem;
+      font: 500 .6875rem/1rem Roboto;
       color: var(--mat-sys-on-surface-variant);
-      letter-spacing: .025rem;
+      letter-spacing: .06em;
       text-transform: uppercase;
-      font-size: .75rem;
     }
 
     .dm-grid-2 {
       display: grid;
-      gap: 1rem;
+      gap: .75rem;
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     @media (max-width: 800px) {
@@ -336,11 +335,11 @@ const ROUTINES: RoutineDef[] = [
     .dm-banner {
       display: flex; align-items: center; justify-content: space-between;
       gap: 1rem;
-      padding: .85rem 1rem;
-      margin-bottom: 1rem;
+      padding: .5rem .85rem;
+      margin-bottom: .75rem;
       background: var(--mat-sys-surface-container);
       border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 12px;
+      border-radius: 10px;
     }
     .dm-banner-text { font-size: .875rem; color: var(--mat-sys-on-surface-variant); }
     .dm-banner-actions { display: flex; gap: .5rem; }
@@ -366,22 +365,23 @@ const ROUTINES: RoutineDef[] = [
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: .75rem;
     }
-    .dm-quick button { justify-content: flex-start; padding: .75rem 1rem; height: auto; }
+    .dm-quick button { justify-content: flex-start; padding: .5rem .75rem; height: auto; min-height: 40px; }
 
     .dm-stat {
-      display: flex; align-items: center; gap: .75rem;
-      padding: .75rem 1rem;
+      display: flex; align-items: center; gap: .625rem;
+      padding: .5rem .75rem;
       border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 12px;
+      border-radius: 10px;
       background: var(--mat-sys-surface-container-low);
     }
     .dm-stat-icon {
-      width: 36px; height: 36px;
+      width: 28px; height: 28px;
       display: flex; align-items: center; justify-content: center;
-      border-radius: 10px;
+      border-radius: 8px;
       background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);
       color: var(--mat-sys-primary);
     }
+    .dm-stat-icon mat-icon { font-size: 16px; width: 16px; height: 16px; }
     .dm-stat-label { font-size: .75rem; color: var(--mat-sys-on-surface-variant); text-transform: uppercase; letter-spacing: .025rem; }
     .dm-stat-value { font-size: .875rem; color: var(--mat-sys-on-surface); }
 
