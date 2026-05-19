@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { inject, Injectable, NgZone, signal, Signal } from '@angular/core';
+import { inject, Injectable, NgZone, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 
 export interface AppRow {
@@ -89,4 +89,3 @@ export function statusBadge(s: AppRow): { color: string; label: string } {
 }
 
 void NgZone;
-void Signal;

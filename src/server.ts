@@ -18,8 +18,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 function dashboardSpaDir(): string | null {
+  // Angular 20's @angular/build:application builder writes the SPA to
+  // <outputPath>/browser/. Probe both that and the legacy flat layout so the
+  // daemon works regardless of which builder produced the bundle.
   const candidates = [
+    path.resolve(__dirname, 'dashboard', 'browser'),
     path.resolve(__dirname, 'dashboard'),
+    path.resolve(__dirname, '..', 'dist', 'dashboard', 'browser'),
     path.resolve(__dirname, '..', 'dist', 'dashboard'),
   ];
   for (const dir of candidates) {
@@ -500,6 +505,22 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
 
       if (parts[0] !== 'api' || parts[1] !== 'apps') {
+        // Static-asset fallthrough for the Angular SPA: serve hashed JS/CSS/font
+        // files from dist/dashboard/(browser/) and SPA-fallback unknown extension-
+        // less paths to index.html. Keeps everything before /api/ working.
+        if (method === 'GET' && !url.pathname.startsWith('/metrics')) {
+          const spaDir = dashboardSpaDir();
+          if (spaDir) {
+            const rel = url.pathname.replace(/^\/dashboard\//, '/').replace(/^\//, '');
+            if (rel) {
+              const abs = path.resolve(spaDir, rel);
+              if (abs.startsWith(spaDir) && serveStaticFile(res, abs)) return;
+            }
+            if (!path.extname(rel || '')) {
+              if (serveStaticFile(res, path.join(spaDir, 'index.html'))) return;
+            }
+          }
+        }
         sendJson(res, 404, { error: 'not found' });
         return;
       }

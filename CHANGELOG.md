@@ -36,10 +36,10 @@ Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**
 - **F59 — `daimon init --auto` + smoke test.** `daimon init --auto` writes a config without prompting (cwd auto-added as searchRoot, labeled from `package.json` `name` when present). All init paths now run a discovery smoke test after the post-init daemon restart and emit `{init:"ok", configPath, discovered:{apps, byKind}}`. When `apps === 0`, the response embeds the F57 `_meta` and a copy-pasteable suggestion.
 - **F65 — HTTPS-cert tolerance on loopback.** Health probes against `127.0.0.1` / `::1` / `localhost` over HTTPS now always pass `rejectUnauthorized: false`, so Vite dev servers using mkcert or auto-generated self-signed certs no longer fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Off-loopback hosts still get strict cert checks unless `healthProbe.rejectUnauthorized` is explicitly relaxed.
 
-### Added (M29) — Angular 20 dashboard scaffold
+### Added (M29) — Angular 20 dashboard
 
 - **F60 — Sibling `dashboard/` workspace** (Angular 20 standalone, zoneless, Signals, Material 3). Components: root toolbar, apps-list (overview card + per-app cards), app-detail (status + errors), `daimon-api` typed HTTP store backed by signals with an NDJSON `/api/events?stream=ndjson` subscription.
-- **Daemon serves `dist/dashboard/`** at `/` when the bundle is present, with SPA-fallback to `index.html` for non-API routes. Static assets are served from `dist/dashboard/*` with correct MIME types and 1h `cache-control`. When the SPA is not built, the daemon falls back to the legacy `src/dashboard.html` — no regression for users who haven't opted in.
+- **Bundled SPA in the published tarball.** `dist/dashboard/browser/` (425 KB raw, ~110 KB transfer-gzip) ships in the published `daimon` npm package. The daemon serves it at `/` with the right MIME types, 1h `cache-control` on hashed assets, and SPA-fallback to `index.html` for non-API routes so client-side routing works. When the bundle is missing the daemon falls back to the legacy `src/dashboard.html`.
 
 ### Added (M30) — Dashboard polish (source-level)
 
@@ -60,11 +60,14 @@ Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**
 - `dashboard: { theme: "auto" | "light" | "dark", density: "comfortable" | "compact" }`
 - `AppSummary.lastChangeMs?` — milliseconds since the last status transition
 
+### Tarball budget
+
+The original plan capped the published tarball at **200 KB packed**. Angular 20 + Material 3 alone is ~110 KB transfer-gzip even after dropping chart.js, and `daimon-0.5.0.tgz` lands at **268 KB packed / 922 KB unpacked**. The budget was relaxed for v0.5.0 with explicit user authorization. Future work to shrink the bundle (deferred Material imports, lazier chip/expansion modules, dropping animations-async) lives in M31+.
+
 ### Descoped to v0.5.1 / v0.6
 
-- **F61 chart.js metrics graphs** — would push the dashboard bundle past the 200 KB tarball budget. Real-time CPU / mem charts deferred.
+- **F61 chart.js metrics graphs** — descoped per the bundle-budget ladder; real-time CPU / mem charts deferred.
 - **F70 Material motion polish** — beyond default Material transitions.
-- **F60 published dashboard bundle** — the Angular workspace ships as source in v0.5.0. Producing the static bundle requires `cd dashboard && npm install && npm run build` once locally. `prepublishOnly` runs `build:dashboard` only when `dashboard/node_modules` exists, so `npm publish` still works for users who don't opt in. A future release will bundle a pre-built SPA in the published tarball once the budget question is resolved.
 - **F66 `daimon why-empty`** — shipped as an alias of `daimon list --explain` in M28; standalone behavior with richer discovery instrumentation is in M31.
 - **F68 token-cost annotation in doctor** — M31.
 - **F69 `daimon export-config --redacted`** — M31.
