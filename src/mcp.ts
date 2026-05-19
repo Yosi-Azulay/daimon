@@ -124,16 +124,113 @@ async function main() {
   }
 
   server.registerTool('overview', {
-    description: 'Decision-ready snapshot of the workspace: totals, byStatus, needsAttention (with first parsed error per failing app), recentlyChanged. The recommended first call in a session — answers "what is going on right now?" in one round-trip.',
-    inputSchema: { workspace: z.string().optional(), profile: z.string().optional() },
-  }, async ({ workspace, profile }) => {
+    description: 'Decision-ready snapshot of the workspace: totals, byStatus, needsAttention (with first parsed error per failing app), recentlyChanged. The recommended first call in a session — answers "what is going on right now?" in one round-trip. Pass `budget` (tokens) to cap response size; overflow collapses to _meta.omitted.',
+    inputSchema: {
+      workspace: z.string().optional(),
+      profile: z.string().optional(),
+      budget: z.number().int().positive().max(50_000).optional(),
+    },
+  }, async ({ workspace, profile, budget }) => {
     const qs = new URLSearchParams();
     if (workspace) qs.set('workspace', workspace);
     if (profile) qs.set('profile', profile);
+    if (budget) qs.set('budget', String(budget));
     const q = qs.toString();
     const r = await callJson('/api/overview' + (q ? '?' + q : ''));
     if (r.status === 0) return err(r.body?.error || 'unknown');
     return ok(r.body);
+  });
+
+  server.registerTool('diff_errors', {
+    description: 'Errors that appeared since the last call by this client. Compact list of {file,line,col,code,message,tool}; bounded by `budget` tokens — overflow collapses to {omitted:N}. Use this as the "did my last change introduce new errors?" round-trip.',
+    inputSchema: {
+      name: z.string(),
+      client: z.string().optional(),
+      budget: z.number().int().positive().max(50_000).optional(),
+    },
+  }, async ({ name, client, budget }) => {
+    const qs = new URLSearchParams();
+    qs.set('client', client || 'mcp-default');
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}/errors/since-last?${qs.toString()}`);
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    const arr = Array.isArray(r.body) ? r.body : [];
+    const compact = arr.map((e: any) => ({
+      file: e.file ?? null,
+      line: e.line ?? null,
+      col: e.col ?? null,
+      code: e.code ?? null,
+      tool: e.tool ?? null,
+      message: e.message ?? '',
+    }));
+    const cap = (budget ?? 800) * 4;
+    let omitted = 0;
+    let payload: any[] = compact;
+    while (JSON.stringify(payload).length > cap && payload.length > 0) {
+      payload.pop();
+      omitted++;
+    }
+    return ok({ errors: payload, _meta: { omitted, total: compact.length, budget: budget ?? 800 } });
+  });
+
+  server.registerTool('try_fix', {
+    description: 'Composite remediation: run doctor --auto-fix for permitted rules, restart the named app, wait for the target state, return {before, after, fixed:[ruleName], stillFailing:[…parsed first 5]}. Never edits user source code, only daemon state. Pair with `focus` for narration; use this for the action.',
+    inputSchema: {
+      name: z.string(),
+      until: z.enum(['serving', 'healthy']).optional(),
+      timeoutMs: z.number().int().positive().max(600_000).optional(),
+    },
+  }, async ({ name, until, timeoutMs }) => {
+    const qs = new URLSearchParams();
+    qs.set('until', until || 'healthy');
+    qs.set('timeoutMs', String(Math.min(timeoutMs ?? 180_000, 600_000)));
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}/try-fix?${qs.toString()}`, 'POST');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    return ok(r.body);
+  });
+
+  server.registerTool('focus', {
+    description: 'Single round-trip "subscribe-then-act" snapshot for one app: starts the app if stopped, then narrates status/error/health events until target state (serving|healthy|stable) or timeout. Returns the captured event list plus final state. Use as a coherent narrative instead of polling.',
+    inputSchema: {
+      name: z.string(),
+      until: z.enum(['serving', 'healthy', 'stable']).optional(),
+      timeoutMs: z.number().int().positive().max(600_000).optional(),
+    },
+  }, async ({ name, until, timeoutMs }) => {
+    const qs = new URLSearchParams();
+    qs.set('until', until || 'healthy');
+    qs.set('timeoutMs', String(Math.min(timeoutMs ?? 180_000, 600_000)));
+    await ensureDaemon();
+    try {
+      const res = await fetch(BASE() + `/api/apps/${encodeURIComponent(name)}/focus?${qs.toString()}`, { method: 'POST' });
+      if (res.status === 404) return err('unknown app');
+      if (!res.body) return err('no response body');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      const events: any[] = [];
+      let final: any = null;
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const ln of lines) {
+          const t = ln.trim();
+          if (!t) continue;
+          try {
+            const ev = JSON.parse(t);
+            if (ev.kind === 'done') final = ev;
+            else events.push(ev);
+          } catch {}
+        }
+      }
+      return ok({ events, final });
+    } catch (e: any) {
+      return err(e?.message || String(e));
+    }
   });
 
   server.registerTool('ensure', {

@@ -14,6 +14,14 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 - **Webpack "compiled with N errors" no longer clears the error map.** The serving pattern was loosened to `webpack compiled (?:successfully|in)` so a build summary that includes errors does not transition the state to `serving` and wipe collected errors.
 
+### Added (M34) — Agent-first surface
+
+- **A1 — `daimon focus <app>`.** New CLI / HTTP / MCP verb. One round-trip subscribe-then-act over `POST /api/apps/:name/focus?until=serving|healthy|stable[&timeoutMs=]` that streams NDJSON events: `{kind:"subscribed"|"status"|"health"|"error"|"done", …}`. `--until stable` resolves when the app is serving + healthy with no event for ≥5s. Designed so an agent issues one MCP call and reads a coherent narrative instead of polling. CLI exits when the stream ends; MCP `focus` aggregates events into `{events, final}`.
+- **A2 — `diff_errors` MCP tool.** Wraps the existing F2 `errors --since-last --client <id>` HTTP endpoint as a dedicated MCP tool with a `budget` (token) cap; overflow rows are dropped and reported as `_meta.omitted`. Compact `{file,line,col,code,tool,message}` per entry.
+- **A3 — `daimon try-fix <app>`.** New CLI / HTTP / MCP verb. `POST /api/apps/:name/try-fix?until=…` composes `runAutoFix` (permitted rules), `registry.restart(name)`, and `registry.waitFor(name, until)`, then returns `{before:{status,health,errCount,firstError}, after:{status,health,errCount}, fixed:[ruleName], stillFailing:[…first 5 parsed errors], reached, waitedMs}`. Never edits user source — only daemon state, exactly as the F58 rules already did.
+- **A4 — `daimon overview --budget <tokens>`.** Both the HTTP endpoint and the CLI accept a token budget. Rows past the budget are dropped from `needsAttention` first, then `recentlyChanged`, with the counts reported as `_meta.omitted.{needsAttention,recentlyChanged}`. Makes the session-opener predictable for agents.
+- **Test:** new `test/overview-budget.test.mjs` covers the truncation invariants (no-op under-budget, truncates over-budget, no-op on empty input).
+
 ## [0.5.0] — 2026-05-19
 
 Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**

@@ -514,6 +514,25 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (totals.apps === 0) {
           out._meta = { suggestion: "no apps registered. run 'daimon doctor' for recommended next step, or 'daimon init --auto' from a workspace folder." };
         }
+        const budgetRaw = url.searchParams.get('budget');
+        const budgetTokens = budgetRaw ? Math.max(64, Number(budgetRaw) | 0) : null;
+        if (budgetTokens) {
+          // Token estimate: ~4 chars per token. Drop overflow rows from needsAttention then recentlyChanged.
+          const capChars = budgetTokens * 4;
+          let omittedNa = 0;
+          let omittedRc = 0;
+          while (JSON.stringify(out).length > capChars && (out.needsAttention.length || out.recentlyChanged.length)) {
+            if (out.needsAttention.length > 1) { out.needsAttention.pop(); omittedNa++; }
+            else if (out.recentlyChanged.length) { out.recentlyChanged.pop(); omittedRc++; }
+            else if (out.needsAttention.length === 1) { out.needsAttention.pop(); omittedNa++; }
+            else break;
+          }
+          if (omittedNa || omittedRc) {
+            out._meta = { ...(out._meta ?? {}), budget: budgetTokens, omitted: { needsAttention: omittedNa, recentlyChanged: omittedRc } };
+          } else {
+            out._meta = { ...(out._meta ?? {}), budget: budgetTokens };
+          }
+        }
         sendJson(res, 200, out);
         return;
       }
@@ -674,6 +693,133 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         });
         if (lines == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
         sendJson(res, 200, { lines });
+        return;
+      }
+
+      if (sub === 'focus' && method === 'POST') {
+        const s0 = registry.summary(name);
+        if (!s0) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
+        if (!['serving', 'healthy', 'stable'].includes(untilRaw)) {
+          sendJson(res, 400, { error: 'until must be one of serving|healthy|stable' });
+          return;
+        }
+        const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
+        let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 180_000;
+        timeoutMs = Math.min(timeoutMs, 600_000);
+        const stableMsRaw = url.searchParams.get('stableMs');
+        const stableMs = stableMsRaw && Number.isFinite(Number(stableMsRaw)) ? Math.max(1000, Number(stableMsRaw)) : 5000;
+        res.writeHead(200, {
+          'content-type': 'application/x-ndjson; charset=utf-8',
+          'cache-control': 'no-cache',
+          'connection': 'keep-alive',
+        });
+        const write = (obj: any) => {
+          try { res.write(JSON.stringify(obj) + '\n'); } catch {}
+        };
+        write({ kind: 'subscribed', app: name, until: untilRaw, ts: Date.now(), state: compactStatus(s0) });
+        const start = Date.now();
+        let lastSignalAt = Date.now();
+        let finished = false;
+        const finish = (reason: 'reached' | 'timeout' | 'closed') => {
+          if (finished) return;
+          finished = true;
+          registry.off('event', onEvent);
+          clearInterval(stableTimer);
+          clearInterval(keepalive);
+          clearTimeout(deadline);
+          const sFinal = registry.summary(name);
+          write({ kind: 'done', reason, ts: Date.now(), state: sFinal ? compactStatus(sFinal) : null, waitedMs: Date.now() - start });
+          try { res.end(); } catch {}
+        };
+        const reachedTarget = (): boolean => {
+          const sNow = registry.summary(name);
+          if (!sNow) return false;
+          if (untilRaw === 'serving') return sNow.status === 'serving';
+          if (untilRaw === 'healthy') return sNow.status === 'serving' && sNow.health === 'healthy';
+          if (untilRaw === 'stable') {
+            const idle = Date.now() - lastSignalAt;
+            return sNow.status === 'serving' && sNow.health === 'healthy' && idle >= stableMs;
+          }
+          return false;
+        };
+        const onEvent = (ev: { app: string; type: string; from?: string; to?: string; ts: number; message?: string }) => {
+          if (ev.app !== name) return;
+          lastSignalAt = Date.now();
+          if (ev.type === 'status') {
+            write({ kind: 'status', from: ev.from, to: ev.to, ts: ev.ts });
+            if (untilRaw !== 'stable' && reachedTarget()) finish('reached');
+          } else if (ev.type === 'error-new' || ev.type === 'error-recur') {
+            const errs = registry.errors(name) ?? [];
+            const last = errs[0];
+            if (last) write({ kind: 'error', message: last.message, parsed: last.parsed ?? null, ts: ev.ts });
+          } else if (ev.type === 'health') {
+            write({ kind: 'health', from: ev.from, to: ev.to, ts: ev.ts });
+            if (untilRaw !== 'stable' && reachedTarget()) finish('reached');
+          }
+        };
+        registry.on('event', onEvent);
+        const stableTimer = setInterval(() => {
+          if (reachedTarget()) finish('reached');
+        }, 1000);
+        const keepalive = setInterval(() => { try { res.write('\n'); } catch {} }, 30_000);
+        const deadline = setTimeout(() => finish('timeout'), timeoutMs);
+        req.on('close', () => finish('closed'));
+        if (reachedTarget()) finish('reached');
+        return;
+      }
+
+      if (sub === 'try-fix' && method === 'POST') {
+        const s0 = registry.summary(name);
+        if (!s0) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
+        if (!['serving', 'healthy'].includes(untilRaw)) {
+          sendJson(res, 400, { error: 'until must be serving|healthy' });
+          return;
+        }
+        const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
+        let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 180_000;
+        timeoutMs = Math.min(timeoutMs, 600_000);
+        const before = {
+          status: s0.status,
+          health: s0.health,
+          errCount: s0.errorCount,
+          firstError: (registry.errors(name) ?? [])[0]?.parsed ?? null,
+        };
+        const { runAutoFix, ALL_AUTO_FIX } = await import('./autoFix.js');
+        const cfg = opts.getConfig?.();
+        const permitted = (cfg?.doctor?.autoFix?.permitted as any) ?? ALL_AUTO_FIX;
+        let fixResult: any = { ran: [], skipped: [], errors: [] };
+        try { fixResult = await runAutoFix({ permitted, dryRun: false }); } catch (err: any) { fixResult.errors.push({ name: 'auto-fix', error: err?.message ?? String(err) }); }
+        const fixed: string[] = (fixResult.ran ?? []).map((r: any) => r.name);
+        let restartErr: string | null = null;
+        try { const rr = await registry.restart(name); if (!rr?.ok) restartErr = rr?.error ?? 'restart failed'; }
+        catch (err: any) { restartErr = err?.message ?? String(err); }
+        const waitR = await registry.waitFor(name, untilRaw as any, timeoutMs);
+        const sFinal = registry.summary(name);
+        const errsFinal = registry.errors(name) ?? [];
+        const stillFailing = errsFinal.slice(0, 5).map(e => ({
+          file: e.parsed?.file ?? null,
+          line: e.parsed?.line ?? null,
+          code: e.parsed?.code ?? null,
+          tool: e.parsed?.tool ?? null,
+          message: e.parsed?.message ?? e.message,
+        }));
+        const after = sFinal ? { status: sFinal.status, health: sFinal.health, errCount: sFinal.errorCount } : { status: waitR.status, health: waitR.health, errCount: 0 };
+        const reached =
+          (untilRaw === 'serving' && after.status === 'serving') ||
+          (untilRaw === 'healthy' && after.status === 'serving' && after.health === 'healthy');
+        sendJson(res, 200, {
+          before,
+          after,
+          fixed,
+          stillFailing,
+          reached,
+          waitedMs: waitR.waitedMs,
+          _meta: { autoFix: fixResult, restartErr, timedOut: waitR.timedOut },
+        });
         return;
       }
 

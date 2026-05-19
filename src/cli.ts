@@ -75,9 +75,9 @@ function authHeaders(): Record<string, string> {
   return tok ? { authorization: `Bearer ${tok}` } : {};
 }
 
-async function streamNdjson(pathname: string): Promise<void> {
+async function streamNdjson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<void> {
   try {
-    const res = await fetch(getBaseUrl() + pathname, { headers: authHeaders() });
+    const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders() });
     if (!res.ok || !res.body) fail(JSON.stringify({ error: `stream failed: HTTP ${res.status}` }));
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -163,6 +163,7 @@ interface Flags {
   dryRun?: boolean;
   auto?: boolean;
   redacted?: boolean;
+  budget?: number;
   passthrough: string[];
 }
 
@@ -202,6 +203,7 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--dry-run') f.dryRun = true;
     else if (a === '--auto') f.auto = true;
     else if (a === '--redacted') f.redacted = true;
+    else if (a === '--budget') f.budget = Number(args[++i]);
     else f.positional.push(a);
   }
   return f;
@@ -782,9 +784,47 @@ async function main() {
       const params = new URLSearchParams();
       if (f.workspace) params.set('workspace', f.workspace);
       if (f.profile) params.set('profile', f.profile);
+      if (f.budget && Number.isFinite(f.budget) && f.budget > 0) params.set('budget', String(Math.floor(f.budget)));
       const qs = params.toString();
       const r = await call('/api/overview' + (qs ? '?' + qs : ''));
       out(r.body);
+      return;
+    }
+    case 'focus': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon focus <name> [--until serving|healthy|stable] [--timeout 180s]' }));
+      const params = new URLSearchParams();
+      const until = (f.until || 'healthy').toLowerCase();
+      if (!['serving', 'healthy', 'stable'].includes(until)) fail(JSON.stringify({ error: 'focus --until must be serving|healthy|stable' }));
+      params.set('until', until);
+      let timeoutSec = 180;
+      if (f.timeout) {
+        const t = durationToSeconds(f.timeout);
+        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        timeoutSec = Math.min(t, 600);
+      }
+      params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
+      await streamNdjson(`/api/apps/${encodeURIComponent(name)}/focus?${params.toString()}`, 'POST');
+      return;
+    }
+    case 'try-fix': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon try-fix <name> [--until serving|healthy] [--timeout 180s]' }));
+      const params = new URLSearchParams();
+      const until = (f.until || 'healthy').toLowerCase();
+      if (!['serving', 'healthy'].includes(until)) fail(JSON.stringify({ error: 'try-fix --until must be serving|healthy' }));
+      params.set('until', until);
+      let timeoutSec = 180;
+      if (f.timeout) {
+        const t = durationToSeconds(f.timeout);
+        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        timeoutSec = Math.min(t, 600);
+      }
+      params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/try-fix?${params.toString()}`, 'POST');
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
+      if (r.body && r.body.reached === false) process.exit(2);
       return;
     }
     case 'wait': {

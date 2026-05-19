@@ -18,17 +18,17 @@ Milestones are tentative; bundles of features will be regrouped as work lands.
 
 **Fix:** `webpack compiled with N errors` no longer triggers the serving pattern (which had been clearing the error map on every webpack build summary line).
 
-## M34 — Agent-first surface
+## M34 — Agent-first surface ✅ shipped
 
-**A1. `daimon focus <app>`.** One round-trip subscribe-then-act: streams status + new errors + announced URL changes until the app reaches a target state (`--until serving|healthy|stable`) or `--timeout`. Designed so Claude can issue one MCP call and read a coherent narrative back instead of polling.
+**A1. `daimon focus <app>`** ✅ — CLI + `POST /api/apps/:name/focus?until=serving|healthy|stable[&timeoutMs=]` (NDJSON). MCP `focus` aggregates events into `{events, final}`. Stable = serving+healthy+5s idle.
 
-**A2. `daimon diff-errors --since-last --client <id>` exposed as MCP.** F2 already exists as CLI; expose as `daimon_diff_errors` MCP tool with a small-by-default token budget.
+**A2. `diff_errors` MCP** ✅ — wraps `/api/apps/:name/errors/since-last?client=…` with a `budget` (token) cap; overflow → `_meta.omitted`.
 
-**A3. `daimon try-fix <app>`.** Composite: run `doctor --auto-fix` for the rules that touch this app, restart, wait for `--until`, then return `{before, after, fixed:["stale-lock", ...], stillFailing:[]}`. Never edits user source — only daemon state.
+**A3. `daimon try-fix <app>`** ✅ — CLI + `POST /api/apps/:name/try-fix` runs `runAutoFix` (permitted rules), restarts, waits, returns `{before, after, fixed, stillFailing, reached, waitedMs, _meta:{autoFix, restartErr, timedOut}}`.
 
-**A4. `daimon overview --budget <tokens>`.** Compact-by-default `overview` gets a hard token budget; rows past the budget collapse to `{omitted: N}`. Makes the session-opener predictable for agents.
+**A4. `daimon overview --budget <tokens>`** ✅ — CLI + `/api/overview?budget=…`. Drops from `needsAttention` first, then `recentlyChanged`; reports counts via `_meta.omitted`.
 
-Acceptance: agent loop "start → fix → verify" needs ≤3 MCP calls on a typical broken workspace.
+**Acceptance:** start→fix→verify is now `overview` → `try_fix` → `focus until=stable` = 3 MCP calls.
 
 ## M35 — Dashboard depth
 
