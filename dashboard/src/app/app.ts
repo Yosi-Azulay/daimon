@@ -1,29 +1,58 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { RouterLink, RouterOutlet } from '@angular/router';
-import { MatToolbarModule } from '@angular/material/toolbar';
-import { MatIconModule } from '@angular/material/icon';
-import { MatButtonModule } from '@angular/material/button';
-import { ThemeToggleComponent } from './theme-toggle';
+import { ChangeDetectionStrategy, Component, inject, OnDestroy, OnInit } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
+import { MatSnackBarModule } from '@angular/material/snack-bar';
+import { NavRailComponent } from './nav-rail';
+import { TopbarComponent } from './topbar';
+import { CommandPaletteComponent } from './command-palette';
+import { KeyboardShortcutsService } from './keyboard-shortcuts';
+import { DaimonApi } from './daimon-api';
 
 @Component({
   selector: 'dm-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, RouterOutlet, MatToolbarModule, MatIconModule, MatButtonModule, ThemeToggleComponent],
+  imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent, MatSnackBarModule],
   template: `
-    <mat-toolbar color="primary">
-      <a routerLink="/" style="display:flex;align-items:center;gap:.5rem;color:inherit;text-decoration:none;">
-        <mat-icon fontSet="material-symbols-outlined">developer_board</mat-icon>
-        <span>daimon</span>
-      </a>
-      <span style="flex:1"></span>
-      <a mat-button routerLink="/errors">errors</a>
-      <a mat-button href="/api/overview" target="_blank">overview JSON</a>
-      <dm-theme-toggle />
-    </mat-toolbar>
-    <main style="padding: 1.5rem; max-width: 1200px; margin: 0 auto;">
-      <router-outlet />
-    </main>
+    <div class="dm-shell">
+      <dm-nav-rail></dm-nav-rail>
+      <dm-topbar></dm-topbar>
+      <main class="dm-main">
+        <router-outlet />
+      </main>
+    </div>
+    <dm-command-palette></dm-command-palette>
   `,
+  styles: [`
+    :host { display: block; height: 100vh; }
+    .dm-shell {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      grid-template-rows: auto 1fr;
+      grid-template-areas:
+        "rail topbar"
+        "rail main";
+      height: 100vh;
+      min-height: 100vh;
+    }
+    .dm-main {
+      grid-area: main;
+      overflow-y: auto;
+      padding: 1.5rem;
+      background: var(--mat-sys-surface);
+    }
+  `],
 })
-export class AppComponent {}
+export class AppComponent implements OnInit, OnDestroy {
+  private readonly api = inject(DaimonApi);
+  private readonly keys = inject(KeyboardShortcutsService);
+
+  ngOnInit(): void {
+    this.api.start();
+    this.keys.install();
+  }
+
+  ngOnDestroy(): void {
+    this.api.stop();
+    this.keys.uninstall();
+  }
+}
