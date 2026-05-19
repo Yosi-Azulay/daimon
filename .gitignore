@@ -5,3 +5,4 @@ daimon.config.json
 *.stackdump
 *.tsbuildinfo
 Microsoft/
+.claude/settings.local.json
