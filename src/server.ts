@@ -17,12 +17,54 @@ import { writeHandoff } from './stateHandoff.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function dashboardSpaDir(): string | null {
+  const candidates = [
+    path.resolve(__dirname, 'dashboard'),
+    path.resolve(__dirname, '..', 'dist', 'dashboard'),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
+  }
+  return null;
+}
+
 function dashboardPath(): string | null {
   const candidates = [
     path.resolve(__dirname, 'dashboard.html'),
     path.resolve(__dirname, '..', 'src', 'dashboard.html'),
   ];
   return candidates.find(p => fs.existsSync(p)) ?? null;
+}
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+};
+
+function serveStaticFile(res: http.ServerResponse, abs: string): boolean {
+  try {
+    const stat = fs.statSync(abs);
+    if (!stat.isFile()) return false;
+    const ext = path.extname(abs).toLowerCase();
+    const ct = MIME[ext] ?? 'application/octet-stream';
+    const buf = fs.readFileSync(abs);
+    res.writeHead(200, { 'content-type': ct, 'content-length': buf.length, 'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=3600' });
+    res.end(buf);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
@@ -234,17 +276,11 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
 
       if (method === 'GET' && url.pathname === '/') {
+        const spaDir = dashboardSpaDir();
+        if (spaDir && serveStaticFile(res, path.join(spaDir, 'index.html'))) return;
         const p = dashboardPath();
-        if (!p) {
-          res.writeHead(404).end('dashboard not found');
-          return;
-        }
-        const body = fs.readFileSync(p);
-        res.writeHead(200, {
-          'content-type': 'text/html; charset=utf-8',
-          'content-length': body.length,
-        });
-        res.end(body);
+        if (p && serveStaticFile(res, p)) return;
+        res.writeHead(404).end('dashboard not found');
         return;
       }
 
@@ -777,6 +813,24 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const r = await registry.restart(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;
+      }
+
+      // Last-resort static asset handler for the Angular SPA: serve files from
+      // dist/dashboard when the request looks like an asset (has an extension) or
+      // explicitly targets /dashboard/*. SPA routes without an extension fall back
+      // to index.html so the Router can take over client-side.
+      if (method === 'GET' && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/metrics')) {
+        const spaDir = dashboardSpaDir();
+        if (spaDir) {
+          const rel = url.pathname.replace(/^\/dashboard\//, '/').replace(/^\//, '');
+          if (rel) {
+            const abs = path.resolve(spaDir, rel);
+            if (abs.startsWith(spaDir) && serveStaticFile(res, abs)) return;
+          }
+          if (!path.extname(rel || '')) {
+            if (serveStaticFile(res, path.join(spaDir, 'index.html'))) return;
+          }
+        }
       }
 
       sendJson(res, 404, { error: 'not found' });

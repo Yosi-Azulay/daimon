@@ -1,0 +1,39 @@
+{
+  "name": "daimon-dashboard",
+  "version": "0.5.0-alpha.0",
+  "description": "Angular 20 + Material 3 dashboard for the daimon dev-server manager. Bundles to dist/dashboard and is served by the daimon daemon on http://127.0.0.1:<apiPort>/.",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "private": true,
+  "scripts": {
+    "build": "ng build --configuration=production --base-href=/ --output-path=../dist/dashboard",
+    "start": "ng serve --host 127.0.0.1 --port 4998",
+    "test": "ng test --watch=false"
+  },
+  "dependencies": {
+    "@angular/animations": "^20.0.0",
+    "@angular/cdk": "^20.0.0",
+    "@angular/common": "^20.0.0",
+    "@angular/compiler": "^20.0.0",
+    "@angular/core": "^20.0.0",
+    "@angular/forms": "^20.0.0",
+    "@angular/material": "^20.0.0",
+    "@angular/platform-browser": "^20.0.0",
+    "@angular/router": "^20.0.0",
+    "rxjs": "^7.8.0",
+    "tslib": "^2.6.0",
+    "zone.js": "~0.15.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^20.0.0",
+    "@angular/cli": "^20.0.0",
+    "@angular/compiler-cli": "^20.0.0",
+    "@types/node": "^20.14.0",
+    "typescript": "~5.5.0"
+  },
+  "peerDependencies": {
+    "chart.js": "^4.4.0"
+  },
+  "peerDependenciesMeta": {
+    "chart.js": { "optional": true }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(daimon-pm)",
+      "Bash(npm test *)",
+      "Bash(npx tsc *)",
+      "Bash(DAIMON_NO_SPAWN=1 node dist/cli.js --help)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(grep -n \"sendJson\\(res, 404, { error: 'not found' }\\);\\\\|catch \\(err: any\\) {\" D:/Synology/SourceCode/daimon/src/server.ts)"
+    ]
+  }
+}

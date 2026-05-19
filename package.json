@@ -34,7 +34,8 @@
     "src/dashboard.html",
     "src/templates",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -44,7 +45,8 @@
     "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs",
     "clean:dist": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:bundle": "npm run clean:dist && esbuild src/cli.ts src/main.ts src/mcp.ts --bundle --platform=node --target=node20 --format=esm --minify --legal-comments=none --outdir=dist --packages=external",
-    "prepublishOnly": "npm run build && npm test && npm run build:bundle"
+    "build:dashboard": "node -e \"const fs=require('fs');if(fs.existsSync('dashboard/node_modules')){require('child_process').execSync('npm run build',{cwd:'dashboard',stdio:'inherit'});}else{console.log('[daimon] dashboard/node_modules missing — skipping ng build. Run: (cd dashboard && npm install) to enable the Angular SPA bundle.');}\"",
+    "prepublishOnly": "npm run build && npm test && npm run build:bundle && npm run build:dashboard"
   },
   "engines": {
     "node": ">=20"
