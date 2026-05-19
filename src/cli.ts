@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import os from 'node:os';
 import { loadConfig } from './config.js';
 import { discoverApps } from './discovery.js';
 import { runDoctor } from './doctor.js';
@@ -416,6 +417,40 @@ async function main() {
 
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
   if (cmd === 'claude') { await handleClaude(rest); return; }
+  if (cmd === 'export-config') {
+    const cfgR = loadConfig();
+    if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
+    const fParsed = parseFlags(rest);
+    const cfg: any = JSON.parse(JSON.stringify(cfgR.config));
+    if (fParsed.redacted) {
+      const home = os.homedir().replace(/\\/g, '/');
+      const redactPath = (p: any): any => {
+        if (typeof p !== 'string') return p;
+        const normalized = p.replace(/\\/g, '/');
+        if (normalized.toLowerCase().startsWith(home.toLowerCase())) {
+          return '~' + normalized.slice(home.length);
+        }
+        return p;
+      };
+      if (cfg.apiToken != null && cfg.apiToken !== '') cfg.apiToken = '<redacted>';
+      if (cfg.history?.path) cfg.history.path = redactPath(cfg.history.path);
+      if (cfg.logs?.dir) cfg.logs.dir = redactPath(cfg.logs.dir);
+      if (Array.isArray(cfg.searchRoots)) {
+        cfg.searchRoots = cfg.searchRoots.map((sr: any) =>
+          typeof sr === 'string' ? redactPath(sr) : { ...sr, path: redactPath(sr.path) }
+        );
+      }
+    }
+    out(cfg);
+    return;
+  }
+  if (cmd === 'discover') {
+    await ensureDaemon();
+    const r = await call('/api/discovery/explain');
+    if (r.status !== 200) fail(JSON.stringify({ error: 'discovery failed', status: r.status }));
+    out(r.body);
+    return;
+  }
   if (cmd === 'init') {
     const { runInit } = await import('./init.js');
     const fParsed = parseFlags(rest);

@@ -33,15 +33,23 @@ Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**
 
 ### Added (M29) — Angular 20 dashboard
 
-- **F60 — Sibling `dashboard/` workspace** (Angular 20 standalone, zoneless, Signals, Material 3). Components: root toolbar, apps-list (overview card + per-app cards), app-detail (status + errors), `daimon-api` typed HTTP store backed by signals with an NDJSON `/api/events?stream=ndjson` subscription.
-- **Bundled SPA in the published tarball.** `dist/dashboard/browser/` (425 KB raw, ~110 KB transfer-gzip) ships in the published `daimon` npm package. The daemon serves it at `/` with the right MIME types, 1h `cache-control` on hashed assets, and SPA-fallback to `index.html` for non-API routes so client-side routing works. When the bundle is missing the daemon falls back to the legacy `src/dashboard.html`.
+- **F60 — Sibling `dashboard/` workspace** (Angular 20 standalone, zoneless, Signals, Material 3). Components: root toolbar, apps-list (overview card + per-app cards), app-detail (status + errors + metrics chart), `daimon-api` typed HTTP store backed by signals with an NDJSON `/api/events?stream=ndjson` subscription.
+- **Bundled SPA in the published tarball.** `dist/dashboard/browser/` ships in the published `daimon` npm package. Initial-route bundle: **426 KB raw / 111 KB transfer-gzip.** App-detail (chart.js): **211 KB raw / 63 KB transfer**, lazy-loaded. Errors panel: 23 KB raw lazy. The daemon serves the bundle at `/` with correct MIME types, 1h `cache-control` on hashed assets, SPA-fallback to `index.html` for non-API routes. Fonts (Roboto, Material Symbols Outlined) load from `fonts.gstatic.com`; this is an explicit project choice to keep the bundle slim, not telemetry. **Legacy `src/dashboard.html` is removed** — the Angular bundle is now the only dashboard the daemon serves.
 
-### Added (M30) — Dashboard polish (source-level)
+### Added (M30) — Dashboard polish
 
 - **F64 — Per-app actions** (start / stop / restart / open) on each card and in the detail panel.
 - **F67 — Workspace tones.** `workspace-tone.ts` derives a deterministic Material 3 surface-tonal color from each workspace label string (FNV-1a hash → oklch hue), used as a 4px top accent on each card.
-- **F61 partial — Errors panel.** `dm-errors-panel` aggregates dedup'd errors across every app with a `vscode://` link per file. Chart.js peer dep is declared `optional` but not currently rendered (descoped per the plan's bundle-budget ladder).
+- **F61 — Errors panel + real-time CPU/RAM charts.** `dm-errors-panel` aggregates dedup'd errors across every app with a `vscode://` link per file. `dm-metrics-chart` renders a chart.js line chart of CPU% + Mem MB over the last 5 minutes per app (5-second polling, last 60 samples). Chart.js is now a direct dep, lazy-loaded via the `app-detail` route so it never appears in the initial bundle.
+- **F70 — Material motion polish.** Material 3 motion tokens (`--dm-motion-easing`, `--dm-motion-short/medium`) drive transitions on card hover (translate + elevation), route enter (fade-up), and card mount (fade + scale). `@media (prefers-reduced-motion: reduce)` collapses all animations to ~instant.
 - **Theme toggle** (auto / light / dark) persisted in `localStorage`, applied via `color-scheme` on the document root.
+
+### Added (M31) — Polish CLI features
+
+- **F66 — `daimon why-empty`** shipped early in M28 as an alias of `daimon list --explain`.
+- **F68 — Agent token footprint in `daimon doctor`.** A new check prints `skill=120 tokens · daimon list (N apps) ≈ X compact / Y full · savings: ~Z%`. Deterministic from current app count, no remote calls.
+- **F69 — `daimon export-config [--redacted]`.** Emits the active config to stdout. `--redacted` replaces `apiToken` with `"<redacted>"` and rewrites paths under `$HOME` to `~/...`. Intended for paste into GitHub issues.
+- **`daimon discover [--dry-run]`** (sub-feature of F57). New CLI subcommand that returns the F57 `_meta` (searchRoots, scanned, rejected per folder, suggestion) without changing daemon state. Reuses `GET /api/discovery/explain`.
 
 ### Changed (M26, breaking)
 
@@ -57,15 +65,12 @@ Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**
 
 ### Tarball budget
 
-The original plan capped the published tarball at **200 KB packed**. Angular 20 + Material 3 alone is ~110 KB transfer-gzip even after dropping chart.js, and `daimon-0.5.0.tgz` lands at **268 KB packed / 922 KB unpacked**. The budget was relaxed for v0.5.0 with explicit user authorization. Future work to shrink the bundle (deferred Material imports, lazier chip/expansion modules, dropping animations-async) lives in M31+.
+The original v0.5 plan capped the published tarball at **200 KB packed** — written before Angular 20 + Material 3 were measured. With the full v0.5 surface shipped (Angular SPA, chart.js for metrics, Material motion, M31 polish CLI), `daimon-0.5.0.tgz` lands at **332 KB packed / 1.1 MB unpacked / 28 files**. The new agreed budget is **2 MB packed** to leave headroom for future dashboard work. Initial-route gzip transfer stays at ~111 KB; chart.js sits in the lazy app-detail chunk and only loads when a user opens an app.
 
-### Descoped to v0.5.1 / v0.6
+### Deferred (v0.6+ or never)
 
-- **F61 chart.js metrics graphs** — descoped per the bundle-budget ladder; real-time CPU / mem charts deferred.
-- **F70 Material motion polish** — beyond default Material transitions.
-- **F66 `daimon why-empty`** — shipped as an alias of `daimon list --explain` in M28; standalone behavior with richer discovery instrumentation is in M31.
-- **F68 token-cost annotation in doctor** — M31.
-- **F69 `daimon export-config --redacted`** — M31.
+- **Dashboard unit tests** — no Angular `*.spec.ts` files yet; the plan deferred them to M31 polish but they were not written this round.
+- **Local-bundled fonts** — `fonts.gstatic.com` remains the source for Roboto + Material Symbols Outlined. Bundling locally would add ~150 KB raw to the initial chunk; the CDN approach is the explicit project choice.
 
 ## [0.4.3] — 2026-05-18
 

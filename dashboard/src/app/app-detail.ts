@@ -6,6 +6,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatChipsModule } from '@angular/material/chips';
 import { DaimonApi, statusBadge } from './daimon-api';
+import { MetricsChartComponent } from './metrics-chart';
 
 interface DetailError { message: string; count: number; parsed?: { file?: string; line?: number; col?: number; code?: string; message?: string } }
 
@@ -13,7 +14,7 @@ interface DetailError { message: string; count: number; parsed?: { file?: string
   selector: 'dm-app-detail',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MatCardModule, MatButtonModule, MatTabsModule, MatChipsModule],
+  imports: [MatCardModule, MatButtonModule, MatTabsModule, MatChipsModule, MetricsChartComponent],
   template: `
     @if (summary(); as s) {
       @let badge = makeBadge(s);
@@ -36,6 +37,12 @@ interface DetailError { message: string; count: number; parsed?: { file?: string
           <button mat-button (click)="api.stop(s.name)">stop</button>
           <button mat-button (click)="api.restart(s.name)">restart</button>
         </mat-card-actions>
+      </mat-card>
+      <mat-card style="margin-bottom:1rem;">
+        <mat-card-header><mat-card-title>Resources</mat-card-title></mat-card-header>
+        <mat-card-content>
+          <dm-metrics-chart [name]="s.name"></dm-metrics-chart>
+        </mat-card-content>
       </mat-card>
       <mat-card>
         <mat-card-header><mat-card-title>Errors ({{ errors().length }})</mat-card-title></mat-card-header>

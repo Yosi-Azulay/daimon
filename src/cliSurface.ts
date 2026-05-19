@@ -24,6 +24,8 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   { name: 'history', args: '<name>', summary: 'Summary metrics (uptime%, restarts, compile p50/p95, top errors).', example: 'daimon history web-admin', needsDaemon: true },
   { name: 'why', args: '<name>', summary: 'Last status transition + 5 preceding events.', example: 'daimon why web-admin', needsDaemon: true },
   { name: 'why-empty', args: '', summary: 'Explain why `daimon list` is empty: configured searchRoots, scanned/rejected counts, suggested next step.', example: 'daimon why-empty', needsDaemon: true },
+  { name: 'discover', args: '[--dry-run]', summary: 'Run discovery without changing state. Prints _meta: searchRoots, scanned, rejected per folder, suggestion.', example: 'daimon discover --dry-run', needsDaemon: true },
+  { name: 'export-config', args: '[--redacted]', summary: 'Emit the active config to stdout. --redacted replaces apiToken with "<redacted>" and rewrites home paths to ~/...', example: 'daimon export-config --redacted', needsDaemon: false },
   { name: 'tasks', args: '<name>', summary: 'List discovered non-serve tasks.', example: 'daimon tasks web-admin', needsDaemon: true },
   { name: 'run', args: '<name> <task> [--watch] [-- args...]', summary: 'Run a discovered task.', example: 'daimon run web-admin test', needsDaemon: true },
   { name: 'snapshot', args: '<name>', summary: 'Write a snapshot of app state to ~/.daimon/snapshots.', example: 'daimon snapshot web-admin', needsDaemon: true },

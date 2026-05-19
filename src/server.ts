@@ -33,14 +33,6 @@ function dashboardSpaDir(): string | null {
   return null;
 }
 
-function dashboardPath(): string | null {
-  const candidates = [
-    path.resolve(__dirname, 'dashboard.html'),
-    path.resolve(__dirname, '..', 'src', 'dashboard.html'),
-  ];
-  return candidates.find(p => fs.existsSync(p)) ?? null;
-}
-
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -283,9 +275,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       if (method === 'GET' && url.pathname === '/') {
         const spaDir = dashboardSpaDir();
         if (spaDir && serveStaticFile(res, path.join(spaDir, 'index.html'))) return;
-        const p = dashboardPath();
-        if (p && serveStaticFile(res, p)) return;
-        res.writeHead(404).end('dashboard not found');
+        res.writeHead(404).end('dashboard not found — run "npm run build:dashboard" in the daimon repo');
         return;
       }
 

@@ -94,6 +94,19 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
     checks.push({ name: 'history db', ok, detail });
   }
 
+  checks.push({ name: 'agent token footprint', ok: true, detail: tokenFootprint(apps) });
+
   const ok = checks.every(c => c.ok);
   return { ok, checks };
+}
+
+function tokenFootprint(apps: DiscoveredApp[]): string {
+  const N = apps.length;
+  const skill = 120;
+  const compactPerApp = 34;
+  const fullPerApp = 285;
+  const compactTotal = skill + N * compactPerApp;
+  const fullTotal = skill + N * fullPerApp;
+  const savings = N > 0 ? Math.round((1 - compactTotal / fullTotal) * 100) : 0;
+  return `skill=${skill} tokens · daimon list (${N} apps) ≈ ${compactTotal} tokens compact / ${fullTotal} tokens full · savings: ~${savings}%`;
 }

@@ -21,3 +21,52 @@ body {
 }
 
 a { color: var(--mat-sys-primary); }
+
+// Material 3 motion tokens (emphasized easing, standard durations).
+:root {
+  --dm-motion-easing: cubic-bezier(0.2, 0, 0, 1);
+  --dm-motion-easing-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --dm-motion-short: 200ms;
+  --dm-motion-medium: 300ms;
+}
+
+mat-card {
+  transition:
+    transform var(--dm-motion-short) var(--dm-motion-easing),
+    box-shadow var(--dm-motion-medium) var(--dm-motion-easing);
+  will-change: transform;
+}
+mat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mat-sys-level3);
+}
+
+router-outlet + * {
+  display: block;
+  animation: dm-route-enter var(--dm-motion-medium) var(--dm-motion-easing-emphasized);
+}
+
+dm-apps-list > div > mat-card,
+dm-app-detail > * {
+  animation: dm-card-enter var(--dm-motion-medium) var(--dm-motion-easing) both;
+}
+
+@keyframes dm-route-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes dm-card-enter {
+  from { opacity: 0; transform: translateY(4px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+// Honor user preference: collapse motion to ~instant.
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  mat-card:hover { transform: none; }
+}
