@@ -38,8 +38,25 @@
 
   "history": {
     "enabled": true,
-    "path": "~/.appman/history.db",
+    "path": "~/.daimon/history.db",
     "retentionDays": 30
+  },
+
+  "output": {
+    "format": "compact",
+    "ndjson": false
+  },
+
+  "dashboard": {
+    "theme": "auto",
+    "density": "comfortable"
+  },
+
+  "doctor": {
+    "autoFix": {
+      "onInit": false,
+      "permitted": ["orphan-daemon", "stale-lock", "missing-search-root", "corrupt-history-db"]
+    }
   },
 
   "notifications": {
@@ -56,7 +73,7 @@
 
   "logs": {
     "enabled": false,
-    "dir": "~/.appman/logs",
+    "dir": "~/.daimon/logs",
     "maxFiles": 5,
     "maxBytesPerFile": 10000000
   },
