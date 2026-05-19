@@ -4,15 +4,70 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-### Changed — v0.5 M26 (breaking)
-- **`/api/apps` and `/api/apps/:name` are compact by default.** F54. List rows are `{name,status,port,health,errCount,lastChangeMs}`; status is `{name,status,port,url,health,errCount,lastChangeMs,uptime,_meta:{format:"compact"}}`. Pass `?format=full` (HTTP) or `--full` (CLI) to get the v0.4 shape back. Same for `/api/apps/:name/errors` (compact form: `{file,line,col,code,message}`). MCP tools `list_apps`/`get_status` now return compact; new `list_apps_full`/`get_status_full` are exposed for the rare full case. `output.format` (config) accepts `"compact"` (default) or `"full"` to flip the project-wide default.
-  - **Migration:** any external automation parsing `daimon list` or `daimon status` must either add `--full` (CLI) / `?format=full` (HTTP) or migrate to the compact field names (note `errorCount` → `errCount`, `uptimeMs` → `uptime`, and new `lastChangeMs`). The dashboard is unchanged because it now requests `?format=full` explicitly.
-- **Claude integration: one skill instead of eleven.** F53/F63. `daimon claude install` now writes a single `~/.claude/skills/daimon/SKILL.md` that documents every CLI verb inline (~120 useful tokens). The ten legacy `~/.claude/commands/daimon-*.md` files are removed on install; if a file's mtime indicates the user customized it, it is renamed to `.bak` instead of deleted. Removal/backup events are printed as `{"removed":"…"}` / `{"warning":"…"}` lines and recorded in the manifest at `~/.claude/daimon.installed.json`. The `--commands` install flag is now a no-op (kept for backwards compatibility).
-
 ### Changed
 - **License changed from MIT to PolyForm Noncommercial 1.0.0.** Free for personal, academic, and noncommercial-organization use; commercial use requires a separate license. The MIT-licensed history remains in git for anyone who obtained it before this change.
 - **Renamed from `appman` to `daimon`.** Binary, package, environment variables (`APPMAN_*` → `DAIMON_*`), config file (`appman.config.json` → `daimon.config.json`), state directory (`~/.appman/` → `~/.daimon/`), and Claude integration paths (`~/.claude/skills/appman/` → `~/.claude/skills/daimon/`) all changed. No automated migration — first OSS release does not have prior public users.
 - **Published builds are bundled and minified.** `npm i -g daimon` ships a single bundled+minified `.js` per entry point (cli / main / mcp). The TypeScript source remains in the GitHub repo for review.
+
+## [0.5.0] — 2026-05-19
+
+Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**
+
+### Added (M26)
+
+- **F54 — Compact-by-default JSON.** `daimon list`, `daimon status`, and `daimon errors` (plus the matching HTTP endpoints and MCP tools) now return compact rows by default. A 10-app `daimon list` drops from ~74 lines to ~10. Compact list = `{name,status,port,health,errCount,lastChangeMs}`. Compact status = `{name,status,port,url,health,errCount,lastChangeMs,uptime,_meta:{format:"compact"}}`. Compact errors = `{file,line,col,code,message}`. `lastChangeMs` is derived from the existing event buffer.
+- **F53/F63 — One skill replaces eleven.** `daimon claude install` writes a single `~/.claude/skills/daimon/SKILL.md` that documents every verb inline (~120 useful tokens). Per-command `daimon-*.md` files in `~/.claude/commands/` are removed on install (or renamed to `.bak` when the file's mtime indicates user edits since the manifest's `installed-at`). Removal/backup events are printed as one JSON line each (`{"removed":...}` / `{"warning":...}`) and recorded in the manifest.
+
+### Added (M27)
+
+- **F55 — `daimon ensure` and `daimon ensure-up`.** One CLI/HTTP/MCP call replaces the canonical `list → status → start → wait → status` sequence. Idempotent on already-terminal apps. Honors `--until serving|healthy` and `--timeout`. `ensure-up <profile>` cascade-starts every app in the profile and waits for each to reach the target. On timeout the response is `{error:"timeout", state, _meta:{timedOut:true}}` and the CLI exits 2.
+- **F56 — `daimon overview`.** Decision-ready snapshot in one call: totals (serving / error / stopped / total err / cpu / mem), `byStatus` map, `needsAttention` with the first parsed TS error per failing app, last 5 status transitions in the past 5 minutes. Filterable by `--workspace` and `--profile`. MCP `overview` is documented as the recommended first call in a session.
+- **F62 — NDJSON `--stream`.** `daimon list --stream` and `daimon events --stream` emit one JSON object per line. The list stream is one-shot. The events stream is long-lived: historical events flush first, then each newly-recorded event arrives on its own line. 30-second newline keepalives keep the connection alive on quiet workspaces. The registry emits a new `event` signal for in-process subscribers.
+
+### Added (M28)
+
+- **F58 — `daimon doctor --auto-fix [--dry-run]`.** Four rule-based, transparent repair routines that operate **only on daimon's own state** — never user source:
+  - `orphan-daemon` — daemon's recorded cwd/configPath differs from the current shell's cwd and a local `daimon.config.json` exists here; snapshot-handoff-shuts-down-respawn from the new cwd.
+  - `stale-lock` — lock file claims a pid that's dead; remove + spawn fresh.
+  - `missing-search-root` — cwd has nx/angular/vite/storybook markers but no configured searchRoot covers it; append (with `package.json` `name` as label when available) and trigger F39 soft-reload.
+  - `corrupt-history-db` — `quickCheck()` fails or open throws; rotate to `history.db.corrupt-<ts>` (and its `-wal` / `-shm` siblings) so a fresh DB is rebuilt on next start.
+  Each routine returns a paragraph describing what was wrong, what was done, and how to undo. Gated by `config.doctor.autoFix.permitted`.
+- **F57 — Self-explaining discovery.** `daimon list --explain` (alias: `daimon why-empty`) wraps the response as `{ apps, _meta:{ searchRoots, scanned, rejected:{reason:count}, warnings, suggestion } }`. `discoverApps` now accepts an optional stats collector that gets bumped at every concrete skip (`searchRoot missing`, `no serve target`, `duplicate name`, `no project markers`, …). New HTTP endpoint `GET /api/discovery/explain` returns the same `_meta`. The non-`--explain` default still returns a bare array, preserving the M26 contract.
+- **F59 — `daimon init --auto` + smoke test.** `daimon init --auto` writes a config without prompting (cwd auto-added as searchRoot, labeled from `package.json` `name` when present). All init paths now run a discovery smoke test after the post-init daemon restart and emit `{init:"ok", configPath, discovered:{apps, byKind}}`. When `apps === 0`, the response embeds the F57 `_meta` and a copy-pasteable suggestion.
+- **F65 — HTTPS-cert tolerance on loopback.** Health probes against `127.0.0.1` / `::1` / `localhost` over HTTPS now always pass `rejectUnauthorized: false`, so Vite dev servers using mkcert or auto-generated self-signed certs no longer fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Off-loopback hosts still get strict cert checks unless `healthProbe.rejectUnauthorized` is explicitly relaxed.
+
+### Added (M29) — Angular 20 dashboard scaffold
+
+- **F60 — Sibling `dashboard/` workspace** (Angular 20 standalone, zoneless, Signals, Material 3). Components: root toolbar, apps-list (overview card + per-app cards), app-detail (status + errors), `daimon-api` typed HTTP store backed by signals with an NDJSON `/api/events?stream=ndjson` subscription.
+- **Daemon serves `dist/dashboard/`** at `/` when the bundle is present, with SPA-fallback to `index.html` for non-API routes. Static assets are served from `dist/dashboard/*` with correct MIME types and 1h `cache-control`. When the SPA is not built, the daemon falls back to the legacy `src/dashboard.html` — no regression for users who haven't opted in.
+
+### Added (M30) — Dashboard polish (source-level)
+
+- **F64 — Per-app actions** (start / stop / restart / open) on each card and in the detail panel.
+- **F67 — Workspace tones.** `workspace-tone.ts` derives a deterministic Material 3 surface-tonal color from each workspace label string (FNV-1a hash → oklch hue), used as a 4px top accent on each card.
+- **F61 partial — Errors panel.** `dm-errors-panel` aggregates dedup'd errors across every app with a `vscode://` link per file. Chart.js peer dep is declared `optional` but not currently rendered (descoped per the plan's bundle-budget ladder).
+- **Theme toggle** (auto / light / dark) persisted in `localStorage`, applied via `color-scheme` on the document root.
+
+### Changed (M26, breaking)
+
+- `/api/apps` and `/api/apps/:name` now return the compact shape by default (see F54 above). Pass `?format=full` (HTTP) or `--full` (CLI) for the v0.4 verbose shape. **External automation that parsed `daimon list` or `daimon status` must add `--full` or migrate to the compact field names** (`errorCount` → `errCount`, `uptimeMs` → `uptime`, new `lastChangeMs`). The dashboard is unchanged because it now requests `?format=full` explicitly.
+- `LockInfo` gained optional `cwd` and `configPath` fields so auto-fix can identify orphan daemons without poking `/proc`. Old daemons that wrote the v0.4 lock shape continue to work — the fields are optional.
+
+### Schema additions (all optional, safe defaults)
+
+- `output: { format: "compact" | "full" (default "compact"), ndjson: false }`
+- `doctor: { autoFix: { onInit: false, permitted: ["orphan-daemon","stale-lock","missing-search-root","corrupt-history-db"] } }`
+- `dashboard: { theme: "auto" | "light" | "dark", density: "comfortable" | "compact" }`
+- `AppSummary.lastChangeMs?` — milliseconds since the last status transition
+
+### Descoped to v0.5.1 / v0.6
+
+- **F61 chart.js metrics graphs** — would push the dashboard bundle past the 200 KB tarball budget. Real-time CPU / mem charts deferred.
+- **F70 Material motion polish** — beyond default Material transitions.
+- **F60 published dashboard bundle** — the Angular workspace ships as source in v0.5.0. Producing the static bundle requires `cd dashboard && npm install && npm run build` once locally. `prepublishOnly` runs `build:dashboard` only when `dashboard/node_modules` exists, so `npm publish` still works for users who don't opt in. A future release will bundle a pre-built SPA in the published tarball once the budget question is resolved.
+- **F66 `daimon why-empty`** — shipped as an alias of `daimon list --explain` in M28; standalone behavior with richer discovery instrumentation is in M31.
+- **F68 token-cost annotation in doctor** — M31.
+- **F69 `daimon export-config --redacted`** — M31.
 
 ## [0.4.3] — 2026-05-18
 

@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { DaimonApi, statusBadge } from './daimon-api';
+import { workspaceTone } from './workspace-tone';
 
 @Component({
   selector: 'dm-apps-list',
@@ -39,7 +40,7 @@ import { DaimonApi, statusBadge } from './daimon-api';
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
       @for (a of api.apps(); track a.name) {
         @let badge = makeBadge(a);
-        <mat-card>
+        <mat-card [style.borderTop]="'4px solid ' + tone(a.workspaceLabel)">
           <mat-card-header>
             <mat-card-title>
               <a [routerLink]="['/apps', a.name]" style="color:inherit;text-decoration:none;">{{ a.name }}</a>
@@ -78,6 +79,7 @@ export class AppsListComponent implements OnInit, OnDestroy {
   private timer?: ReturnType<typeof setInterval>;
 
   makeBadge = statusBadge;
+  tone = workspaceTone;
 
   async ngOnInit(): Promise<void> {
     await this.api.refresh();
