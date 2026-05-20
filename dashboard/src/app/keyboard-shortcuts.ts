@@ -79,7 +79,7 @@ export class KeyboardShortcutsService {
     if (this.pending === 'g') {
       this.pending = null;
       if (this.pendingTimer) clearTimeout(this.pendingTimer);
-      const map: Record<string, string> = { a: '/', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', t: '/trends', n: '/sessions', r: '/errors', c: '/config' };
+      const map: Record<string, string> = { a: '/', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', t: '/trends', x: '/tests', n: '/sessions', r: '/errors', c: '/config' };
       const route = map[e.key.toLowerCase()];
       if (route) { e.preventDefault(); void this.router.navigateByUrl(route); }
       return;

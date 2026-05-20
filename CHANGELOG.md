@@ -4,6 +4,16 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (M45) — Tests dashboard + H1 carry-over
+
+- **T1 — Structured `test`-target summaries.** `parseTaskSummary` (in `src/taskRunner.ts`) now recognizes seven runners: Jest, Vitest, Karma, Playwright, pytest, RSpec, `cargo test`, and `go test` (the last sums multi-package `ok|FAIL pkg D.DDDs` lines). Output shape is now `{ passed, failed, total, suites?, durationMs?, framework, failedTests? }`. `failedTests` captures `{ name, file, line }` from the per-runner failure formatting and is the source of the dashboard's failed-test jumper. `task_runs.summary` continues to be a JSON blob — the new fields are additive.
+- **T2 — `Tests` dashboard route (`/tests`).** New lazy-loaded route. One expansion-panel per app with at least one `test`-named run in the last 30 days. Title row carries an OK / FAIL pill + `passed/total · N failed` label + framework + duration + "<N>m ago" + run count. Body shows a 30-row pass/fail trend ribbon (one tick per run) and, when the most-recent run failed, an inline list of failed tests.
+- **T3 — Failed-test jumper.** Each failed-test row that carries a `{ file, line? }` payload renders a clickable `vscode://file/<path>:<line>` link, identical scheme to the M22 errors panel.
+- **T4 — Nav + shortcut.** New `/tests` entry on the nav rail (`science` icon) and `g x` keyboard chord, alongside the existing `g t`/`g h`/etc. shortcuts.
+- **H1 (carry-over — third schedule slot, partial).** Vitest harness shipped at `dashboard/vitest.config.ts`. Five specs in `dashboard/src/app/tests-page.spec.ts` cover the pure signal-bearing logic — `parseSummary`, `vscodeUri`, `summaryLabel`, `pillKindFor` — extracted into `tests-page-helpers.ts` to keep them runtime-independent. `dashboard/package.json` `test` script is now `vitest run` (no `ng test --watch=false` blocker). The deeper per-component render coverage requires an Angular-linker preset (e.g. `@analogjs/vitest-angular`) — that preset has been moved to v0.9 to keep M45 inside one weekend. Playwright smoke similarly deferred. See `PLAN-v0.8.md` Status section for the trade-off.
+- **H3 — WCAG AA contrast audit.** Deferred to v0.8.1 per the locked descope path (`"If M45 grows, drop H3 first"`). M3 surface-tonal defaults from v0.7 still apply; the dedicated AA sweep across light + dark + reduced-motion remains a focused future pass.
+- **Test surface.** New `test/task-summary.test.mjs` asserts the parser for jest / vitest / pytest / rspec / cargo / go / playwright / null. `dashboard/src/app/tests-page.spec.ts` exercises the five tests-page helpers under Vitest.
+
 ### Added (M44) — Plug-in surface for doctor rules
 
 - **P1 — Plug-in loader.** New `src/plugins.ts`. On daemon start, daimon scans `~/.daimon/plugins/doctor-*.mjs` (configurable via `plugins.dir` in `daimon.config.json`). Each file is dynamically imported with a cache-busting query string so plug-ins can be hot-edited and reloaded by restarting the daemon. Files that fail to import (or fail shape validation) are logged as `[daimon] plug-in skipped: <file> — <reason>` and never crash the daemon.
