@@ -14,6 +14,7 @@ import { appendAuditEntry } from './audit.js';
 import { listPresets } from './presets.js';
 import { writeHandoff } from './stateHandoff.js';
 import { DAIMON_VERSION } from './version.js';
+import type { SelfMetricsCollector } from './selfMetrics.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -144,6 +145,7 @@ export interface ServerOpts {
   getConfig?: () => AppmanConfig;
   reloadConfig?: () => Promise<{ ok: boolean; addedApps: string[]; removedApps: string[] }>;
   patchConfig?: (patch: any) => { ok: true; applied: string[]; addedApps?: string[]; removedApps?: string[]; restartRequired?: string[] } | { ok: false; error: string };
+  selfMetrics?: SelfMetricsCollector | null;
 }
 
 const REDACT_KEY = /key|secret|token|password|pass/i;
@@ -243,6 +245,23 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
       if (url.pathname === '/api/presets' && method === 'GET') {
         sendJson(res, 200, listPresets());
+        return;
+      }
+      if (url.pathname === '/api/self' && method === 'GET') {
+        if (!opts.selfMetrics) {
+          sendJson(res, 503, { error: 'self-metrics collector not attached' });
+          return;
+        }
+        sendJson(res, 200, opts.selfMetrics.snapshot());
+        return;
+      }
+      if (url.pathname === '/api/self/history' && method === 'GET') {
+        const since = parseSinceParam(url.searchParams.get('since'));
+        const sinceMs = since.sinceMs ?? 60 * 60 * 1000;
+        const sinceTs = since.sinceTs ?? Date.now() - sinceMs;
+        const hist = registry.getHistory();
+        const rows = hist ? hist.querySelfMetrics({ since: sinceTs, limit: 1440 }) : [];
+        sendJson(res, 200, rows);
         return;
       }
       if (url.pathname === '/api/snapshot-state' && method === 'POST') {

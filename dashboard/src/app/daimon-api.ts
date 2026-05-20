@@ -182,6 +182,18 @@ export class DaimonApi {
     } catch { return null; }
   }
 
+  async getSelf(): Promise<any | null> {
+    try { return await firstValueFrom(this.http.get<any>('/api/self')); }
+    catch { return null; }
+  }
+
+  async getSelfHistory(since: '1h' | '6h' | '24h' | '7d' = '6h'): Promise<{ ts: number; rssMB: number; heapUsedMB: number; eventLoopLagMs: number; historyQueryP95Ms: number }[]> {
+    try {
+      const r = await firstValueFrom(this.http.get<any[]>(`/api/self/history?since=${since}`));
+      return Array.isArray(r) ? r : [];
+    } catch { return []; }
+  }
+
   async getBundles(name: string, limit = 100): Promise<{ ts: number; initialKB: number; lazyKB: number; fileCount: number }[]> {
     try {
       const r = await firstValueFrom(this.http.get<any[]>(`/api/history/bundles?app=${encodeURIComponent(name)}&limit=${limit}`));

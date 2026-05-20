@@ -19,6 +19,7 @@ import { buildLockInfo, removeLock, writeLock } from './daemon.js';
 import { patchConfigOnDisk, softReloadFromDisk } from './configManager.js';
 import { installCrashHandlers } from './crashDump.js';
 import { consumeHandoff } from './stateHandoff.js';
+import { SelfMetricsCollector } from './selfMetrics.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -115,11 +116,23 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { registry.pruneOldErrors(); } catch {}
   }, 60 * 60 * 1000);
 
+  const selfMetrics = new SelfMetricsCollector(history);
+  selfMetrics.setSelfWarnHandler(msg => {
+    try { registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: msg }); } catch {}
+  });
+  const selfMetricsTick = setInterval(() => {
+    const snap = selfMetrics.snapshot();
+    history.recordSelfMetric(snap.rssMB, snap.heapUsedMB, snap.eventLoopLagMs, snap.historyDbQueryMs.p95);
+  }, 60 * 1000);
+  if (selfMetricsTick.unref) selfMetricsTick.unref();
+
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
     try { clearInterval(errorTtlTick); } catch {}
+    try { clearInterval(selfMetricsTick); } catch {}
+    try { selfMetrics.stop(); } catch {}
     try { health.stop(); } catch {}
     try { usage.stop(); } catch {}
     try { restarter.stop(); } catch {}
@@ -156,6 +169,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
       const r = softReloadFromDisk({ configPath: cfgPath, registry });
       return { ok: true, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired };
     },
+    selfMetrics,
   });
   process.stdout.write(`[daimon] api: http://127.0.0.1:${apiPort}\n`);
   try { writeLock(buildLockInfo(apiPort, headless, cfgPath)); } catch (err: any) { process.stderr.write(`[daimon] warning: could not write daemon.lock: ${err?.message || err}\n`); }

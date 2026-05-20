@@ -4,6 +4,15 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (M43) — Self-observability
+
+- **O1 — `GET /api/self`.** New endpoint returning daimon's own metrics: `{ pid, version, uptimeMs, rssMB, heapUsedMB, heapTotalMB, eventLoopLagMs, eventLoopLagP95Ms, historyDbQueryMs:{p50,p95,p99}, lockContentionCount, tickIntervalMs, lastTickAt }`. Backed by a new `SelfMetricsCollector` (in `src/selfMetrics.ts`) that probes event-loop lag with a 1s `setInterval` delta and rolls a 60-sample sliding window. `lockContentionCount` and the `historyDbQueryMs` percentiles are wired through call-site instrumentation (additive).
+- **O2 — `daimon doctor --self`.** New `--self` flag on `daimon doctor` runs self-checks: heap above 256 MB, event-loop lag p95 above 100 ms, history-db query p95 above 50 ms. Reports findings in the same `{ok, checks, metrics}` shape as the existing F58 doctor rules. Read-only by design (no auto-fix — self issues require a daemon restart or config tuning).
+- **O3 — `self_metrics` table in history.db.** New `self_metrics(id, ts, rssMB, heapUsedMB, eventLoopLagMs, historyQueryP95Ms)` table created by the existing `CREATE TABLE IF NOT EXISTS` migration — v0.7 databases upgrade in place. The daemon persists one row per minute via the new `History.recordSelfMetric`. Retention follows the existing `history.retentionDays` policy. `daimon snapshot <name>` carries the last 60 rows as `payload.selfMetrics` for diagnostic context.
+- **O4 — Self chart on the Trends dashboard route.** New "Apps / Self" toggle on `/trends`. When **Self** is selected, an additional `dm-trend-chart` card renders rssMB / heapUsedMB / eventLoopLagMs as line series from `/api/self/history`. Reuses the existing chart.js lazy chunk — initial-route gzip stays at **126.46 KB** (v0.7 baseline 126.45 KB, ceiling 130 KB).
+- **O5 — Self-warn events.** When the event-loop lag exceeds 100 ms for ≥5 consecutive ticks, `SelfMetricsCollector` emits a synthetic `{ app:'__daemon__', type:'self-warn', message:'event loop lag sustained: <N>ms (<K> consecutive ticks)' }` event. Surfaces on the existing Events feed alongside per-app events. New `'self-warn'` value in `AppEventType`; the loader only re-fires on rising-edge transitions to avoid flooding.
+- **Test surface.** New `test/self-metrics.test.mjs` asserts (1) `snapshot()` returns plausible pid/version/rss/heap/uptime/lag numbers, (2) `recordQueryMs` correctly feeds the p50/p95/p99 percentile estimates, and (3) the self-warn setter is wired without throwing.
+
 ### Added (M42) — Reliability pass
 
 - **F1 — Parser fuzz tests.** New `test/parser-fuzz.test.mjs` feeds 2,000 deterministically-random mixed-ANSI / multibyte / lone-surrogate / multiline-fragment lines into `parseLine`. Asserts no exceptions, no >10ms slow tail above 2% of iterations, and total time <10s per run. Two regression cases cover empty / whitespace / ANSI-only input and lone surrogate halves.

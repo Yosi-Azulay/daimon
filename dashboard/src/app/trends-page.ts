@@ -146,6 +146,10 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
             <mat-button-toggle [value]="a.name"><dm-mono>{{ a.name }}</dm-mono></mat-button-toggle>
           }
         </mat-button-toggle-group>
+        <mat-button-toggle-group [value]="showSelf() ? 'on' : 'off'" (change)="onSelfToggle($event.value)" hideSingleSelectionIndicator aria-label="Self chart">
+          <mat-button-toggle value="off">Apps</mat-button-toggle>
+          <mat-button-toggle value="on">Self</mat-button-toggle>
+        </mat-button-toggle-group>
       </div>
     </div>
 
@@ -154,6 +158,9 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
       <dm-trend-chart #bundleChart></dm-trend-chart>
       <dm-trend-chart #errorChart></dm-trend-chart>
       <dm-trend-chart #restartChart></dm-trend-chart>
+      @if (showSelf()) {
+        <dm-trend-chart #selfChart></dm-trend-chart>
+      }
     </div>
   `,
   styles: [`
@@ -172,11 +179,13 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
 
   readonly window = signal<Window>('7d');
   readonly appFilter = signal<string>('__all__');
+  readonly showSelf = signal<boolean>(false);
 
   @ViewChild('compileChart') compileChart?: TrendChartComponent;
   @ViewChild('bundleChart') bundleChart?: TrendChartComponent;
   @ViewChild('errorChart') errorChart?: TrendChartComponent;
   @ViewChild('restartChart') restartChart?: TrendChartComponent;
+  @ViewChild('selfChart') selfChart?: TrendChartComponent;
 
   private timer?: ReturnType<typeof setInterval>;
 
@@ -192,6 +201,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
 
   onWindowChange(w: Window): void { this.window.set(w); void this.loadAll(); }
   onAppChange(a: string): void { this.appFilter.set(a); void this.loadAll(); }
+  onSelfToggle(v: 'on' | 'off'): void { this.showSelf.set(v === 'on'); void this.loadAll(); }
 
   private async loadAll(silent = false): Promise<void> {
     const win = this.window();
@@ -286,6 +296,24 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       })),
       yLabel: 'count',
     });
+
+    if (this.showSelf()) {
+      const rows = await this.api.getSelfHistory(win === '24h' ? '24h' : '7d');
+      const sorted = [...rows].sort((a, b) => a.ts - b.ts);
+      const labels = sorted.map(r => fmtBucketLabel(r.ts, win));
+      this.selfChart?.setData({
+        title: 'Daimon self',
+        subtitle: 'rss · heap · event-loop lag',
+        chartType: 'line',
+        labels,
+        datasets: [
+          { label: 'rssMB', data: sorted.map(r => r.rssMB), borderColor: primary, backgroundColor: 'transparent', borderWidth: 1.4, tension: 0.3, pointRadius: 0 },
+          { label: 'heapUsedMB', data: sorted.map(r => r.heapUsedMB), borderColor: tertiary, backgroundColor: 'transparent', borderWidth: 1.4, tension: 0.3, pointRadius: 0 },
+          { label: 'eventLoopLagMs', data: sorted.map(r => r.eventLoopLagMs), borderColor: error, backgroundColor: 'transparent', borderWidth: 1.4, tension: 0.3, pointRadius: 0, yAxisID: 'y1' },
+        ],
+        yLabel: 'MB / ms',
+      });
+    }
   }
 
   private async fetchSeries(apps: string[], metric: Metric, win: Window): Promise<Series[]> {

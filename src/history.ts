@@ -117,7 +117,35 @@ export class History {
         fileCount INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS bundles_app_ts ON bundles(app, ts);
+      CREATE TABLE IF NOT EXISTS self_metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        rssMB REAL NOT NULL,
+        heapUsedMB REAL NOT NULL,
+        eventLoopLagMs REAL NOT NULL,
+        historyQueryP95Ms REAL NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS self_metrics_ts ON self_metrics(ts);
     `);
+  }
+
+  recordSelfMetric(rssMB: number, heapUsedMB: number, eventLoopLagMs: number, historyQueryP95Ms: number, ts = Date.now()): void {
+    if (!this.db) return;
+    try {
+      this.db.prepare('INSERT INTO self_metrics (ts,rssMB,heapUsedMB,eventLoopLagMs,historyQueryP95Ms) VALUES (?,?,?,?,?)').run(ts, rssMB, heapUsedMB, eventLoopLagMs, historyQueryP95Ms);
+    } catch (err: any) {
+      this.warnOnce(`self_metrics write failed: ${err?.message || err}`);
+    }
+  }
+
+  querySelfMetrics(opts: { since?: number; limit?: number } = {}): { ts: number; rssMB: number; heapUsedMB: number; eventLoopLagMs: number; historyQueryP95Ms: number }[] {
+    if (!this.db) return [];
+    const wh: string[] = [];
+    const args: any[] = [];
+    if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+    const sql = `SELECT ts, rssMB, heapUsedMB, eventLoopLagMs, historyQueryP95Ms FROM self_metrics ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
+    args.push(opts.limit ?? 60);
+    return this.db.prepare(sql).all(...args) as any[];
   }
 
   recordEvent(ev: AppEvent): void {
@@ -184,6 +212,7 @@ export class History {
       this.db.prepare('DELETE FROM compile_times WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM task_runs WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM bundles WHERE ts < ?').run(cutoff);
+      this.db.prepare('DELETE FROM self_metrics WHERE ts < ?').run(cutoff);
     } catch (err: any) {
       this.warnOnce(`retention failed: ${err?.message || err}`);
     }

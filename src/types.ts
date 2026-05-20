@@ -187,7 +187,8 @@ export type AppEventType =
   | 'stale'
   | 'bundle-regression'
   | 'compile-regression'
-  | 'task-run';
+  | 'task-run'
+  | 'self-warn';
 
 export interface AppEvent {
   ts: number;

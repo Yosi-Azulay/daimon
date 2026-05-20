@@ -758,6 +758,23 @@ async function main() {
     case 'doctor': {
       const cfgR = loadConfig();
       if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
+      if (f.self) {
+        await ensureDaemon();
+        const r = await call('/api/self');
+        if (r.status === 503) failHint('self-metrics not available', 'daemon may need a restart: daimon daemon restart');
+        const m: any = r.body ?? {};
+        const checks: any[] = [];
+        const HEAP_WARN_MB = 256;
+        const LAG_WARN_MS = 100;
+        const QUERY_P95_WARN_MS = 50;
+        checks.push({ name: 'heap', ok: m.heapUsedMB < HEAP_WARN_MB, detail: `heapUsed ${m.heapUsedMB}MB (warn at ${HEAP_WARN_MB}MB)` });
+        checks.push({ name: 'event-loop-lag', ok: m.eventLoopLagP95Ms < LAG_WARN_MS, detail: `p95 ${m.eventLoopLagP95Ms}ms (warn at ${LAG_WARN_MS}ms)` });
+        checks.push({ name: 'history-db-query', ok: (m.historyDbQueryMs?.p95 ?? 0) < QUERY_P95_WARN_MS, detail: `p95 ${m.historyDbQueryMs?.p95 ?? 0}ms (warn at ${QUERY_P95_WARN_MS}ms)` });
+        const ok = checks.every(c => c.ok);
+        out({ ok, checks, metrics: m });
+        if (!ok) process.exit(1);
+        return;
+      }
       if (f.autoFix) {
         const { runAutoFix, ALL_AUTO_FIX } = await import('./autoFix.js');
         const permitted = (cfgR.config.doctor?.autoFix?.permitted ?? ALL_AUTO_FIX) as any;
