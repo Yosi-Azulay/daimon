@@ -18,6 +18,15 @@ interface EventRow {
 
 interface CompileRow { id: number; ts: number; app: string; ms: number; }
 
+export interface BundleRow {
+  id: number;
+  ts: number;
+  app: string;
+  initialKB: number;
+  lazyKB: number;
+  fileCount: number;
+}
+
 export interface TaskRunRow {
   id: number;
   ts: number;
@@ -35,6 +44,7 @@ const RETENTION_DEBOUNCE_MS = 10_000;
 type Op =
   | { kind: 'event'; row: { ts: number; app: string; type: string; from_state: string | null; to_state: string | null; message: string | null } }
   | { kind: 'compile'; row: { ts: number; app: string; ms: number } }
+  | { kind: 'bundle'; row: { ts: number; app: string; initialKB: number; lazyKB: number; fileCount: number } }
   | { kind: 'task'; row: { ts: number; app: string; task: string; exit_code: number | null; duration_ms: number | null; summary: string | null } };
 
 export class History {
@@ -98,6 +108,15 @@ export class History {
         summary TEXT
       );
       CREATE INDEX IF NOT EXISTS task_runs_app_ts ON task_runs(app, ts);
+      CREATE TABLE IF NOT EXISTS bundles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        app TEXT NOT NULL,
+        initialKB INTEGER NOT NULL,
+        lazyKB INTEGER NOT NULL,
+        fileCount INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS bundles_app_ts ON bundles(app, ts);
     `);
   }
 
@@ -121,6 +140,11 @@ export class History {
     this.queue.push({ kind: 'compile', row: { ts, app, ms } });
   }
 
+  recordBundle(app: string, initialKB: number, lazyKB: number, fileCount: number, ts = Date.now()): void {
+    if (!this.db) return;
+    this.queue.push({ kind: 'bundle', row: { ts, app, initialKB, lazyKB, fileCount } });
+  }
+
   recordTaskRun(app: string, task: string, exitCode: number | null, durationMs: number | null, summary: unknown | null, ts = Date.now()): void {
     if (!this.db) return;
     this.queue.push({
@@ -137,10 +161,12 @@ export class History {
       const insEv = this.db.prepare('INSERT INTO events (ts,app,type,from_state,to_state,message) VALUES (?,?,?,?,?,?)');
       const insCm = this.db.prepare('INSERT INTO compile_times (ts,app,ms) VALUES (?,?,?)');
       const insTk = this.db.prepare('INSERT INTO task_runs (ts,app,task,exit_code,duration_ms,summary) VALUES (?,?,?,?,?,?)');
+      const insBd = this.db.prepare('INSERT INTO bundles (ts,app,initialKB,lazyKB,fileCount) VALUES (?,?,?,?,?)');
       const tx = this.db.transaction((ops: Op[]) => {
         for (const op of ops) {
           if (op.kind === 'event') insEv.run(op.row.ts, op.row.app, op.row.type, op.row.from_state, op.row.to_state, op.row.message);
           else if (op.kind === 'compile') insCm.run(op.row.ts, op.row.app, op.row.ms);
+          else if (op.kind === 'bundle') insBd.run(op.row.ts, op.row.app, op.row.initialKB, op.row.lazyKB, op.row.fileCount);
           else insTk.run(op.row.ts, op.row.app, op.row.task, op.row.exit_code, op.row.duration_ms, op.row.summary);
         }
       });
@@ -157,6 +183,7 @@ export class History {
       this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM compile_times WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM task_runs WHERE ts < ?').run(cutoff);
+      this.db.prepare('DELETE FROM bundles WHERE ts < ?').run(cutoff);
     } catch (err: any) {
       this.warnOnce(`retention failed: ${err?.message || err}`);
     }
@@ -185,6 +212,76 @@ export class History {
     const sql = `SELECT * FROM compile_times ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
     args.push(opts.limit ?? 1000);
     return this.db.prepare(sql).all(...args) as CompileRow[];
+  }
+
+  queryBundles(opts: { app?: string; since?: number; until?: number; limit?: number }): BundleRow[] {
+    if (!this.db) return [];
+    const wh: string[] = [];
+    const args: any[] = [];
+    if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+    if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+    if (opts.until != null) { wh.push('ts <= ?'); args.push(opts.until); }
+    const sql = `SELECT * FROM bundles ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
+    args.push(opts.limit ?? 1000);
+    return this.db.prepare(sql).all(...args) as BundleRow[];
+  }
+
+  trends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts'; sinceMs: number; bucketMs: number }): { points: { t: number; v: number; v2?: number }[]; count: number } {
+    if (!this.db) return { points: [], count: 0 };
+    const sinceTs = Date.now() - opts.sinceMs;
+    const bucket = opts.bucketMs;
+    const buckets = new Map<number, { sum: number; n: number; sum2?: number }>();
+    const bumpAvg = (t: number, v: number) => {
+      const b = Math.floor(t / bucket) * bucket;
+      const cur = buckets.get(b) ?? { sum: 0, n: 0 };
+      cur.sum += v; cur.n += 1;
+      buckets.set(b, cur);
+    };
+    const bumpCount = (t: number) => {
+      const b = Math.floor(t / bucket) * bucket;
+      const cur = buckets.get(b) ?? { sum: 0, n: 0 };
+      cur.sum += 1; cur.n += 1;
+      buckets.set(b, cur);
+    };
+    let count = 0;
+    if (opts.metric === 'compile') {
+      const rows = this.queryCompiles({ app: opts.app, since: sinceTs, limit: 10000 });
+      count = rows.length;
+      for (const r of rows) bumpAvg(r.ts, r.ms);
+    } else if (opts.metric === 'bundle') {
+      const rows = this.queryBundles({ app: opts.app, since: sinceTs, limit: 10000 });
+      count = rows.length;
+      for (const r of rows) {
+        const b = Math.floor(r.ts / bucket) * bucket;
+        const cur = buckets.get(b) ?? { sum: 0, n: 0, sum2: 0 };
+        cur.sum += r.initialKB;
+        cur.sum2 = (cur.sum2 ?? 0) + r.lazyKB;
+        cur.n += 1;
+        buckets.set(b, cur);
+      }
+    } else if (opts.metric === 'errors') {
+      const rows = this.queryEvents({ app: opts.app, since: sinceTs, limit: 10000 });
+      for (const r of rows) {
+        if (r.type === 'error-new' || r.type === 'error-recur') { bumpCount(r.ts); count++; }
+      }
+    } else {
+      const rows = this.queryEvents({ app: opts.app, since: sinceTs, limit: 10000 });
+      for (const r of rows) {
+        if (r.type === 'status' && r.to_state === 'starting' && (r.from_state === 'error' || r.from_state === 'serving' || r.from_state === 'compiling')) {
+          bumpCount(r.ts); count++;
+        }
+      }
+    }
+    const points: { t: number; v: number; v2?: number }[] = [];
+    const sorted = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
+    for (const [t, v] of sorted) {
+      if (opts.metric === 'compile' || opts.metric === 'bundle') {
+        points.push({ t, v: Math.round(v.sum / v.n), ...(v.sum2 != null ? { v2: Math.round(v.sum2 / v.n) } : {}) });
+      } else {
+        points.push({ t, v: v.sum });
+      }
+    }
+    return { points, count };
   }
 
   queryTasks(opts: { app?: string; task?: string; since?: number; limit?: number }): TaskRunRow[] {

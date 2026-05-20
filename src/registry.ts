@@ -390,7 +390,13 @@ export class Registry extends EventEmitter {
         this.checkCompileRegression(name, ms);
         this.emit('compile', { name, ms });
       },
-      onBundleUpdate: () => this.emit('bundleUpdate', { name }),
+      onBundleUpdate: () => {
+        const s = this.getState(name);
+        if (s?.bundle && (s.bundle.initialKB > 0 || s.bundle.lazyKB > 0)) {
+          this.history?.recordBundle(name, s.bundle.initialKB, s.bundle.lazyKB, s.bundle.files.length);
+        }
+        this.emit('bundleUpdate', { name });
+      },
     });
     e.proc = proc;
     this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'starting' });

@@ -11,6 +11,7 @@ export const ROUTES: Routes = [
   { path: 'config', loadComponent: () => import('./config-editor').then(m => m.ConfigEditorComponent) },
   { path: 'history', loadComponent: () => import('./history-page').then(m => m.HistoryPageComponent) },
   { path: 'history/:name', loadComponent: () => import('./history-page').then(m => m.HistoryPageComponent) },
+  { path: 'trends', loadComponent: () => import('./trends-page').then(m => m.TrendsPageComponent) },
   { path: 'sessions', loadComponent: () => import('./sessions-page').then(m => m.SessionsPageComponent) },
   { path: 'requests/:name', loadComponent: () => import('./requests-page').then(m => m.RequestsPageComponent) },
   { path: '**', redirectTo: '' },

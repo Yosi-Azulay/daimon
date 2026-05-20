@@ -22,6 +22,7 @@ export interface SnapshotPayload {
   env: Record<string, string>;
   configSlice: any;
   events: any[];
+  bundles?: any[];
 }
 
 export function buildSnapshot(registry: Registry, name: string): SnapshotPayload | null {
@@ -34,6 +35,7 @@ export function buildSnapshot(registry: Registry, name: string): SnapshotPayload
   const baseEnv: Record<string, string | undefined> = { ...process.env, ...(app.env ?? {}), ...(state.sessionOverrides?.env ?? {}) };
   const history = registry.getHistory();
   const events = history ? history.queryEvents({ app: name, limit: 50 }) : [];
+  const bundles = history ? history.queryBundles({ app: name, limit: 100 }) : [];
   return {
     takenAt: new Date().toISOString(),
     summary,
@@ -50,6 +52,7 @@ export function buildSnapshot(registry: Registry, name: string): SnapshotPayload
       envFiles: cfg.envFiles?.[name] ?? [],
     },
     events,
+    bundles,
   };
 }
 

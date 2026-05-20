@@ -41,7 +41,7 @@
     "start": "npm run build && node dist/main.js",
     "cli": "node dist/cli.js",
     "mcp": "node dist/mcp.js",
-    "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs test/parser-corpus.test.mjs test/overview-budget.test.mjs test/autofix-rules.test.mjs",
+    "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs test/parser-corpus.test.mjs test/overview-budget.test.mjs test/autofix-rules.test.mjs test/history-trends.test.mjs",
     "clean:dist": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:bundle": "npm run clean:dist && esbuild src/cli.ts src/main.ts src/mcp.ts --bundle --platform=node --target=node20 --format=esm --minify --legal-comments=none --outdir=dist --packages=external",
     "build:dashboard": "node -e \"const fs=require('fs');if(fs.existsSync('dashboard/node_modules')){require('child_process').execSync('npm run build',{cwd:'dashboard',stdio:'inherit'});}else{console.log('[daimon] dashboard/node_modules missing — skipping ng build. Run: (cd dashboard && npm install) to enable the Angular SPA bundle.');}\"",

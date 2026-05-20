@@ -20,6 +20,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         <tr><td><kbd>g</kbd> <kbd>d</kbd></td><td>Doctor</td></tr>
         <tr><td><kbd>g</kbd> <kbd>v</kbd></td><td>Events</td></tr>
         <tr><td><kbd>g</kbd> <kbd>h</kbd></td><td>History</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>t</kbd></td><td>Trends</td></tr>
         <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / prev item</td></tr>
         <tr><td><kbd>s</kbd></td><td>Start focused app</td></tr>
         <tr><td><kbd>r</kbd></td><td>Restart focused app</td></tr>
@@ -78,7 +79,7 @@ export class KeyboardShortcutsService {
     if (this.pending === 'g') {
       this.pending = null;
       if (this.pendingTimer) clearTimeout(this.pendingTimer);
-      const map: Record<string, string> = { a: '/', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', n: '/sessions', r: '/errors', c: '/config' };
+      const map: Record<string, string> = { a: '/', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', t: '/trends', n: '/sessions', r: '/errors', c: '/config' };
       const route = map[e.key.toLowerCase()];
       if (route) { e.preventDefault(); void this.router.navigateByUrl(route); }
       return;

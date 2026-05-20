@@ -4,6 +4,24 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+Strategic theme: **Memory and reach.** v0.7 makes the *past* actionable (history surfaces) and broadens *what* daimon can manage (polyglot dev servers, whole-workspace orchestration, refreshed TUI).
+
+### Added (M37) — History dashboard surface
+
+- **T1a — Bundle-size persistence.** New `bundles` table in `~/.daimon/history.db` (`app, ts, initialKB, lazyKB, fileCount`). The registry persists one row per `onBundleUpdate` (Angular esbuild bundle parse), so the dashboard can render long-term bundle trends without an external store. The new table is additive — v0.6 history.db files migrate forward automatically on first open via `CREATE TABLE IF NOT EXISTS`. `daimon snapshot` carries the last 100 bundle rows per app in the payload.
+- **T1b — `GET /api/history/trends`.** New aggregated time-series endpoint: `?app=<name>&metric=<compile|bundle|errors|restarts>&since=<24h|7d|30d>` returns `{app, metric, since, points:[{t, v, v2?}], _meta:{aggregation, count}}`. `compile` averages ms per bucket. `bundle` returns initialKB as `v` and lazyKB as `v2`. `errors` counts `error-new` + `error-recur` events per bucket. `restarts` counts `status` transitions where `to=starting` and `from ∈ {error, serving, compiling}`. Aggregation is hour-buckets for `24h` and day-buckets for `7d`/`30d`. Companion endpoint `/api/history/bundles` returns raw rows.
+- **T1c — Dashboard `Trends` route.** New lazy-loaded `/trends` page with four charts (compile · bundle · errors · restarts) rendered via the existing chart.js lazy chunk from M30 — no new chart dep. Bundle chart stacks initialKB + lazyKB per app. Toggle between `24h` / `7d` / `30d` and between "All apps" and a single-app focus. Linked from the nav rail with `g t` shortcut.
+- **T1d — Fixture-daemon harness (partial H1).** New `test/history-trends.test.mjs` exercises `History.recordBundle` / `queryBundles` and the four `trends()` aggregations against a temp sqlite db, so the Trends backend is verified without a real `~/.daimon/history.db`. Wired into `npm test`.
+
+### Deferred (M37 → v0.7.1)
+
+- **H1 — Vitest + Playwright dashboard scaffolding.** The non-trivial dev-dep + per-component spec layer carries over from v0.6.1; only the History.ts fixture-daemon harness lands in v0.7.0. Reason: keeps the Trends surface shipping on schedule while leaving the dashboard-test footprint for a focused v0.7.1 weekend.
+- **H3 — WCAG AA contrast audit.** Visual inspection task across light/dark/reduced-motion tonal surfaces — also pushed to v0.7.1 alongside H1.
+
+### Changed (M37)
+
+- **Initial-route gzip transfer: 126.44 KB** — Trends route + `getTrends` + `getBundles` API are entirely lazy. Initial bundle stays under the 130 KB v0.6 ceiling.
+
 ## [0.6.0] — 2026-05-20
 
 Strategic theme: **Every signal becomes actionable.** M33 deepens parser coverage so every tool's errors land structured; M34 turns daimon into a 3-call agent surface (overview → try-fix → focus); M35 ships keyboard / logs / ribbon polish; M36 broadens auto-heal with four new doctor rules and opt-in health-probe path discovery.

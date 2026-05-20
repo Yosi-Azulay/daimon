@@ -362,6 +362,24 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           sendJson(res, 200, h.queryTasks({ app, task: url.searchParams.get('task') || undefined, since: sinceMs, limit: lim }));
           return;
         }
+        if (sub3 === 'bundles') {
+          sendJson(res, 200, h.queryBundles({ app, since: sinceMs, until: untilMs, limit: lim }));
+          return;
+        }
+        if (sub3 === 'trends') {
+          const metric = (url.searchParams.get('metric') || 'compile') as 'compile' | 'bundle' | 'errors' | 'restarts';
+          if (!['compile', 'bundle', 'errors', 'restarts'].includes(metric)) {
+            sendJson(res, 400, { error: 'metric must be compile|bundle|errors|restarts' });
+            return;
+          }
+          const sinceLabel = (url.searchParams.get('since') || '24h').toLowerCase();
+          const windows: Record<string, number> = { '24h': 24 * 3600 * 1000, '7d': 7 * 86400 * 1000, '30d': 30 * 86400 * 1000 };
+          const sinceMsTrend = windows[sinceLabel] ?? windows['24h'];
+          const bucketMs = sinceLabel === '24h' ? 3600 * 1000 : 86400 * 1000;
+          const { points, count } = h.trends({ app, metric, sinceMs: sinceMsTrend, bucketMs });
+          sendJson(res, 200, { app: app ?? null, metric, since: sinceLabel, points, _meta: { aggregation: sinceLabel === '24h' ? 'hour' : 'day', count } });
+          return;
+        }
         if (sub3 === 'summary' && parts.length >= 4) {
           const name = decodeURIComponent(parts[3]);
           sendJson(res, 200, h.summary(name));

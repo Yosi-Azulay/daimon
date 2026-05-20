@@ -172,6 +172,23 @@ export class DaimonApi {
     } catch { return []; }
   }
 
+  async getTrends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts'; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; metric: string; since: string; points: { t: number; v: number; v2?: number }[]; _meta?: { aggregation: string; count: number } } | null> {
+    try {
+      const params = new URLSearchParams();
+      if (opts.app) params.set('app', opts.app);
+      params.set('metric', opts.metric);
+      params.set('since', opts.since);
+      return await firstValueFrom(this.http.get<any>(`/api/history/trends?${params.toString()}`));
+    } catch { return null; }
+  }
+
+  async getBundles(name: string, limit = 100): Promise<{ ts: number; initialKB: number; lazyKB: number; fileCount: number }[]> {
+    try {
+      const r = await firstValueFrom(this.http.get<any[]>(`/api/history/bundles?app=${encodeURIComponent(name)}&limit=${limit}`));
+      return Array.isArray(r) ? r : [];
+    } catch { return []; }
+  }
+
   async getHistoryWhy(name: string): Promise<any | null> {
     try { return await firstValueFrom(this.http.get<any>(`/api/history/why/${encodeURIComponent(name)}`)); }
     catch { return null; }
