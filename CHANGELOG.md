@@ -45,6 +45,15 @@ Strategic theme: **Memory and reach.** v0.7 makes the *past* actionable (history
   - Polyglot detectors run **unconditionally** on every searchRoot, guarded by strict markers (`manage.py` must contain `django`, `pyproject.toml`/`requirements.txt` must declare `fastapi`) and JS precedence (`nx.json`/`angular.json`/vite/storybook detected first).
   - No new `searchRoots[*].polyglot: true` opt-in is introduced.
 
+### Added (M40) — TUI parity refresh
+
+- **T6a — Shortcut alignment.** The Ink TUI now uses `/` for filter (the prior `t` tag-pick remains), `j`/`k` (in addition to `↑`/`↓`) for navigation, a `g <key>` chord that surfaces dashboard-style view hints (`g a` apps, `g e` errors, `g v` events, `g s` settings, `g n` sessions), and `r` requires a `y`/`n` snack-confirm before restarting — matching the dashboard's M35 anti-fatfinger behaviour. `o` (open URL) and `s` (start) are preserved. Stop is rebound to `S` (shift-S) because `x` now means try-fix (per T6c).
+- **T6b — Per-app 20-cell event ribbon.** Each app row in the TUI gains a second line with a 20-cell ASCII bar (`▓▓░▒▓▓░░░░░░░░░░░░░░ srv·err·cmp·stp`) representing the last 60 minutes of status events, computed with the same algorithm as the dashboard's H5 ribbon. Glyphs: `▓` serving, `█` error, `▒` compiling/starting, `░` stopped, `·` empty bucket. Powered by the new `src/tui/ribbon.ts` helper (covered by `test/tui-ribbon.test.mjs`).
+- **T6c — Focus / try-fix / orchestrate from the TUI.** New action keys on the selected app: `f` runs the M34 "focus until stable" wait (5s idle on serving + healthy, 180s budget) and surfaces the outcome in the footer status line; `x` runs `try-fix` (runAutoFix on the permitted rule set + restart + wait for healthy) and reports `fixed N` + reached/timeout; `O` (shift-O) opens an inline orchestrate dialog — type a profile name + Enter to run the M38 `orchestrateProfile` with `goal=healthy, timeoutMs=300_000` and see the result on the footer. All three call the in-process registry directly (no HTTP round-trip), so the TUI keeps working over SSH without network access.
+- **T6d — Headless mode unchanged.** `--headless` + `config.headless: true` continue to skip the TUI entirely. No new daemon flags.
+- **Footer status line.** A new auto-dismissing `[i] …` line surfaces the outcome of `f` / `x` / `O` actions (plus `r` confirm and `g <key>` view hints) for ~4 seconds — necessary because the TUI no longer relitigates ambient state when an in-flight action completes.
+- **Tests:** new `test/tui-ribbon.test.mjs` covers the ribbon helper (60-min window, error-over-serving ranking, per-app filtering, glyph rendering, count aggregation).
+
 ## [0.6.0] — 2026-05-20
 
 Strategic theme: **Every signal becomes actionable.** M33 deepens parser coverage so every tool's errors land structured; M34 turns daimon into a 3-call agent surface (overview → try-fix → focus); M35 ships keyboard / logs / ribbon polish; M36 broadens auto-heal with four new doctor rules and opt-in health-probe path discovery.

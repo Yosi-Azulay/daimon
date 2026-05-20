@@ -6,8 +6,9 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 import { spawn, spawnSync } from 'node:child_process';
 import type { Registry } from '../registry.js';
-import type { AppHealth, AppSummary, AppStatus } from '../types.js';
+import type { AppEvent, AppHealth, AppSummary, AppStatus } from '../types.js';
 import LogPane from './LogPane.js';
+import { computeRibbon, renderRibbon } from './ribbon.js';
 
 function openUrl(url: string): void {
   try {
@@ -64,16 +65,28 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   const [tagInput, setTagInput] = useState('');
   const [editing, setEditing] = useState<{ name: string; field: 'command' | 'port' | 'env'; cmd: string; port: string; env: string } | null>(null);
   const [, setTick] = useState(0);
+  const [chord, setChord] = useState<'g' | null>(null);
+  const [filterText, setFilterText] = useState('');
+  const [filterPicking, setFilterPicking] = useState(false);
+  const [restartConfirm, setRestartConfirm] = useState<string | null>(null);
+  const [orchestrateProfile, setOrchestrateProfile] = useState('');
+  const [orchestrateAsking, setOrchestrateAsking] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [events, setEvents] = useState<AppEvent[]>(registry.events({ sinceMs: 60 * 60 * 1000 }));
 
   useEffect(() => {
     const onChange = () => setApps(registry.list());
+    const onEvent = () => setEvents(registry.events({ sinceMs: 60 * 60 * 1000 }));
     registry.on('change', onChange);
+    registry.on('event', onEvent);
     const interval = setInterval(() => {
       setApps(registry.list());
+      setEvents(registry.events({ sinceMs: 60 * 60 * 1000 }));
       setTick(t => t + 1);
     }, 1000);
     return () => {
       registry.off('change', onChange);
+      registry.off('event', onEvent);
       clearInterval(interval);
     };
   }, [registry]);
@@ -102,6 +115,37 @@ export default function App({ registry, apiPort, onQuit }: Props) {
       if (input && !key.ctrl) setTagInput(s => s + input);
       return;
     }
+    if (filterPicking) {
+      if (key.escape) { setFilterPicking(false); return; }
+      if (key.return) { setFilterPicking(false); return; }
+      if (key.backspace || key.delete) { setFilterText(s => s.slice(0, -1)); return; }
+      if (input && !key.ctrl) setFilterText(s => s + input);
+      return;
+    }
+    if (orchestrateAsking) {
+      if (key.escape) { setOrchestrateAsking(false); setOrchestrateProfile(''); return; }
+      if (key.return) {
+        const profile = orchestrateProfile.trim();
+        setOrchestrateAsking(false);
+        setOrchestrateProfile('');
+        if (profile) void runOrchestrate(profile);
+        return;
+      }
+      if (key.backspace || key.delete) { setOrchestrateProfile(s => s.slice(0, -1)); return; }
+      if (input && !key.ctrl) setOrchestrateProfile(s => s + input);
+      return;
+    }
+    if (restartConfirm) {
+      if (input === 'y' || input === 'Y') {
+        const name = restartConfirm;
+        setRestartConfirm(null);
+        void registry.restart(name);
+        flashStatus(`restarted ${name}`);
+      } else if (input === 'n' || input === 'N' || key.escape) {
+        setRestartConfirm(null);
+      }
+      return;
+    }
     if (input === 'q' || (key.ctrl && input === 'c')) {
       onQuit();
       exit();
@@ -109,12 +153,23 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     }
     if (apps.length === 0) return;
 
-    if (key.upArrow) {
+    if (chord === 'g') {
+      setChord(null);
+      const c = input.toLowerCase();
+      if (c === 'a') flashStatus('view: apps (only TUI view)');
+      else if (c === 'e') flashStatus('view: errors — selected app errors shown in detail pane');
+      else if (c === 'v') flashStatus('view: events — recent registry events shown in log pane');
+      else if (c === 's') flashStatus('view: settings — edit `daimon.config.json`');
+      else if (c === 'n') flashStatus('view: sessions — `daimon record` to toggle recording');
+      return;
+    }
+
+    if (key.upArrow || input === 'k') {
       setSelected(s => Math.max(0, s - 1));
       setLogScroll(0);
       return;
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       setSelected(s => Math.min(apps.length - 1, s + 1));
       setLogScroll(0);
       return;
@@ -123,9 +178,14 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     const current = apps[selected];
     if (!current) return;
 
+    if (input === 'g') { setChord('g'); setTimeout(() => setChord(c => (c === 'g' ? null : c)), 1200); return; }
+    if (input === '/') { setFilterPicking(true); return; }
     if (input === 's') void registry.start(current.name);
-    else if (input === 'x') void registry.stop(current.name);
-    else if (input === 'r') void registry.restart(current.name);
+    else if (input === 'S') void registry.stop(current.name);
+    else if (input === 'r') setRestartConfirm(current.name);
+    else if (input === 'f') { void runFocus(current.name); }
+    else if (input === 'x') void runTryFix(current.name);
+    else if (input === 'O') { setOrchestrateAsking(true); }
     else if (input === 'L') setFullLog(true);
     else if (input === 't') { setTagPicking(true); setTagInput(tagFilter.join(' ')); }
     else if (input === 'e') {
@@ -181,9 +241,67 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     else if (key.pageDown) setLogScroll(s => Math.max(0, s - 5));
   });
 
-  const visibleApps = tagFilter.length === 0
+  const flashStatus = (msg: string) => {
+    setStatusMsg(msg);
+    setTimeout(() => setStatusMsg(m => (m === msg ? null : m)), 4000);
+  };
+
+  const runTryFix = async (name: string) => {
+    flashStatus(`try-fix ${name}…`);
+    try {
+      const { runAutoFix, ALL_AUTO_FIX } = await import('../autoFix.js');
+      const cfg = registry.getConfig();
+      const permitted = (cfg.doctor?.autoFix?.permitted as any) ?? ALL_AUTO_FIX;
+      const r = await runAutoFix({ permitted, dryRun: false });
+      await registry.restart(name);
+      const w = await registry.waitFor(name, 'healthy', 60000);
+      flashStatus(`try-fix ${name}: ${w.timedOut ? 'timeout' : 'reached'} · fixed ${r.ran.length}`);
+    } catch (err: any) {
+      flashStatus(`try-fix ${name} failed: ${err?.message ?? err}`);
+    }
+  };
+
+  const runFocus = async (name: string) => {
+    flashStatus(`focus ${name} until stable…`);
+    try {
+      const start = Date.now();
+      let lastEvAt = Date.now();
+      const onEv = (ev: AppEvent) => { if (ev.app === name) lastEvAt = Date.now(); };
+      registry.on('event', onEv);
+      try {
+        while (Date.now() - start < 180_000) {
+          const s = registry.summary(name);
+          if (s && s.status === 'serving' && s.health === 'healthy' && Date.now() - lastEvAt >= 5000) {
+            flashStatus(`focus ${name}: stable after ${Math.round((Date.now() - start) / 1000)}s`);
+            return;
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
+      } finally { registry.off('event', onEv); }
+      flashStatus(`focus ${name}: timed out`);
+    } catch (err: any) {
+      flashStatus(`focus ${name} failed: ${err?.message ?? err}`);
+    }
+  };
+
+  const runOrchestrate = async (profile: string) => {
+    flashStatus(`orchestrate ${profile}…`);
+    try {
+      const { orchestrateProfile: doOrchestrate } = await import('../orchestrate.js');
+      const r = await doOrchestrate(registry, registry.getConfig(), { profile, goal: 'healthy', timeoutMs: 300_000 });
+      if ((r as any).error) { flashStatus(`orchestrate ${profile}: ${(r as any).error}`); return; }
+      const ok = (r as any).allReached;
+      flashStatus(`orchestrate ${profile}: ${ok ? 'all reached' : 'some failing'} · ${Math.round((r as any).totalMs / 1000)}s`);
+    } catch (err: any) {
+      flashStatus(`orchestrate ${profile} failed: ${err?.message ?? err}`);
+    }
+  };
+
+  const filterLc = filterText.trim().toLowerCase();
+  const visibleApps = (tagFilter.length === 0
     ? apps
-    : apps.filter(a => tagFilter.every(t => a.tags.includes(t)));
+    : apps.filter(a => tagFilter.every(t => a.tags.includes(t))))
+    .filter(a => !filterLc || a.name.toLowerCase().includes(filterLc));
   const current = visibleApps[Math.min(selected, Math.max(0, visibleApps.length - 1))];
   const state = current ? registry.getState(current.name) : null;
   const recentLogs = state
@@ -210,17 +328,25 @@ export default function App({ registry, apiPort, onQuit }: Props) {
         <Box flexDirection="column" width={leftWidth} borderStyle="single" borderColor="gray" paddingX={1}>
           <Text bold>Apps {tagFilter.length ? <Text dimColor>(tags: {tagFilter.join(', ')})</Text> : null}</Text>
           {visibleApps.length === 0 ? (
-            <Text dimColor>{apps.length === 0 ? '(no apps discovered)' : '(no apps match tag filter)'}</Text>
+            <Text dimColor>{apps.length === 0 ? '(no apps discovered)' : '(no apps match filter)'}</Text>
           ) : visibleApps.map((a, i) => {
             const sel = i === selected;
+            const ticks = computeRibbon(events, a.name);
+            const ribbon = renderRibbon(ticks);
             return (
-              <Box key={a.name}>
-                <Text color={sel ? 'cyan' : undefined}>{sel ? '▸ ' : '  '}</Text>
-                <Text color={sel ? 'cyan' : undefined}>{((registry.getState(a.name)?.sessionOverrides ? '*' : '') + a.name).padEnd(20).slice(0, 20)}</Text>
-                <Text color={STATUS_COLORS[a.status]}> {a.status.padEnd(9)}</Text>
-                <Text color={HEALTH_COLORS[a.health]}>{a.status === 'serving' ? '●' : ' '}</Text>
-                <Text dimColor>{a.port ? ` :${a.port}` : ''}</Text>
-                {cols >= 100 && a.cpu != null ? <Text dimColor>  {String(a.cpu).padStart(5)}% {String(a.memMB ?? 0).padStart(5)}MB</Text> : null}
+              <Box key={a.name} flexDirection="column">
+                <Box>
+                  <Text color={sel ? 'cyan' : undefined}>{sel ? '▸ ' : '  '}</Text>
+                  <Text color={sel ? 'cyan' : undefined}>{((registry.getState(a.name)?.sessionOverrides ? '*' : '') + a.name).padEnd(20).slice(0, 20)}</Text>
+                  <Text color={STATUS_COLORS[a.status]}> {a.status.padEnd(9)}</Text>
+                  <Text color={HEALTH_COLORS[a.health]}>{a.status === 'serving' ? '●' : ' '}</Text>
+                  <Text dimColor>{a.port ? ` :${a.port}` : ''}</Text>
+                  {cols >= 100 && a.cpu != null ? <Text dimColor>  {String(a.cpu).padStart(5)}% {String(a.memMB ?? 0).padStart(5)}MB</Text> : null}
+                </Box>
+                <Box>
+                  <Text dimColor>    </Text>
+                  <Text dimColor>{ribbon}</Text>
+                </Box>
               </Box>
             );
           })}
@@ -305,7 +431,23 @@ export default function App({ registry, apiPort, onQuit }: Props) {
             </Box>
           </Box>
         ) : null}
-        <Text dimColor>[s] start  [x] stop  [r] restart  [o] open URL  [t] tag filter  [e] edit  [E] cycle env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [PgUp/PgDn] scroll  [q] quit</Text>
+        {restartConfirm ? (
+          <Box borderStyle="round" borderColor="yellow" paddingX={1}>
+            <Text color="yellow" bold>Restart {restartConfirm}? </Text>
+            <Text dimColor>[y]es  [n]o / Esc</Text>
+          </Box>
+        ) : null}
+        {filterPicking ? (
+          <Text>filter (Enter to apply, Esc to clear): <Text color="cyan">{filterText}</Text></Text>
+        ) : null}
+        {orchestrateAsking ? (
+          <Box borderStyle="round" borderColor="cyan" paddingX={1}>
+            <Text bold color="cyan">orchestrate profile (Enter to run, Esc to cancel): </Text>
+            <Text color="cyan">{orchestrateProfile}</Text>
+          </Box>
+        ) : null}
+        {statusMsg ? <Text color="cyan">[i] {statusMsg}</Text> : null}
+        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  [O] orchestrate  [o] open URL  [/] filter  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [q] quit</Text>
       </Box>
     </Box>
   );
