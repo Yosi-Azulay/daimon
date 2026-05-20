@@ -4,6 +4,10 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-20
+
+Strategic theme: **Every signal becomes actionable.** M33 deepens parser coverage so every tool's errors land structured; M34 turns daimon into a 3-call agent surface (overview → try-fix → focus); M35 ships keyboard / logs / ribbon polish; M36 broadens auto-heal with four new doctor rules and opt-in health-probe path discovery.
+
 ### Added (M33) — Parser depth
 
 - **P1 — Parser corpus + tests.** New `test/fixtures/parsers/*.log` for Vite, Storybook, Jest, Nx, Angular esbuild, webpack, and Node native, each paired with a `.expected.json` of `{tool, status, errors:[{file,line,col,code}]}`. New `test/parser-corpus.test.mjs` replays every fixture through `parseLine` and asserts ≥95% capture rate on file-bearing lines plus tool tagging. Captures parser regressions in CI instead of via screenshots.

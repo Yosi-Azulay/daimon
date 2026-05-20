@@ -1,6 +1,6 @@
 {
   "name": "daimon",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Local dev-server manager for Angular/Nx/Vite/Storybook — TUI, loopback HTTP API, JSON CLI, and MCP server for Claude Code",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Yosi Azulay (https://flycotech.com)",
