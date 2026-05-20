@@ -6,14 +6,14 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 interface NavEntry { path: string; icon: string; label: string; shortcut: string; }
 
 const ENTRIES: NavEntry[] = [
-  { path: '/',         icon: 'apps',                 label: 'Apps',    shortcut: 'g a' },
-  { path: '/events',   icon: 'timeline',             label: 'Events',  shortcut: 'g e' },
-  { path: '/logs',     icon: 'terminal',             label: 'Logs',    shortcut: 'g l' },
-  { path: '/errors',   icon: 'error',                label: 'Errors',  shortcut: 'g r' },
-  { path: '/doctor',   icon: 'medical_services',     label: 'Doctor',  shortcut: 'g d' },
-  { path: '/config',   icon: 'tune',                 label: 'Config',  shortcut: 'g c' },
-  { path: '/history',  icon: 'query_stats',          label: 'History', shortcut: 'g h' },
-  { path: '/sessions', icon: 'radio_button_checked', label: 'Sessions', shortcut: 'g s' },
+  { path: '/',         icon: 'apps',                 label: 'Apps',     shortcut: 'g a' },
+  { path: '/errors',   icon: 'error',                label: 'Errors',   shortcut: 'g e' },
+  { path: '/logs',     icon: 'terminal',             label: 'Logs',     shortcut: 'g l' },
+  { path: '/config',   icon: 'tune',                 label: 'Settings', shortcut: 'g s' },
+  { path: '/doctor',   icon: 'medical_services',     label: 'Doctor',   shortcut: 'g d' },
+  { path: '/events',   icon: 'timeline',             label: 'Events',   shortcut: 'g v' },
+  { path: '/history',  icon: 'query_stats',          label: 'History',  shortcut: 'g h' },
+  { path: '/sessions', icon: 'radio_button_checked', label: 'Sessions', shortcut: 'g n' },
 ];
 
 const KEY = 'daimon.nav.expanded';
