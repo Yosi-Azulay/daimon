@@ -55,6 +55,7 @@ function defaultConfig(): AppmanConfig {
     output: { format: 'compact', ndjson: false },
     doctor: { autoFix: { onInit: false, permitted: ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db', 'port-conflict-pred', 'node-version-mismatch', 'orphan-node-modules', 'orphan-venv', 'orphan-bundler-cache', 'orphan-cargo-target', 'dead-search-root'] } },
     dashboard: { theme: 'auto', density: 'comfortable' },
+    errorRetention: { maxAgeMs: 86400000 },
   };
 }
 
@@ -199,6 +200,10 @@ function validate(raw: unknown, source: string): AppmanConfig {
     const d = obj.dashboard as Partial<AppmanConfig['dashboard']>;
     if (d.theme === 'auto' || d.theme === 'light' || d.theme === 'dark') cfg.dashboard.theme = d.theme;
     if (d.density === 'comfortable' || d.density === 'compact') cfg.dashboard.density = d.density;
+  }
+  if (obj.errorRetention && typeof obj.errorRetention === 'object') {
+    const er = obj.errorRetention as Partial<AppmanConfig['errorRetention']>;
+    if (typeof er.maxAgeMs === 'number' && er.maxAgeMs > 0) cfg.errorRetention.maxAgeMs = er.maxAgeMs;
   }
 
   return cfg;

@@ -4,6 +4,16 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (M42) — Reliability pass
+
+- **F1 — Parser fuzz tests.** New `test/parser-fuzz.test.mjs` feeds 2,000 deterministically-random mixed-ANSI / multibyte / lone-surrogate / multiline-fragment lines into `parseLine`. Asserts no exceptions, no >10ms slow tail above 2% of iterations, and total time <10s per run. Two regression cases cover empty / whitespace / ANSI-only input and lone surrogate halves.
+- **F2 — History.db stress test.** New `test/history-stress.test.mjs` inserts 100,000 events + 50,000 compile rows + 10,000 bundle rows into a temp sqlite (flushing in 5k-row batches via a new `History._flushForTest()` escape hatch), then queries `/api/history/trends` for every (metric × window × app) combination across three passes. Asserts trends p95 <50ms, p99 <200ms, db size <50MB.
+- **F4 — Lock-file contention.** New `test/lock-contention.test.mjs` isolates `~/.daimon` via temp `HOME`/`USERPROFILE`, then asserts (1) `readLock` tolerates missing/corrupt files, (2) it prunes stale locks pointing at dead PIDs, and (3) parallel `writeLock` calls leave exactly one parseable JSON lock — atomic rename never produces a partial payload.
+- **F5 — Error-map TTL.** New optional `errorRetention.maxAgeMs` config (default `86400000` — 24h) prunes `AppState.errors` entries older than `maxAgeMs` and not seen since. A new `Registry.pruneOldErrors()` walks every app's error map; the daemon wires it on an hourly tick in `main.ts`. Prevents unbounded growth in long-running daemons.
+- **F6 — Log buffer cap audit.** New regression in `test/reliability.test.mjs` exercises the per-app `logBuffer` with a 10,000-line burst and asserts the rolling window stays at `LOG_BUFFER_MAX` and contains exactly the latest 500 lines.
+- **F3 — Daemon crash auto-recovery soak (manual).** Documented in `test/SOAK.md` — 30-iteration kill-and-respawn loop with assertions on orphan PIDs and stale-lock pruning. Not run in CI (would dominate suite budget).
+- **F7 — Memory soak (manual).** Documented in `test/SOAK.md` — 24h procedure with 5 simulated apps, capturing baseline RSS via `daimon self` and the new M43 `self_metrics` table. Acceptance: <10% RSS growth over 24h.
+
 ### Added (M41) — CLI polish
 
 - **C1 — Unified help system.** `daimon --help` now groups commands by category (lifecycle / queries / agent verbs / introspection / config / claude / plugin). Per-command help is available as `daimon <verb> --help` (or `daimon help <verb>`) and follows a single template — synopsis, description, options table, examples, exit codes — driven entirely by `cliSurface.ts` so help, completion, and skill text cannot drift.

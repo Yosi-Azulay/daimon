@@ -111,10 +111,15 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   const apiPort = process.env.DAIMON_PORT ? Number(process.env.DAIMON_PORT) : config.apiPort;
   const headless = !!opts.headless || !!config.headless || process.argv.includes('--headless');
 
+  const errorTtlTick = setInterval(() => {
+    try { registry.pruneOldErrors(); } catch {}
+  }, 60 * 60 * 1000);
+
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    try { clearInterval(errorTtlTick); } catch {}
     try { health.stop(); } catch {}
     try { usage.stop(); } catch {}
     try { restarter.stop(); } catch {}

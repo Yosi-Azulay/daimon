@@ -362,6 +362,10 @@ export class History {
     };
   }
 
+  _flushForTest(): void {
+    this.flush();
+  }
+
   quickCheck(): boolean {
     if (!this.db) return false;
     try {

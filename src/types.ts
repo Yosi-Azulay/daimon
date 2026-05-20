@@ -63,6 +63,10 @@ export interface DoctorConfig {
   autoFix: DoctorAutoFixConfig;
 }
 
+export interface ErrorRetentionConfig {
+  maxAgeMs: number;
+}
+
 export interface DashboardConfig {
   theme: 'auto' | 'light' | 'dark';
   density: 'comfortable' | 'compact';
@@ -100,6 +104,7 @@ export interface AppmanConfig {
   output: OutputConfig;
   doctor: DoctorConfig;
   dashboard: DashboardConfig;
+  errorRetention: ErrorRetentionConfig;
 }
 
 export interface SearchRoot {

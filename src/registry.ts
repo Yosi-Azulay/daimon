@@ -127,6 +127,20 @@ export class Registry extends EventEmitter {
     return [...this.entries.keys()];
   }
 
+  pruneOldErrors(now = Date.now()): number {
+    const maxAgeMs = this.config.errorRetention?.maxAgeMs ?? 86400000;
+    let removed = 0;
+    for (const entry of this.entries.values()) {
+      for (const [hash, e] of entry.state.errors) {
+        if (now - e.lastSeen > maxAgeMs) {
+          entry.state.errors.delete(hash);
+          removed++;
+        }
+      }
+    }
+    return removed;
+  }
+
   list(): AppSummary[] {
     return this.names().map(n => this.summary(n)!);
   }

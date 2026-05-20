@@ -1,0 +1,90 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { History } from '../dist/history.js';
+
+function tempDbPath() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daimon-stress-'));
+  return path.join(dir, 'history.db');
+}
+
+function pct(arr, p) {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p));
+  return sorted[idx];
+}
+
+test('history.db stress: 100k events + 50k compiles + 10k bundles; trends p95 < 50ms p99 < 200ms; db < 50MB', () => {
+  const dbPath = tempDbPath();
+  const h = new History({ enabled: true, path: dbPath, retentionDays: 365 });
+
+  // Force open db, then bulk-insert via the public surface but flush eagerly so we don't accumulate
+  // hundreds of MB in the queue.
+  const apps = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  // Events: 100k. Mix of status / error-new / error-recur / restarts.
+  const types = ['status', 'error-new', 'error-recur'];
+  const states = ['serving', 'compiling', 'error', 'starting'];
+  for (let i = 0; i < 100_000; i++) {
+    const ts = now - Math.floor((i / 100_000) * dayMs * 30);
+    h.recordEvent({
+      ts,
+      app: apps[i % apps.length],
+      type: types[i % types.length],
+      from: states[i % states.length],
+      to: states[(i + 1) % states.length],
+      message: i % 7 === 0 ? `err message ${i % 13}` : undefined,
+    });
+    if (i % 5000 === 0) h._flushForTest?.();
+  }
+  // Compiles: 50k. Always small ms numbers so sqlite stays compact.
+  for (let i = 0; i < 50_000; i++) {
+    const ts = now - Math.floor((i / 50_000) * dayMs * 30);
+    h.recordCompile(apps[i % apps.length], 50 + (i % 5000), ts);
+    if (i % 5000 === 0) h._flushForTest?.();
+  }
+  // Bundles: 10k.
+  for (let i = 0; i < 10_000; i++) {
+    const ts = now - Math.floor((i / 10_000) * dayMs * 30);
+    h.recordBundle(apps[i % apps.length], 200 + (i % 100), 50 + (i % 30), 12, ts);
+    if (i % 2000 === 0) h._flushForTest?.();
+  }
+  h._flushForTest?.();
+
+  // Query each metric/window combo, capturing wall-time.
+  const samples = [];
+  const windows = [
+    { sinceMs: dayMs, bucketMs: 60 * 60 * 1000 },        // 24h hour buckets
+    { sinceMs: 7 * dayMs, bucketMs: dayMs },             // 7d day buckets
+    { sinceMs: 30 * dayMs, bucketMs: dayMs },            // 30d day buckets
+  ];
+  const metrics = ['compile', 'bundle', 'errors', 'restarts'];
+  for (let pass = 0; pass < 3; pass++) {
+    for (const w of windows) {
+      for (const m of metrics) {
+        for (const a of apps) {
+          const t0 = performance.now();
+          const r = h.trends({ app: a, metric: m, sinceMs: w.sinceMs, bucketMs: w.bucketMs });
+          const dt = performance.now() - t0;
+          samples.push(dt);
+          assert.ok(Array.isArray(r.points), `trends(${m}) should return points`);
+        }
+      }
+    }
+  }
+
+  const p95 = pct(samples, 0.95);
+  const p99 = pct(samples, 0.99);
+  assert.ok(p95 < 50, `trends p95 should be <50ms, got ${p95.toFixed(1)}ms`);
+  assert.ok(p99 < 200, `trends p99 should be <200ms, got ${p99.toFixed(1)}ms`);
+
+  const dbBytes = fs.statSync(dbPath).size;
+  assert.ok(dbBytes < 50 * 1024 * 1024, `db size should be <50MB, got ${(dbBytes / 1024 / 1024).toFixed(1)}MB`);
+
+  h.close();
+});
