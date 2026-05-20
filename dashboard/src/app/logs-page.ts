@@ -262,7 +262,6 @@ export class LogsPageComponent implements OnChanges, OnDestroy {
   readonly useRegex = signal(false);
   readonly paused = signal(false);
   readonly stuckToBottom = signal(true);
-  readonly regexError = signal<string | null>(null);
 
   private buffered: LogRow[] = [];
   private stop?: () => void;
@@ -270,26 +269,27 @@ export class LogsPageComponent implements OnChanges, OnDestroy {
 
   readonly currentApp = computed(() => this.name ? this.api.byName(this.name) : undefined);
 
-  private readonly compiledFilter = computed<((s: string) => boolean) | null>(() => {
+  // Single derived pair so the predicate and the user-facing regex error are
+  // computed together without ever writing a signal from inside `computed`.
+  private readonly filterState = computed<{ pred: ((s: string) => boolean) | null; error: string | null }>(() => {
     const raw = this.filter();
-    if (!raw) { this.regexError.set(null); return null; }
+    if (!raw) return { pred: null, error: null };
     if (!this.useRegex()) {
-      this.regexError.set(null);
       const needle = raw.toLowerCase();
-      return (s: string) => s.toLowerCase().includes(needle);
+      return { pred: (s: string) => s.toLowerCase().includes(needle), error: null };
     }
     try {
       const rx = new RegExp(raw, 'i');
-      this.regexError.set(null);
-      return (s: string) => rx.test(s);
+      return { pred: (s: string) => rx.test(s), error: null };
     } catch (e: any) {
-      this.regexError.set(e?.message ?? 'invalid regex');
-      return null;
+      return { pred: null, error: e?.message ?? 'invalid regex' };
     }
   });
 
+  readonly regexError = computed<string | null>(() => this.filterState().error);
+
   readonly filtered = computed<LogRow[]>(() => {
-    const pred = this.compiledFilter();
+    const { pred } = this.filterState();
     const rows = this.lines();
     if (!pred) return rows;
     return rows.filter(r => pred(r.line));
