@@ -1,0 +1,17 @@
+=> Booting Puma
+=> Rails 7.1.3 application starting in development
+=> Run `bin/rails server --help` for more startup options
+Puma starting in single mode...
+* Puma version: 6.4.0
+* Min threads: 5
+* Max threads: 5
+* Environment: development
+* PID: 12345
+* Listening on tcp://127.0.0.1:3000
+Use Ctrl-C to stop
+
+Started GET "/widgets" for 127.0.0.1 at 2026-05-20 10:00:01 +0000
+ActionController::RoutingError (No route matches [GET] "/missing"):
+NameError (undefined local variable or method `foo' for an instance of WidgetsController):
+
+app/controllers/widgets_controller.rb:14:in `show'

@@ -1,0 +1,7 @@
+{
+  "tool": "rails",
+  "status": "error",
+  "errors": [
+    { "file": "app/controllers/widgets_controller.rb", "line": 14 }
+  ]
+}

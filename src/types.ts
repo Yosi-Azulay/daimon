@@ -117,10 +117,14 @@ export interface AppOverride {
   healthProbePath?: string;
 }
 
+export type ServerProfile =
+  | 'angular' | 'nx' | 'vite' | 'storybook'
+  | 'django' | 'rails' | 'fastapi' | 'go-air' | 'rust-trunk';
+
 export interface DiscoveredApp {
   name: string;
   workspaceRoot: string;
-  workspaceType: 'nx' | 'angular' | 'vite' | 'storybook';
+  workspaceType: 'nx' | 'angular' | 'vite' | 'storybook' | 'polyglot';
   command: string;
   hidden: boolean;
   pinnedPort?: number;
@@ -128,6 +132,7 @@ export interface DiscoveredApp {
   tags: string[];
   tasks?: string[];
   workspaceLabel?: string;
+  serverProfile?: ServerProfile;
 }
 
 export type ParserTool =
@@ -138,7 +143,13 @@ export type ParserTool =
   | 'nx'
   | 'webpack'
   | 'node'
-  | 'typescript';
+  | 'typescript'
+  | 'django'
+  | 'rails'
+  | 'fastapi'
+  | 'go-air'
+  | 'rust-trunk'
+  | 'python';
 
 export interface ParsedError {
   file?: string;

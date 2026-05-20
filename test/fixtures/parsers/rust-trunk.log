@@ -1,0 +1,10 @@
+2026-05-20T10:00:00.000Z  INFO 📦 starting build
+2026-05-20T10:00:00.500Z  INFO spawning asset pipelines
+   Compiling my-app v0.1.0 (/srv/app)
+error[E0425]: cannot find value `foo` in this scope
+  --> src/main.rs:12:5
+   |
+12 |     foo()
+   |     ^^^ not found in this scope
+
+error: aborting due to 1 previous error

@@ -1,0 +1,7 @@
+{
+  "tool": "rust-trunk",
+  "status": "error",
+  "errors": [
+    { "file": "src/main.rs", "line": 12, "col": 5 }
+  ]
+}

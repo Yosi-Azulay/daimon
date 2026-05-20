@@ -1,0 +1,7 @@
+{
+  "tool": "go-air",
+  "status": "error",
+  "errors": [
+    { "file": "server.go", "line": 42, "col": 13 }
+  ]
+}

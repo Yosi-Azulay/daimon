@@ -14,6 +14,9 @@ export type AutoFixName =
   | 'port-conflict-pred'
   | 'node-version-mismatch'
   | 'orphan-node-modules'
+  | 'orphan-venv'
+  | 'orphan-bundler-cache'
+  | 'orphan-cargo-target'
   | 'dead-search-root';
 
 export const ALL_AUTO_FIX: AutoFixName[] = [
@@ -24,6 +27,9 @@ export const ALL_AUTO_FIX: AutoFixName[] = [
   'port-conflict-pred',
   'node-version-mismatch',
   'orphan-node-modules',
+  'orphan-venv',
+  'orphan-bundler-cache',
+  'orphan-cargo-target',
   'dead-search-root',
 ];
 
@@ -254,6 +260,119 @@ function fixOrphanNodeModules(): string {
   return `would suggest: ${suggestions}. Daimon does not run package managers on your behalf — run the command(s) yourself. To undo: nothing was changed.`;
 }
 
+function configuredRoots(): string[] {
+  const r = loadConfig();
+  if (r.kind !== 'loaded') return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const sr of r.config.searchRoots) {
+    const p = typeof sr === 'string' ? sr : sr?.path;
+    if (!p || !fs.existsSync(p) || seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
+}
+
+function detectOrphanVenv(): { detected: boolean; description: string; entries?: { root: string; reason: 'missing' | 'stale' }[] } {
+  const roots = configuredRoots();
+  if (!roots.length) return { detected: false, description: 'no searchRoots resolved on disk' };
+  const entries: { root: string; reason: 'missing' | 'stale' }[] = [];
+  for (const root of roots) {
+    const pyproject = path.join(root, 'pyproject.toml');
+    const reqTxt = path.join(root, 'requirements.txt');
+    const managePy = path.join(root, 'manage.py');
+    const hasPyMarker = fs.existsSync(pyproject) || fs.existsSync(reqTxt) || fs.existsSync(managePy);
+    if (!hasPyMarker) continue;
+    const venvPath = ['.venv', 'venv', 'env'].map(d => path.join(root, d)).find(p => fs.existsSync(p));
+    if (!venvPath) { entries.push({ root, reason: 'missing' }); continue; }
+    const sourceMtimes: number[] = [];
+    for (const f of [pyproject, reqTxt]) {
+      if (fs.existsSync(f)) {
+        try { sourceMtimes.push(fs.statSync(f).mtimeMs); } catch {}
+      }
+    }
+    if (sourceMtimes.length) {
+      try {
+        const venvMtime = fs.statSync(venvPath).mtimeMs;
+        if (Math.max(...sourceMtimes) > venvMtime + 1000) entries.push({ root, reason: 'stale' });
+      } catch {}
+    }
+  }
+  if (!entries.length) return { detected: false, description: 'every Python searchRoot has a fresh venv (or no Python markers)' };
+  const summary = entries.map(e => `${e.reason}: ${e.root}`).join(' · ');
+  return { detected: true, description: `venv issues — ${summary}`, entries };
+}
+
+function fixOrphanVenv(): string {
+  const det = detectOrphanVenv();
+  if (!det.detected || !det.entries) return 'nothing to suggest';
+  const suggestions = det.entries.map(e => `(cd "${e.root}" && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt)`).join(' && ');
+  return `would suggest: ${suggestions}. Daimon does not run pip on your behalf — run the command(s) yourself. To undo: nothing was changed.`;
+}
+
+function detectOrphanBundlerCache(): { detected: boolean; description: string; entries?: { root: string; reason: 'missing' | 'stale' }[] } {
+  const roots = configuredRoots();
+  if (!roots.length) return { detected: false, description: 'no searchRoots resolved on disk' };
+  const entries: { root: string; reason: 'missing' | 'stale' }[] = [];
+  for (const root of roots) {
+    const gemfile = path.join(root, 'Gemfile');
+    if (!fs.existsSync(gemfile)) continue;
+    const lockf = path.join(root, 'Gemfile.lock');
+    const cachePath = path.join(root, 'vendor', 'bundle');
+    const altCachePath = path.join(root, '.bundle');
+    const cache = fs.existsSync(cachePath) ? cachePath : fs.existsSync(altCachePath) ? altCachePath : null;
+    if (!cache) { entries.push({ root, reason: 'missing' }); continue; }
+    if (fs.existsSync(lockf)) {
+      try {
+        const lockMtime = fs.statSync(lockf).mtimeMs;
+        const cacheMtime = fs.statSync(cache).mtimeMs;
+        if (lockMtime > cacheMtime + 1000) entries.push({ root, reason: 'stale' });
+      } catch {}
+    }
+  }
+  if (!entries.length) return { detected: false, description: 'every Ruby searchRoot has a fresh bundle cache (or no Gemfile)' };
+  const summary = entries.map(e => `${e.reason}: ${e.root}`).join(' · ');
+  return { detected: true, description: `bundler cache issues — ${summary}`, entries };
+}
+
+function fixOrphanBundlerCache(): string {
+  const det = detectOrphanBundlerCache();
+  if (!det.detected || !det.entries) return 'nothing to suggest';
+  const suggestions = det.entries.map(e => `(cd "${e.root}" && bundle install)`).join(' && ');
+  return `would suggest: ${suggestions}. Daimon does not run bundle install on your behalf — run the command(s) yourself. To undo: nothing was changed.`;
+}
+
+function detectOrphanCargoTarget(): { detected: boolean; description: string; entries?: { root: string; reason: 'missing' | 'stale' }[] } {
+  const roots = configuredRoots();
+  if (!roots.length) return { detected: false, description: 'no searchRoots resolved on disk' };
+  const entries: { root: string; reason: 'missing' | 'stale' }[] = [];
+  for (const root of roots) {
+    const cargoToml = path.join(root, 'Cargo.toml');
+    if (!fs.existsSync(cargoToml)) continue;
+    const lockf = path.join(root, 'Cargo.lock');
+    const target = path.join(root, 'target');
+    if (!fs.existsSync(target)) { entries.push({ root, reason: 'missing' }); continue; }
+    if (fs.existsSync(lockf)) {
+      try {
+        const lockMtime = fs.statSync(lockf).mtimeMs;
+        const tgtMtime = fs.statSync(target).mtimeMs;
+        if (lockMtime > tgtMtime + 1000) entries.push({ root, reason: 'stale' });
+      } catch {}
+    }
+  }
+  if (!entries.length) return { detected: false, description: 'every Rust searchRoot has a fresh target/ (or no Cargo.toml)' };
+  const summary = entries.map(e => `${e.reason}: ${e.root}`).join(' · ');
+  return { detected: true, description: `cargo target issues — ${summary}`, entries };
+}
+
+function fixOrphanCargoTarget(): string {
+  const det = detectOrphanCargoTarget();
+  if (!det.detected || !det.entries) return 'nothing to suggest';
+  const suggestions = det.entries.map(e => `(cd "${e.root}" && cargo build)`).join(' && ');
+  return `would suggest: ${suggestions}. Daimon does not run cargo on your behalf — run the command(s) yourself. To undo: nothing was changed.`;
+}
+
 function detectDeadSearchRoot(): { detected: boolean; description: string; dead?: string[] } {
   const r = loadConfig();
   if (r.kind !== 'loaded') return { detected: false, description: 'no config loaded' };
@@ -296,6 +415,9 @@ const ROUTINES: Record<AutoFixName, { detect: () => any | Promise<any>; fix: () 
   'port-conflict-pred': { detect: detectPortConflict, fix: fixPortConflict },
   'node-version-mismatch': { detect: detectNodeVersionMismatch, fix: fixNodeVersionMismatch },
   'orphan-node-modules': { detect: detectOrphanNodeModules, fix: fixOrphanNodeModules },
+  'orphan-venv': { detect: detectOrphanVenv, fix: fixOrphanVenv },
+  'orphan-bundler-cache': { detect: detectOrphanBundlerCache, fix: fixOrphanBundlerCache },
+  'orphan-cargo-target': { detect: detectOrphanCargoTarget, fix: fixOrphanCargoTarget },
   'dead-search-root': { detect: detectDeadSearchRoot, fix: fixDeadSearchRoot },
 };
 

@@ -1,0 +1,12 @@
+INFO:     Will watch for changes in these directories: ['/srv/app']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [12345] using StatReload
+INFO:     Started server process [12346]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/srv/app/main.py", line 27, in get_widget
+    return widgets[id]
+KeyError: 'unknown'

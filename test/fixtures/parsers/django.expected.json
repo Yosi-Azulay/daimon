@@ -1,0 +1,7 @@
+{
+  "tool": "python",
+  "status": "error",
+  "errors": [
+    { "file": "/srv/app/myproject/views.py", "line": 42 }
+  ]
+}

@@ -1,0 +1,16 @@
+
+  __    _   ___
+ / /\  | | | |_)
+/_/--\ |_| |_| \_ , built with Go
+
+mkdir /srv/app/tmp
+watching .
+!exclude tmp
+building...
+running...
+GET /widgets serving HTTP on :8080
+
+server.go:42:13: undefined: foo
+panic: runtime error: invalid memory address or nil pointer dereference
+goroutine 1 [running]:
+main.handler(/srv/app/handler.go:18 +0x35)

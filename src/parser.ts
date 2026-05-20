@@ -9,6 +9,15 @@ const SERVING_PATTERNS = [
   /Angular Live Development Server is listening/i,
   /Storybook\s+[\d.]+\s+(?:for\s+\S+\s+)?started/i,
   /VITE\s+v[\d.]+\s+ready/i,
+  /Quit the server with CONTROL-C/i,
+  /Uvicorn running on http/i,
+  /Application startup complete/i,
+  /Puma starting in single mode/i,
+  /Use Ctrl-C to stop/i,
+  /Listening on tcp:\/\//i,
+  /running on http/i,
+  /serving HTTP on/i,
+  /trunk serve.*at/i,
 ];
 
 const COMPILING_PATTERNS = [
@@ -16,6 +25,11 @@ const COMPILING_PATTERNS = [
   /Compilation started/i,
   /Initial chunk files/i,
   /Compiling/i,
+  /Watching for file changes with StatReloader/i,
+  /Performing system checks/i,
+  /watching files for changes/i,
+  /building\.{3}/i,
+  /Compiling \(/i,
 ];
 
 const ERROR_PATTERNS = [
@@ -32,15 +46,31 @@ const ERROR_PATTERNS = [
   /\[plugin:[^\]]+\]/i,
   /^\s*ERR!\s+/,
   /^\s*(?:Uncaught\s+)?(?:Error|TypeError|SyntaxError|ReferenceError|RangeError):\s+/,
+  /^Traceback \(most recent call last\):/,
+  /^\s*[A-Z][a-zA-Z]*Error:\s+/,
+  /^\s*\[error\]\s+/i,
+  /^panic:\s+/,
+  /^thread\s+'[^']+'\s+panicked at/,
+  /^error\[E\d+\]:/,
+  /^\S+\.(?:go|rb|py|rs):\d+:\d+:/,
+  /^\s*[A-Z][a-zA-Z]*\.[A-Z][a-zA-Z]*:\s+/,
+  /^[A-Z][a-zA-Z]+(?:::[A-Z][a-zA-Z]+)+\s*[(:]/,
+  /^[A-Z][a-zA-Z]*Error\s*\(/,
 ];
 
 const TS_CODE_RX = /\berror TS(\d+)/;
 const ESBUILD_TS_RX = /✘\s*\[ERROR\]\s*TS(\d+)/;
-const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+)/;
+const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|py|rb|go|rs)):(\d+):(\d+)/;
 // Stack-trace style: "at handler (D:\\app\\src\\index.ts:42:10)" or "at file:///D:/...:42:10".
-const PAREN_LOCATION_RX = /\(([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+)\)/;
+const PAREN_LOCATION_RX = /\(([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|py|rb|go|rs)):(\d+):(\d+)\)/;
 // TSC report format: "src/foo.ts(10,3): error TS2322: ...".
 const TSC_LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte))\((\d+),(\d+)\)\s*:/;
+// Python traceback line:   File "/path/to/file.py", line 42
+const PY_TRACEBACK_RX = /File\s+"([^"]+\.py)",\s+line\s+(\d+)/;
+// Rust compiler:   --> src/main.rs:42:9
+const RUST_LOCATION_RX = /^\s*-->\s+([^\s:]+\.rs):(\d+):(\d+)/;
+// Rails-style: app/controllers/widgets_controller.rb:14:in `show'
+const RB_LOCATION_RX = /^([^\s:()]+\.rb):(\d+):in\b/;
 // Jest "FAIL src/foo.test.ts" — captures file only.
 const JEST_FAIL_FILE_RX = /^FAIL\s+(\S+\.(?:tsx?|jsx?|mjs|cjs))(?:\s|$)/;
 // Webpack "ERROR in ./src/foo.ts[:L:C]" or "ERROR in ./src/foo.ts L:C" — captures file (and L:C when present).
@@ -59,6 +89,12 @@ const TOOL_RULES: { tool: ParserTool; rx: RegExp }[] = [
   { tool: 'webpack', rx: /\bModule not found:|webpack compiled|webpack-dev-server/i },
   { tool: 'esbuild', rx: /✘\s*\[ERROR\]|esbuild/i },
   { tool: 'typescript', rx: /\berror TS\d+/ },
+  { tool: 'django', rx: /\bdjango\b|StatReloader|manage\.py runserver/i },
+  { tool: 'rails', rx: /\brails\b|Puma starting|Booting (?:Puma|Rails)|ActionController|NameError\s*\(|\.rb:\d+:in/i },
+  { tool: 'fastapi', rx: /\buvicorn\b|fastapi|ASGI/i },
+  { tool: 'go-air', rx: /\bair v\d|building\.{3}|\.go:\d+:\d+/i },
+  { tool: 'rust-trunk', rx: /\btrunk\b|^error\[E\d+\]|^\s*-->\s+\S+\.rs:/i },
+  { tool: 'python', rx: /^Traceback \(most recent call last\):|^\s*File "[^"]+\.py"|[A-Z][a-zA-Z]*Error:\s/ },
   { tool: 'node', rx: /^\s*(?:Uncaught\s+)?(?:Error|TypeError|SyntaxError|ReferenceError|RangeError):/ },
 ];
 
@@ -103,6 +139,20 @@ function parseStructured(line: string): ParsedError {
     } else {
       const jestFail = line.match(JEST_FAIL_FILE_RX);
       if (jestFail) out.file = jestFail[1];
+      else {
+        const rust = line.match(RUST_LOCATION_RX);
+        if (rust) {
+          out.file = rust[1];
+          out.line = Number(rust[2]);
+          out.col = Number(rust[3]);
+        } else {
+          const py = line.match(PY_TRACEBACK_RX);
+          if (py) {
+            out.file = py[1];
+            out.line = Number(py[2]);
+          }
+        }
+      }
     }
   }
   const tool = detectTool(line);
@@ -175,10 +225,10 @@ function parseBundleLine(state: AppState, trimmed: string): boolean {
 }
 
 export function parseLine(state: AppState, line: string): ParseResult | null {
-  // Back-fill: an indented "path:line:col:" line right after an error patches its parsed location.
   const bareLoc = line.match(BARE_LOCATION_LINE_RX);
   const parenLoc = !bareLoc ? line.match(PAREN_LOCATION_RX) : null;
-  const backfill = bareLoc ?? parenLoc;
+  const rustLoc = !bareLoc && !parenLoc ? line.match(RUST_LOCATION_RX) : null;
+  const backfill = bareLoc ?? parenLoc ?? rustLoc;
   if (backfill && state.lastErrorHash) {
     const prevEntry = state.errors.get(state.lastErrorHash);
     if (prevEntry && (!prevEntry.parsed?.file)) {
@@ -188,6 +238,20 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
         line: Number(backfill[2]),
         col: Number(backfill[3]),
       };
+    }
+  } else if (state.lastErrorHash) {
+    const py = line.match(PY_TRACEBACK_RX);
+    const rb = !py ? line.match(RB_LOCATION_RX) : null;
+    if (py || rb) {
+      const prevEntry = state.errors.get(state.lastErrorHash);
+      if (prevEntry && (!prevEntry.parsed?.file)) {
+        const m = (py ?? rb)!;
+        prevEntry.parsed = {
+          ...(prevEntry.parsed ?? { message: prevEntry.message }),
+          file: m[1],
+          line: Number(m[2]),
+        };
+      }
     }
   }
 

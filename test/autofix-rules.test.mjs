@@ -13,3 +13,9 @@ test('M36: original M28 rules still present (backwards compat)', () => {
     assert.ok(ALL_AUTO_FIX.includes(name), `${name} dropped from ALL_AUTO_FIX`);
   }
 });
+
+test('M39: polyglot orphan rules present', () => {
+  for (const name of ['orphan-venv', 'orphan-bundler-cache', 'orphan-cargo-target']) {
+    assert.ok(ALL_AUTO_FIX.includes(name), `${name} missing from ALL_AUTO_FIX`);
+  }
+});

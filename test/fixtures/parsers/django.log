@@ -1,0 +1,16 @@
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+May 20, 2026 - 10:00:00
+Django version 5.0.4, using settings 'myproject.settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CONTROL-C.
+
+Internal Server Error: /api/widgets
+Traceback (most recent call last):
+  File "/srv/app/myproject/views.py", line 42, in widget_list
+    return Widget.objects.get(pk=999)
+  File "/usr/local/lib/python3.11/site-packages/django/db/models/manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+Widget.DoesNotExist: Widget matching query does not exist.

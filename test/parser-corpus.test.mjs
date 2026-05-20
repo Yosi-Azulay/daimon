@@ -48,7 +48,7 @@ function matches(actual, want) {
   return true;
 }
 
-const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'webpack', 'node'];
+const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'webpack', 'node', 'django', 'rails', 'fastapi', 'go-air', 'rust-trunk'];
 
 for (const name of FIXTURES) {
   test(`parser corpus: ${name}`, () => {

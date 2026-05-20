@@ -43,6 +43,107 @@ function bump(stats: DiscoveryStats | undefined, reason: string): void {
   stats.rejected[reason] = (stats.rejected[reason] ?? 0) + 1;
 }
 
+function fileContains(p: string, rx: RegExp): boolean {
+  try { return rx.test(fs.readFileSync(p, 'utf8')); } catch { return false; }
+}
+
+function detectPolyglotApps(
+  root: string,
+  workspaceLabel: string | undefined,
+  found: Map<string, DiscoveredApp>,
+): boolean {
+  const baseName = path.basename(root);
+  let matched = false;
+
+  const managePy = path.join(root, 'manage.py');
+  if (fs.existsSync(managePy) && fileContains(managePy, /\bdjango\b/i)) {
+    const name = baseName;
+    if (!found.has(name)) {
+      found.set(name, {
+        name,
+        workspaceRoot: root,
+        workspaceType: 'polyglot',
+        serverProfile: 'django',
+        command: 'python manage.py runserver',
+        hidden: false,
+        tags: [],
+        workspaceLabel,
+      });
+    }
+    matched = true;
+  }
+
+  const railsBin = path.join(root, 'bin', 'rails');
+  const gemfile = path.join(root, 'Gemfile');
+  if (fs.existsSync(railsBin) && fs.existsSync(gemfile)) {
+    const name = baseName;
+    if (!found.has(name)) {
+      found.set(name, {
+        name,
+        workspaceRoot: root,
+        workspaceType: 'polyglot',
+        serverProfile: 'rails',
+        command: 'bin/rails server',
+        hidden: false,
+        tags: [],
+        workspaceLabel,
+      });
+    }
+    matched = true;
+  }
+
+  const pyproject = path.join(root, 'pyproject.toml');
+  const requirementsTxt = path.join(root, 'requirements.txt');
+  const hasFastapi =
+    (fs.existsSync(pyproject) && fileContains(pyproject, /\bfastapi\b/i)) ||
+    (fs.existsSync(requirementsTxt) && fileContains(requirementsTxt, /\bfastapi\b/i));
+  if (hasFastapi && !found.has(baseName)) {
+    found.set(baseName, {
+      name: baseName,
+      workspaceRoot: root,
+      workspaceType: 'polyglot',
+      serverProfile: 'fastapi',
+      command: 'uvicorn main:app --reload',
+      hidden: false,
+      tags: [],
+      workspaceLabel,
+    });
+    matched = true;
+  }
+
+  const airToml = fs.existsSync(path.join(root, '.air.toml')) || fs.existsSync(path.join(root, 'air.toml'));
+  if (airToml && !found.has(baseName)) {
+    found.set(baseName, {
+      name: baseName,
+      workspaceRoot: root,
+      workspaceType: 'polyglot',
+      serverProfile: 'go-air',
+      command: 'air',
+      hidden: false,
+      tags: [],
+      workspaceLabel,
+    });
+    matched = true;
+  }
+
+  const trunkToml = path.join(root, 'Trunk.toml');
+  if (fs.existsSync(trunkToml) && !found.has(baseName)) {
+    found.set(baseName, {
+      name: baseName,
+      workspaceRoot: root,
+      workspaceType: 'polyglot',
+      serverProfile: 'rust-trunk',
+      command: 'trunk serve',
+      hidden: false,
+      tags: [],
+      workspaceLabel,
+    });
+    matched = true;
+  }
+
+  return matched;
+}
+
 export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): DiscoveredApp[] {
   const found = new Map<string, DiscoveredApp>();
   const warnings: string[] = opts.warnings ?? [];
@@ -86,6 +187,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
           name,
           workspaceRoot: root,
           workspaceType: 'nx',
+          serverProfile: 'nx',
           command: `npx nx serve ${name}`,
           hidden: false,
           tags: [],
@@ -109,6 +211,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
           name,
           workspaceRoot: root,
           workspaceType: 'angular',
+          serverProfile: 'angular',
           command: `npx ng serve ${name}`,
           hidden: false,
           tags: [],
@@ -130,6 +233,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
           name,
           workspaceRoot: root,
           workspaceType: 'vite',
+          serverProfile: 'vite',
           command: `npx vite`,
           hidden: false,
           tags: [],
@@ -147,6 +251,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
             name: subName,
             workspaceRoot: dir,
             workspaceType: 'vite',
+            serverProfile: 'vite',
             command: `npx vite`,
             hidden: false,
             tags: [],
@@ -163,6 +268,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
           name,
           workspaceRoot: root,
           workspaceType: 'storybook',
+          serverProfile: 'storybook',
           command: `npx storybook dev --no-open`,
           hidden: false,
           tags: [],
@@ -173,8 +279,11 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
     }
 
     if (!matched) {
-      warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook: ${root}`);
-      bump(opts.stats, 'no project markers');
+      const polyglotMatched = detectPolyglotApps(root, workspaceLabel, found);
+      if (!polyglotMatched) {
+        warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook/polyglot markers: ${root}`);
+        bump(opts.stats, 'no project markers');
+      }
     }
   }
 

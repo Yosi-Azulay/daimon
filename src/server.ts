@@ -462,17 +462,23 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const warnings: string[] = [];
         const apps = discoverApps(cfg, { warnings, stats });
         const roots = cfg.searchRoots.map(s => typeof s === 'string' ? s : s.path);
+        const polyglot = apps.filter(a => a.workspaceType === 'polyglot');
+        const annotatedApps = apps.map(a => ({ name: a.name, workspaceType: a.workspaceType, serverProfile: a.serverProfile ?? a.workspaceType, workspaceRoot: a.workspaceRoot }));
+        const polyglotHint = polyglot.length > 0
+          ? ` · ${polyglot.length} polyglot app${polyglot.length === 1 ? '' : 's'} found (${[...new Set(polyglot.map(p => p.serverProfile))].join(', ')})`
+          : '';
         sendJson(res, 200, {
           searchRoots: roots,
           scanned: stats.scanned,
           rejected: stats.rejected,
           warnings,
           appsFound: apps.length,
+          apps: annotatedApps,
           suggestion: apps.length === 0
             ? (roots.length === 0
               ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder."
-              : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook.")
-            : `${apps.length} apps discovered`,
+              : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook / manage.py / Gemfile / pyproject.toml (fastapi) / .air.toml / Trunk.toml.")
+            : `${apps.length} apps discovered${polyglotHint}`,
         });
         return;
       }
