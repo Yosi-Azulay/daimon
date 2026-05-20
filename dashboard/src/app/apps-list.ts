@@ -48,6 +48,11 @@ const TAGS_KEY = 'daimon.apps.tags';
           role="button" tabindex="0"
           (keydown.enter)="open.emit(a.name)">
           <div class="ac"></div>
+          <div class="rb" [matTooltip]="ribbonTooltip(a.name)" aria-hidden="true">
+            @for (t of ribbonTicks(a.name); track $index) {
+              <span class="tk" [attr.data-k]="t"></span>
+            }
+          </div>
           <div class="h">
             <dm-status-pill [status]="a.status" [health]="a.health"></dm-status-pill>
             @if (a.errorCount > 0) {
@@ -105,6 +110,12 @@ const TAGS_KEY = 'daimon.apps.tags';
     .c:hover{box-shadow:var(--mat-sys-level2);transform:translateY(-1px)}
     .c.f{border-color:var(--mat-sys-primary);box-shadow:0 0 0 2px color-mix(in oklch,var(--mat-sys-primary) 25%,transparent)}
     .ac{height:4px;background:var(--dm-tone,var(--mat-sys-surface-container))}
+    .rb{display:flex;gap:1px;height:6px;padding:0 .75rem;align-items:center;background:var(--mat-sys-surface-container-lowest)}
+    .rb .tk{flex:1;height:6px;border-radius:1px;background:var(--mat-sys-surface-container)}
+    .rb .tk[data-k="serving"]{background:color-mix(in oklch,var(--mat-sys-primary) 60%,transparent)}
+    .rb .tk[data-k="error"]{background:var(--mat-sys-error)}
+    .rb .tk[data-k="starting"],.rb .tk[data-k="compiling"]{background:color-mix(in oklch,var(--mat-sys-tertiary) 70%,transparent)}
+    .rb .tk[data-k="stopped"]{background:var(--mat-sys-outline-variant)}
     .h{display:flex;align-items:center;justify-content:space-between;padding:.75rem .875rem 0}
     .n{padding:.375rem .875rem 0;font:500 1.05rem/1.5rem Roboto}
     .n .dm-mono{font-size:1.05rem;font-weight:500}
@@ -135,7 +146,45 @@ export class AppsCardsViewComponent {
   @Output() focus = new EventEmitter<number>();
   @Output() act = new EventEmitter<{ name: string; kind: ActionKind }>();
   readonly tone = workspaceTone;
+  private readonly api = inject(DaimonApi);
+
+  // 20 ticks across a 60-min rolling window. Empty buckets render as the
+  // surface-container tone; status-bearing buckets win over earlier ones in
+  // the order error > compiling > serving > stopped.
+  private readonly RIBBON_BUCKETS = 20;
+  private readonly RIBBON_WINDOW_MS = 60 * 60 * 1000;
+
+  private readonly perAppTicks = computed<Map<string, string[]>>(() => {
+    const evs = this.api.events();
+    const now = Date.now();
+    const cutoff = now - this.RIBBON_WINDOW_MS;
+    const bucketMs = this.RIBBON_WINDOW_MS / this.RIBBON_BUCKETS;
+    const out = new Map<string, string[]>();
+    const ranks: Record<string, number> = { stopped: 1, serving: 2, compiling: 3, starting: 3, error: 4 };
+    for (const ev of evs) {
+      if (ev.type !== 'status' || !ev.app || !ev.to) continue;
+      if (ev.ts < cutoff) continue;
+      const idx = Math.min(this.RIBBON_BUCKETS - 1, Math.floor((ev.ts - cutoff) / bucketMs));
+      let arr = out.get(ev.app);
+      if (!arr) { arr = new Array(this.RIBBON_BUCKETS).fill(''); out.set(ev.app, arr); }
+      const prev = arr[idx];
+      if (!prev || (ranks[ev.to] ?? 0) > (ranks[prev] ?? 0)) arr[idx] = ev.to;
+    }
+    return out;
+  });
+
   isBusy(name: string, kind: string): boolean { return !!this.busy[name]?.[kind]; }
+  ribbonTicks(name: string): string[] {
+    return this.perAppTicks().get(name) ?? new Array(this.RIBBON_BUCKETS).fill('');
+  }
+  ribbonTooltip(name: string): string {
+    const ticks = this.perAppTicks().get(name);
+    if (!ticks) return 'no status events in the last 60 min';
+    const counts: Record<string, number> = {};
+    for (const t of ticks) if (t) counts[t] = (counts[t] ?? 0) + 1;
+    const parts = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(' · ');
+    return parts ? `last 60 min: ${parts}` : 'no status events in the last 60 min';
+  }
   fmtSince(ms: number | null | undefined): string {
     if (!ms || ms <= 0) return '';
     const s = Math.floor(ms / 1000);
@@ -614,6 +663,10 @@ export class AppsListComponent implements AfterViewInit {
     else if (key === 'k') this.focusedIndex.set((cur - 1 + list.length) % list.length);
     else if (key === 's') void this.act(list[cur].name, 'start');
     else if (key === 'x') void this.act(list[cur].name, 'stop');
-    else if (key === 'r') void this.act(list[cur].name, 'restart');
+    else if (key === 'r') {
+      const target = list[cur].name;
+      const ref = this.snack.open(`Restart ${target}? Press R again or click confirm.`, 'Confirm', { duration: 4000 });
+      ref.onAction().subscribe(() => void this.act(target, 'restart'));
+    }
   }
 }

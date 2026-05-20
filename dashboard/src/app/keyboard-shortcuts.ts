@@ -15,11 +15,11 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         <tr><td><kbd>?</kbd></td><td>This help</td></tr>
         <tr><td><kbd>/</kbd></td><td>Focus filter</td></tr>
         <tr><td><kbd>g</kbd> <kbd>a</kbd></td><td>Apps</td></tr>
-        <tr><td><kbd>g</kbd> <kbd>e</kbd></td><td>Events</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>e</kbd></td><td>Errors</td></tr>
         <tr><td><kbd>g</kbd> <kbd>l</kbd></td><td>Logs</td></tr>
-        <tr><td><kbd>g</kbd> <kbd>r</kbd></td><td>Errors</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>s</kbd></td><td>Settings</td></tr>
         <tr><td><kbd>g</kbd> <kbd>d</kbd></td><td>Doctor</td></tr>
-        <tr><td><kbd>g</kbd> <kbd>c</kbd></td><td>Config</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>v</kbd></td><td>Events</td></tr>
         <tr><td><kbd>g</kbd> <kbd>h</kbd></td><td>History</td></tr>
         <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / prev item</td></tr>
         <tr><td><kbd>s</kbd></td><td>Start focused app</td></tr>
@@ -71,7 +71,7 @@ export class KeyboardShortcutsService {
     if (this.pending === 'g') {
       this.pending = null;
       if (this.pendingTimer) clearTimeout(this.pendingTimer);
-      const map: Record<string, string> = { a: '/', e: '/events', l: '/logs', r: '/errors', d: '/doctor', c: '/config', h: '/history', s: '/sessions' };
+      const map: Record<string, string> = { a: '/', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', n: '/sessions', r: '/errors', c: '/config' };
       const route = map[e.key.toLowerCase()];
       if (route) { e.preventDefault(); void this.router.navigateByUrl(route); }
       return;

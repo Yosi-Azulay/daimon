@@ -127,11 +127,26 @@ function escapeRegex(s: string): string {
       <div class="dm-toolbar">
         <mat-form-field appearance="outline" class="dm-filter">
           <mat-label>Filter</mat-label>
-          <input matInput [ngModel]="filter()" (ngModelChange)="filter.set($event)" placeholder="case-insensitive substring" />
+          <input matInput [ngModel]="filter()" (ngModelChange)="filter.set($event)"
+                 [placeholder]="useRegex() ? 'regex (case-insensitive)' : 'case-insensitive substring'" />
           @if (filter()) {
             <button matSuffix mat-icon-button (click)="filter.set('')"><mat-icon>close</mat-icon></button>
           }
         </mat-form-field>
+        <button mat-stroked-button [class.dm-on]="useRegex()" (click)="useRegex.set(!useRegex())"
+                [matTooltip]="useRegex() ? 'Regex on — click to use substring' : 'Substring — click to use regex'">
+          <mat-icon>{{ useRegex() ? 'check_circle' : 'pattern' }}</mat-icon>
+          .* regex
+        </button>
+        <button mat-stroked-button (click)="jumpToNextError()" [disabled]="!hasNextError()"
+                matTooltip="Jump to next error">
+          <mat-icon>error</mat-icon> Next error
+        </button>
+        @if (regexError(); as re) {
+          <span class="dm-rxerr" matTooltip="Invalid regex">
+            <mat-icon>warning</mat-icon> {{ re }}
+          </span>
+        }
         @if (!stuckToBottom()) {
           <button mat-flat-button color="primary" class="dm-jump" (click)="jumpToLatest()">
             <mat-icon>arrow_downward</mat-icon> Jump to latest
@@ -190,6 +205,9 @@ function escapeRegex(s: string): string {
     }
     .dm-filter { flex: 1; max-width: 28rem; }
     .dm-jump { margin-left: auto; }
+    button.dm-on { color: var(--mat-sys-primary); border-color: var(--mat-sys-primary); }
+    .dm-rxerr { display: inline-flex; align-items: center; gap: .25rem; color: var(--mat-sys-error); font: 500 .8125rem/1rem Roboto; }
+    .dm-rxerr mat-icon { font-size: 16px; width: 16px; height: 16px; }
     .dm-viewport {
       height: calc(100vh - 13rem);
       min-height: 24rem;
@@ -241,8 +259,10 @@ export class LogsPageComponent implements OnChanges, OnDestroy {
 
   readonly lines = signal<LogRow[]>([]);
   readonly filter = signal('');
+  readonly useRegex = signal(false);
   readonly paused = signal(false);
   readonly stuckToBottom = signal(true);
+  readonly regexError = signal<string | null>(null);
 
   private buffered: LogRow[] = [];
   private stop?: () => void;
@@ -250,12 +270,32 @@ export class LogsPageComponent implements OnChanges, OnDestroy {
 
   readonly currentApp = computed(() => this.name ? this.api.byName(this.name) : undefined);
 
-  readonly filtered = computed<LogRow[]>(() => {
-    const f = this.filter().toLowerCase();
-    const rows = this.lines();
-    if (!f) return rows;
-    return rows.filter(r => r.line.toLowerCase().includes(f));
+  private readonly compiledFilter = computed<((s: string) => boolean) | null>(() => {
+    const raw = this.filter();
+    if (!raw) { this.regexError.set(null); return null; }
+    if (!this.useRegex()) {
+      this.regexError.set(null);
+      const needle = raw.toLowerCase();
+      return (s: string) => s.toLowerCase().includes(needle);
+    }
+    try {
+      const rx = new RegExp(raw, 'i');
+      this.regexError.set(null);
+      return (s: string) => rx.test(s);
+    } catch (e: any) {
+      this.regexError.set(e?.message ?? 'invalid regex');
+      return null;
+    }
   });
+
+  readonly filtered = computed<LogRow[]>(() => {
+    const pred = this.compiledFilter();
+    const rows = this.lines();
+    if (!pred) return rows;
+    return rows.filter(r => pred(r.line));
+  });
+
+  readonly hasNextError = computed<boolean>(() => this.filtered().some(r => r.severity === 'error'));
 
   constructor() {
     effect(() => {
@@ -338,6 +378,22 @@ export class LogsPageComponent implements OnChanges, OnDestroy {
     this.scrollSoon();
   }
 
+  jumpToNextError(): void {
+    const vp = this.viewport;
+    if (!vp) return;
+    const rows = this.filtered();
+    if (rows.length === 0) return;
+    const start = Math.max(0, vp.getRenderedRange().end);
+    let found = -1;
+    for (let i = start; i < rows.length; i++) if (rows[i].severity === 'error') { found = i; break; }
+    if (found === -1) {
+      for (let i = 0; i < Math.min(start, rows.length); i++) if (rows[i].severity === 'error') { found = i; break; }
+    }
+    if (found === -1) return;
+    this.stuckToBottom.set(false);
+    vp.scrollToIndex(found, 'smooth');
+  }
+
   private scrollSoon(): void {
     if (this.rafScheduled) return;
     this.rafScheduled = true;
@@ -365,7 +421,11 @@ export class LogsPageComponent implements OnChanges, OnDestroy {
     const f = this.filter();
     const esc = escapeHtml(line);
     if (!f) return esc;
-    const rx = new RegExp(escapeRegex(f), 'gi');
-    return esc.replace(rx, m => `<mark>${m}</mark>`);
+    try {
+      const rx = this.useRegex() ? new RegExp(f, 'gi') : new RegExp(escapeRegex(f), 'gi');
+      return esc.replace(rx, m => `<mark>${m}</mark>`);
+    } catch {
+      return esc;
+    }
   }
 }

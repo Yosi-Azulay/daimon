@@ -22,6 +22,21 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 - **A4 — `daimon overview --budget <tokens>`.** Both the HTTP endpoint and the CLI accept a token budget. Rows past the budget are dropped from `needsAttention` first, then `recentlyChanged`, with the counts reported as `_meta.omitted.{needsAttention,recentlyChanged}`. Makes the session-opener predictable for agents.
 - **Test:** new `test/overview-budget.test.mjs` covers the truncation invariants (no-op under-budget, truncates over-budget, no-op on empty input).
 
+### Added (M35 partial) — Dashboard depth
+
+- **H2 — Keyboard shortcuts realigned with the v0.6 spec.** `g e` now jumps to **Errors** (was Events; Events moved to `g v`). `g s` now jumps to **Settings** (alias of `/config`; the previous `g s` → Sessions moved to `g n`). The legacy `g r` → Errors and `g c` → Settings bindings remain as aliases for muscle memory. `r` (restart focused app) now requires a snack-bar confirm before firing, eliminating accidental restarts during keyboard navigation.
+- **H4 — Logs page: regex filter + jump-to-next-error.** A `.* regex` toggle on the filter bar switches between substring and regex matching (case-insensitive). Invalid patterns surface inline (`mat-icon warning` + parser message) instead of throwing. A `Next error` button scrolls the virtual viewport to the next `severity === 'error'` row from the current visible end, wrapping to the top.
+- **H5 — Per-app event ribbon.** Each card on `Apps` gains a 6px ribbon between the workspace-tone accent and the status row, showing the last 60 minutes of status events as 20 colored buckets (primary tint = serving, error = error, tertiary = compiling/starting, outline-variant = stopped). Hover shows a `last 60 min: 5 serving · 2 error` summary. Empty for apps with no recent transitions.
+
+### Deferred (M35 → v0.6.1)
+
+- **H1 — Vitest + Playwright dashboard tests.** Adds non-trivial dev-deps (Vitest + Playwright + Angular bridge config), a fixture-daemon harness, and per-component specs. Out of scope for the v0.6.0 weekend; will land in v0.6.1.
+- **H3 — WCAG AA contrast audit.** Needs visual inspection across all M3 tonal surfaces under light + dark + reduced-motion. Pushed to v0.6.1 alongside H1; reduced-motion path from M30 is already verified.
+
+### Known (carry-over from v0.5)
+
+- **Initial-route gzip transfer is 151 KB** (not 111 KB as the M29 line claims). The growth happened during M30–M32 dashboard polish, before v0.6 work started; M33+M34 are daemon-only and M35 adds &lt;100 B to the initial bundle. Reducing back under 130 KB is a v0.6.1 task and likely needs lazy-loading the snack-bar / dialog modules currently in the initial chunk.
+
 ## [0.5.0] — 2026-05-19
 
 Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**

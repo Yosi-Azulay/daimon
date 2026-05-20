@@ -30,19 +30,19 @@ Milestones are tentative; bundles of features will be regrouped as work lands.
 
 **Acceptance:** start→fix→verify is now `overview` → `try_fix` → `focus until=stable` = 3 MCP calls.
 
-## M35 — Dashboard depth
+## M35 — Dashboard depth (partial — ships in v0.6.0)
 
-**H1. Dashboard unit + smoke tests.** Vitest + a fixture daemon serving canned `/api/*` responses. One spec per signal-bearing component: `dm-apps-list`, `dm-errors-panel`, `dm-events-feed`, `dm-config-editor`, `dm-doctor-page`. Playwright smoke for `route enter → action → state reflected`.
+**H2** ✅ — `g e` → Errors, `g s` → Settings (alias of `/config`), `g v` → Events, `g n` → Sessions. `r` requires snack-bar confirm. Legacy `g r` / `g c` kept as aliases.
 
-**H2. Keyboard-driven UX.** `?` opens a shortcut sheet. `g a` / `g e` / `g l` / `g s` / `g d` jump to apps/errors/logs/settings/doctor. `/` focuses the global filter on the current page. `r` restarts the focused app (with a confirm step).
+**H4** ✅ — Logs page gains `.* regex` toggle (case-insensitive) with inline parse error, plus `Next error` jump button that scrolls the virtual viewport to the next error row.
 
-**H3. WCAG AA on M3 surfaces.** Audit contrast on `--mat-sys-surface-*` token combinations; fix the 2–3 places where chip/label colors fail at AA. Reduced-motion path already exists from M30 — verify it's complete.
+**H5** ✅ — Apps cards grow a 6px ribbon between accent and status row showing 20 buckets over the last 60 min. Hover tooltip summarises counts per state.
 
-**H4. Dashboard log viewer with search.** SSE log stream already exists. Build a `Logs` page with regex filter, per-app multi-select, level coloring, and a "jump to next error" affordance. Closes the gap that forced the user to read raw daemon stdout to find the esbuild format during v0.5. (was X1)
+**H1** ⏭ deferred to v0.6.1 — Vitest + Playwright dev-deps + per-component specs + fixture daemon. One full session of scaffolding.
 
-**H5. Restart/event ribbon per app.** Each card grows a thin top ribbon (~6px) showing the last N status events as colored ticks over a rolling window (60min default). Helps spot flaky apps at a glance without opening the app-detail panel. (was X5)
+**H3** ⏭ deferred to v0.6.1 — WCAG AA audit across M3 surface tokens in light + dark + reduced-motion. Visual inspection task.
 
-Acceptance: `npm test` in `dashboard/` passes from cold checkout; tab-only navigation reaches every primary action; the Logs page can locate a known error by regex in <1s on a 10-app workspace.
+Acceptance left for v0.6.1: `dashboard/npm test` from cold checkout; tab-only nav coverage; AA contrast pass.
 
 ## M36 — Auto-heal expansion
 
