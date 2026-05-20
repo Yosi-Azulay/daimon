@@ -4,10 +4,28 @@ import os from 'node:os';
 import { readLock, removeLock, lockPath, spawnDetached, waitForExit } from './daemon.js';
 import { configLookupPaths, loadConfig } from './config.js';
 import { History } from './history.js';
+import { isPortFree } from './ports.js';
 
-export type AutoFixName = 'orphan-daemon' | 'stale-lock' | 'missing-search-root' | 'corrupt-history-db';
+export type AutoFixName =
+  | 'orphan-daemon'
+  | 'stale-lock'
+  | 'missing-search-root'
+  | 'corrupt-history-db'
+  | 'port-conflict-pred'
+  | 'node-version-mismatch'
+  | 'orphan-node-modules'
+  | 'dead-search-root';
 
-export const ALL_AUTO_FIX: AutoFixName[] = ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db'];
+export const ALL_AUTO_FIX: AutoFixName[] = [
+  'orphan-daemon',
+  'stale-lock',
+  'missing-search-root',
+  'corrupt-history-db',
+  'port-conflict-pred',
+  'node-version-mismatch',
+  'orphan-node-modules',
+  'dead-search-root',
+];
 
 export interface RoutineResult {
   name: AutoFixName;
@@ -132,11 +150,153 @@ function fixCorruptHistoryDb(): string {
   return `rotated ${p} → ${rotated} (and -wal/-shm siblings). The daemon will rebuild an empty history db on next start.`;
 }
 
+async function detectPortConflict(): Promise<{ detected: boolean; description: string; conflicts?: number[] }> {
+  const r = loadConfig();
+  if (r.kind !== 'loaded') return { detected: false, description: 'no config loaded' };
+  const [lo, hi] = r.config.portRange ?? [4200, 4299];
+  const overrides = r.config.overrides ?? {};
+  const pinned = Object.values(overrides).map(o => o.port).filter((p): p is number => typeof p === 'number');
+  const candidates = Array.from(new Set([...pinned, lo, hi]));
+  const conflicts: number[] = [];
+  for (const p of candidates) {
+    if (!Number.isFinite(p) || p <= 0) continue;
+    try { if (!(await isPortFree(p))) conflicts.push(p); } catch {}
+  }
+  if (!conflicts.length) return { detected: false, description: `all checked ports free (range ${lo}-${hi} + pinned)` };
+  return { detected: true, description: `ports already LISTEN: ${conflicts.join(', ')} (range ${lo}-${hi} + pinned overrides)`, conflicts };
+}
+
+function fixPortConflict(): string {
+  // Predictive rule: never kills a holder, just reports. Pair with `daimon free-port <p>` for action.
+  return 'no automated fix — predictive rule only. Run `daimon free-port <port>` to inspect the holder, or pick a different port in daimon.config.json. To undo: nothing was changed.';
+}
+
+function detectNodeVersionMismatch(): { detected: boolean; description: string; expected?: string; actual?: string } {
+  const here = process.cwd();
+  const actual = process.versions.node;
+  const nvmPath = path.join(here, '.nvmrc');
+  if (fs.existsSync(nvmPath)) {
+    const want = fs.readFileSync(nvmPath, 'utf8').trim().replace(/^v/i, '');
+    if (want && !actual.startsWith(want)) {
+      return { detected: true, description: `.nvmrc requires ${want}, running ${actual}`, expected: want, actual };
+    }
+  }
+  const pkgPath = path.join(here, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      const eng = pkg?.engines?.node;
+      if (typeof eng === 'string' && eng.trim()) {
+        // very rough check: extract the first numeric token from the spec
+        const m = eng.match(/(\d+)(?:\.(\d+))?/);
+        if (m) {
+          const wantMajor = Number(m[1]);
+          const haveMajor = Number(actual.split('.')[0]);
+          if (Number.isFinite(wantMajor) && Number.isFinite(haveMajor) && haveMajor < wantMajor) {
+            return { detected: true, description: `package.json engines.node = "${eng}" but running ${actual}`, expected: eng, actual };
+          }
+        }
+      }
+    } catch {}
+  }
+  return { detected: false, description: `node ${actual} satisfies .nvmrc / engines.node (or neither is present)` };
+}
+
+function fixNodeVersionMismatch(): string {
+  return 'no automated fix — switching Node versions touches the user environment. Run `nvm use` (or your version manager equivalent) in this directory, then re-run daimon. To undo: nothing was changed.';
+}
+
+function listAppRoots(): { name: string; root: string; pkgPath: string; lockPath: string | null; nmPath: string }[] {
+  const r = loadConfig();
+  if (r.kind !== 'loaded') return [];
+  const out: { name: string; root: string; pkgPath: string; lockPath: string | null; nmPath: string }[] = [];
+  const seen = new Set<string>();
+  for (const sr of r.config.searchRoots) {
+    const rootPath = typeof sr === 'string' ? sr : sr.path;
+    if (!rootPath || !fs.existsSync(rootPath) || seen.has(rootPath)) continue;
+    seen.add(rootPath);
+    const pkgPath = path.join(rootPath, 'package.json');
+    if (!fs.existsSync(pkgPath)) continue;
+    let lockFound: string | null = null;
+    for (const lf of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']) {
+      const p = path.join(rootPath, lf);
+      if (fs.existsSync(p)) { lockFound = p; break; }
+    }
+    out.push({ name: path.basename(rootPath), root: rootPath, pkgPath, lockPath: lockFound, nmPath: path.join(rootPath, 'node_modules') });
+  }
+  return out;
+}
+
+function detectOrphanNodeModules(): { detected: boolean; description: string; entries?: { root: string; reason: 'missing' | 'stale' }[] } {
+  const roots = listAppRoots();
+  if (!roots.length) return { detected: false, description: 'no searchRoots with package.json found' };
+  const entries: { root: string; reason: 'missing' | 'stale' }[] = [];
+  for (const r of roots) {
+    if (!fs.existsSync(r.nmPath)) { entries.push({ root: r.root, reason: 'missing' }); continue; }
+    if (r.lockPath) {
+      try {
+        const lockMtime = fs.statSync(r.lockPath).mtimeMs;
+        const nmMtime = fs.statSync(r.nmPath).mtimeMs;
+        if (lockMtime > nmMtime + 1000) entries.push({ root: r.root, reason: 'stale' });
+      } catch {}
+    }
+  }
+  if (!entries.length) return { detected: false, description: 'every searchRoot package.json has a fresh node_modules' };
+  const summary = entries.map(e => `${e.reason}: ${e.root}`).join(' · ');
+  return { detected: true, description: `node_modules issues — ${summary}`, entries };
+}
+
+function fixOrphanNodeModules(): string {
+  const det = detectOrphanNodeModules();
+  if (!det.detected || !det.entries) return 'nothing to suggest';
+  const suggestions = det.entries.map(e => `(cd "${e.root}" && npm install)`).join(' && ');
+  // Never runs npm install per the PLAN-locked decision; only reports.
+  return `would suggest: ${suggestions}. Daimon does not run package managers on your behalf — run the command(s) yourself. To undo: nothing was changed.`;
+}
+
+function detectDeadSearchRoot(): { detected: boolean; description: string; dead?: string[] } {
+  const r = loadConfig();
+  if (r.kind !== 'loaded') return { detected: false, description: 'no config loaded' };
+  const dead: string[] = [];
+  for (const sr of r.config.searchRoots) {
+    const p = typeof sr === 'string' ? sr : sr.path;
+    if (!p) continue;
+    if (!fs.existsSync(p)) dead.push(p);
+  }
+  if (!dead.length) return { detected: false, description: 'every configured searchRoot resolves on disk' };
+  return { detected: true, description: `searchRoots no longer on disk: ${dead.join(', ')}`, dead };
+}
+
+function fixDeadSearchRoot(): string {
+  const det = detectDeadSearchRoot();
+  if (!det.detected || !det.dead || !det.dead.length) return 'nothing to remove';
+  const { local, user } = configLookupPaths();
+  const target = fs.existsSync(local) ? local : user;
+  let raw: any = {};
+  try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+  if (!Array.isArray(raw.searchRoots)) return 'config has no searchRoots array; nothing removed';
+  const dead = new Set(det.dead);
+  const before = raw.searchRoots.length;
+  raw.searchRoots = raw.searchRoots.filter((sr: any) => {
+    const p = typeof sr === 'string' ? sr : sr?.path;
+    return !dead.has(p);
+  });
+  const removed = before - raw.searchRoots.length;
+  fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+  const lock = readLock();
+  if (lock) { try { void fetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`, { method: 'POST' }); } catch {} }
+  return `removed ${removed} dead searchRoot entr${removed === 1 ? 'y' : 'ies'} from ${target} (${[...dead].join(', ')}); triggered soft-reload. To undo: edit ${target} and re-add the path(s).`;
+}
+
 const ROUTINES: Record<AutoFixName, { detect: () => any | Promise<any>; fix: () => string | Promise<string> }> = {
   'orphan-daemon': { detect: detectOrphan, fix: fixOrphan },
   'stale-lock': { detect: detectStaleLock, fix: fixStaleLock },
   'missing-search-root': { detect: detectMissingSearchRoot, fix: fixMissingSearchRoot },
   'corrupt-history-db': { detect: detectCorruptHistoryDb, fix: fixCorruptHistoryDb },
+  'port-conflict-pred': { detect: detectPortConflict, fix: fixPortConflict },
+  'node-version-mismatch': { detect: detectNodeVersionMismatch, fix: fixNodeVersionMismatch },
+  'orphan-node-modules': { detect: detectOrphanNodeModules, fix: fixOrphanNodeModules },
+  'dead-search-root': { detect: detectDeadSearchRoot, fix: fixDeadSearchRoot },
 };
 
 export async function runAutoFix(opts: { permitted: AutoFixName[]; dryRun?: boolean }): Promise<RunResult> {

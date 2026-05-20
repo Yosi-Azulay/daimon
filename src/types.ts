@@ -114,6 +114,7 @@ export interface AppOverride {
   hidden?: boolean;
   env?: Record<string, string>;
   url?: string;
+  healthProbePath?: string;
 }
 
 export interface DiscoveredApp {
@@ -221,6 +222,7 @@ export interface AppState {
   recoveringFromError?: boolean;
   workspaceLabel: string | null;
   lastErrorHash?: string | null;
+  discoveredHealthPath?: string | null;
 }
 
 export interface AppSummary {

@@ -37,6 +37,18 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 - **Initial-route gzip transfer is 151 KB** (not 111 KB as the M29 line claims). The growth happened during M30–M32 dashboard polish, before v0.6 work started; M33+M34 are daemon-only and M35 adds &lt;100 B to the initial bundle. Reducing back under 130 KB is a v0.6.1 task and likely needs lazy-loading the snack-bar / dialog modules currently in the initial chunk.
 
+### Added (M36) — Auto-heal expansion
+
+- **E1 — Health-probe path auto-discovery.** On first `serving` (when there is no `overrides.<name>.url`, no `overrides.<name>.healthProbePath`, and the global `healthProbe.path` is the default `/`), the monitor runs one in-flight scan against `['/', '/health', '/-/health', '/api/health', '/ready', '/healthz']`, taking the first strictly-2xx response. The discovered path is stored on `AppState.discoveredHealthPath` and an event is recorded: `discovered probe path: /health (pin via POST /api/apps/<name>/health/pin or daimon pin-health <name> --accept)`. The discovery is used by subsequent probes immediately, but **persistence is opt-in** — nothing is written to `daimon.config.json` until the user accepts.
+- **`daimon pin-health <name> [--accept] [--path <p>]` + `POST /api/apps/:name/health/pin`.** Without `--accept` the CLI just reports the discovered candidate; with `--accept` it writes `overrides.<name>.healthProbePath` to the active `daimon.config.json` and triggers soft-reload. `AppOverride.healthProbePath` is a new optional field; v0.5 configs continue to load unchanged.
+- **E2 — Four new doctor rules** added to `daimon doctor --auto-fix`:
+  - `port-conflict-pred` — predicts which configured `portRange` endpoints + pinned ports are already in LISTEN. Reports only; no kill.
+  - `node-version-mismatch` — compares `.nvmrc` then `package.json#engines.node` against `process.versions.node`. Reports only; switching Node versions stays a user action.
+  - `orphan-node-modules` — flags `searchRoots` whose `package.json` exists but `node_modules` is missing, or older than `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock`. Per locked decision in PLAN-v0.6.md, daimon **never runs npm/pnpm/yarn install** — the rule emits a `would suggest: (cd ... && npm install)` paragraph instead.
+  - `dead-search-root` — finds `searchRoots` that no longer resolve on disk and removes them from the config file (with a soft-reload), printing a `to undo: re-add` paragraph.
+- All four rules are added to `ALL_AUTO_FIX` and to the default `doctor.autoFix.permitted` list. v0.5 configs whose `permitted` list is shorter are honored as-is — the new rules just don't activate for them.
+- **Test:** `test/autofix-rules.test.mjs` asserts the new rule names are present in `ALL_AUTO_FIX` and the original M28 rules are still listed (backwards-compat smoke).
+
 ## [0.5.0] — 2026-05-19
 
 Strategic theme: **Claude path first. Dashboard second. Auto-heal everywhere.**

@@ -119,6 +119,7 @@ export class Registry extends EventEmitter {
       sessionOverrides: null,
       dependsOn: this.config.depends?.[name] ?? [],
       workspaceLabel,
+      discoveredHealthPath: null,
     };
   }
 

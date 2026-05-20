@@ -164,6 +164,8 @@ interface Flags {
   auto?: boolean;
   redacted?: boolean;
   budget?: number;
+  accept?: boolean;
+  path?: string;
   passthrough: string[];
 }
 
@@ -204,6 +206,8 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--auto') f.auto = true;
     else if (a === '--redacted') f.redacted = true;
     else if (a === '--budget') f.budget = Number(args[++i]);
+    else if (a === '--accept') f.accept = true;
+    else if (a === '--path') f.path = args[++i];
     else f.positional.push(a);
   }
   return f;
@@ -805,6 +809,23 @@ async function main() {
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
       await streamNdjson(`/api/apps/${encodeURIComponent(name)}/focus?${params.toString()}`, 'POST');
+      return;
+    }
+    case 'pin-health': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon pin-health <name> [--accept] [--path <p>]' }));
+      const status = await call(`/api/apps/${encodeURIComponent(name)}?format=full`);
+      if (status.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      const discovered: string | null = (status.body as any)?.discoveredHealthPath ?? null;
+      const candidate = f.path ?? discovered ?? null;
+      if (!f.accept) {
+        out({ app: name, discoveredHealthPath: discovered, candidate, hint: candidate ? `re-run with --accept to persist ${candidate} to daimon.config.json` : 'no path discovered yet; start the app and wait for first serving' });
+        return;
+      }
+      if (!candidate) fail(JSON.stringify({ error: 'no path to pin — pass --path or wait for auto-discovery' }));
+      const r = await callJson(`/api/apps/${encodeURIComponent(name)}/health/pin`, 'POST', { path: candidate });
+      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      out(r.body);
       return;
     }
     case 'try-fix': {

@@ -44,19 +44,11 @@ Milestones are tentative; bundles of features will be regrouped as work lands.
 
 Acceptance left for v0.6.1: `dashboard/npm test` from cold checkout; tab-only nav coverage; AA contrast pass.
 
-## M36 — Auto-heal expansion
+## M36 — Auto-heal expansion ✅ shipped
 
-**E1. Health probe auto-discovery.** On first `serving`, probe a short candidate list (`/`, `/health`, `/-/health`, `/api/health`, `/ready`, `/healthz`) and offer to pin the first 200/2xx response into `healthProbe.path` override for that app. Eliminates the most common config friction. Pinning is opt-in (one-click in the dashboard, `--accept` flag in CLI) — never silent. (was X2)
+**E1** ✅ — Health monitor scans `['/', '/health', '/-/health', '/api/health', '/ready', '/healthz']` on first serving; stores winner on `AppState.discoveredHealthPath`; emits an event with the pin instructions. Pin = `POST /api/apps/:name/health/pin {path}` → writes `overrides.<name>.healthProbePath`. CLI: `daimon pin-health <name> [--accept] [--path]`. New optional `AppOverride.healthProbePath` field; v0.5 configs load unchanged.
 
-**E2. Doctor rule expansion.** New rules added to `daimon doctor --auto-fix`: (was X3)
-- `port-conflict-pred` — predicts which configured `portRange` ports are already in LISTEN before start.
-- `node-version-mismatch` — compares `.nvmrc` / `engines.node` against `process.versions.node`.
-- `orphan-node-modules` — apps whose `package.json` exists but `node_modules` is missing or older than `package-lock.json`. Reports only — never runs `npm install` (see open questions).
-- `dead-search-root` — searchRoot whose path no longer exists (was renamed/unmounted); offer to remove from config.
-
-All new rules gated by `config.doctor.autoFix.permitted` like existing rules. Each rule returns a paragraph describing what was wrong, what was done (or would be done in `--dry-run`), and how to undo.
-
-Acceptance: `daimon doctor` on a freshly-cloned workspace with no `node_modules` and an outdated `.nvmrc` produces actionable output without false positives on a healthy workspace.
+**E2** ✅ — `runAutoFix` gains four rules: `port-conflict-pred`, `node-version-mismatch`, `orphan-node-modules` (report-only, never runs npm install per the decision lock-in), `dead-search-root` (removes dead entries + soft-reload). All gated by `doctor.autoFix.permitted`; default `permitted` list extended to include them. Backwards-compatibility test in `test/autofix-rules.test.mjs`.
 
 ---
 

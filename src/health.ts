@@ -6,6 +6,8 @@ import type { AppmanConfig, HealthProbeConfig } from './types.js';
 const FRESH_SERVING_RETRY_MS = 1000;
 const INITIAL_DELAY_MS = 500;
 
+export const HEALTH_PROBE_CANDIDATES = ['/', '/health', '/-/health', '/api/health', '/ready', '/healthz'];
+
 interface FreshState {
   retried: boolean;
 }
@@ -112,7 +114,18 @@ export class HealthMonitor {
     const s = this.registry.getState(name);
     if (!s || s.status !== 'serving') return;
     const override = this.fullConfig?.overrides?.[name]?.url;
-    const candidates = resolveProbeUrls(this.cfg, override, s.announcedUrl, s.port, s.cachedProbeHost);
+    const overridePath = this.fullConfig?.overrides?.[name]?.healthProbePath;
+    let cfg = this.cfg;
+    if (overridePath) cfg = { ...this.cfg, path: overridePath };
+    else if (s.discoveredHealthPath) cfg = { ...this.cfg, path: s.discoveredHealthPath };
+    const candidates = resolveProbeUrls(cfg, override, s.announcedUrl, s.port, s.cachedProbeHost);
+    if (
+      !override && !overridePath && !s.discoveredHealthPath &&
+      (this.cfg.path === '/' || !this.cfg.path) &&
+      s.health !== 'healthy'
+    ) {
+      void this.discoverPath(name);
+    }
     if (candidates.length === 0) {
       this.registry.setLastHealthError(name, 'no probe URL available');
       this.registry.setHealth(name, 'unhealthy');
@@ -143,7 +156,29 @@ export class HealthMonitor {
     this.registry.setHealth(name, 'unhealthy');
   }
 
-  private tryProbe(url: string): Promise<{ ok: boolean; error?: string }> {
+  private async discoverPath(name: string): Promise<void> {
+    const s = this.registry.getState(name);
+    if (!s || s.status !== 'serving') return;
+    if (s.discoveredHealthPath) return;
+    for (const candidate of HEALTH_PROBE_CANDIDATES) {
+      const cfg = { ...this.cfg, path: candidate };
+      const urls = resolveProbeUrls(cfg, undefined, s.announcedUrl, s.port, s.cachedProbeHost);
+      for (const url of urls) {
+        const r = await this.tryProbe(url, { strict2xx: true });
+        if (r.ok) {
+          s.discoveredHealthPath = candidate;
+          this.registry.recordEvent({
+            app: name,
+            type: 'health',
+            message: `discovered probe path: ${candidate} (pin via POST /api/apps/${encodeURIComponent(name)}/health/pin or daimon pin-health ${name} --accept)`,
+          });
+          return;
+        }
+      }
+    }
+  }
+
+  private tryProbe(url: string, probeOpts: { strict2xx?: boolean } = {}): Promise<{ ok: boolean; error?: string }> {
     return new Promise(resolve => {
       let settled = false;
       const done = (v: { ok: boolean; error?: string }) => {
@@ -153,20 +188,21 @@ export class HealthMonitor {
       };
       const isHttps = url.startsWith('https://');
       const lib = isHttps ? https : http;
-      const opts: any = { timeout: this.cfg.timeoutMs };
+      const reqOpts: any = { timeout: this.cfg.timeoutMs };
       if (isHttps) {
         const u = safeUrl(url);
         const host = u?.hostname?.replace(/^\[|\]$/g, '') ?? '';
         const isLoopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
         // Dev servers using mkcert / self-signed certs on loopback would otherwise fail with
         // UNABLE_TO_VERIFY_LEAF_SIGNATURE. Strict checks still apply off-loopback.
-        opts.rejectUnauthorized = isLoopback ? false : !!this.cfg.rejectUnauthorized;
+        reqOpts.rejectUnauthorized = isLoopback ? false : !!this.cfg.rejectUnauthorized;
       }
+      const upper = probeOpts.strict2xx ? 300 : 500;
       try {
-        const req = lib.get(url, opts, (res: any) => {
+        const req = lib.get(url, reqOpts, (res: any) => {
           const code = res.statusCode ?? 0;
           res.resume();
-          if (code >= 200 && code < 500) done({ ok: true });
+          if (code >= 200 && code < upper) done({ ok: true });
           else done({ ok: false, error: `http ${code}` });
         });
         req.on('timeout', () => req.destroy(new Error('timeout')));

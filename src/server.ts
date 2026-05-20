@@ -770,6 +770,36 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (sub === 'health' && sub2 === 'pin' && method === 'POST') {
+        const s = registry.getState(name);
+        if (!s) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        let body: any = {};
+        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+          await new Promise<void>(resolve => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(c));
+            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+          });
+        }
+        const desired: string | null = (typeof body.path === 'string' && body.path) ? body.path : (s.discoveredHealthPath ?? null);
+        if (!desired) { sendJson(res, 400, { error: 'no path supplied and no discoveredHealthPath on app' }); return; }
+        const { configLookupPaths } = await import('./config.js');
+        const { local, user } = configLookupPaths();
+        const target = fs.existsSync(local) ? local : user;
+        let raw: any = {};
+        try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+        if (!raw.overrides || typeof raw.overrides !== 'object') raw.overrides = {};
+        if (!raw.overrides[name] || typeof raw.overrides[name] !== 'object') raw.overrides[name] = {};
+        const prev = raw.overrides[name].healthProbePath ?? null;
+        raw.overrides[name].healthProbePath = desired;
+        fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+        if (opts.reloadConfig) {
+          try { await opts.reloadConfig(); } catch {}
+        }
+        sendJson(res, 200, { pinned: desired, app: name, configPath: target, previous: prev });
+        return;
+      }
+
       if (sub === 'try-fix' && method === 'POST') {
         const s0 = registry.summary(name);
         if (!s0) { sendJson(res, 404, { error: 'unknown app' }); return; }

@@ -53,7 +53,7 @@ function defaultConfig(): AppmanConfig {
     editor: { scheme: 'vscode' },
     apiToken: null,
     output: { format: 'compact', ndjson: false },
-    doctor: { autoFix: { onInit: false, permitted: ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db'] } },
+    doctor: { autoFix: { onInit: false, permitted: ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db', 'port-conflict-pred', 'node-version-mismatch', 'orphan-node-modules', 'dead-search-root'] } },
     dashboard: { theme: 'auto', density: 'comfortable' },
   };
 }
