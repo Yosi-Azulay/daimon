@@ -3,6 +3,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  Injector,
   Input,
   OnChanges,
   OnDestroy,
@@ -11,6 +12,7 @@ import {
   SimpleChanges,
   ViewChild,
   ViewChildren,
+  afterNextRender,
   computed,
   inject,
   signal,
@@ -436,6 +438,7 @@ export class HistoryPageComponent implements OnInit, OnChanges, OnDestroy {
   @Input() name = '';
   readonly api = inject(DaimonApi);
   private readonly router = inject(Router);
+  private readonly injector = inject(Injector);
 
   @ViewChild('chart') chartCanvas?: ElementRef<HTMLCanvasElement>;
   @ViewChildren('chart') chartCanvases?: QueryList<ElementRef<HTMLCanvasElement>>;
@@ -496,7 +499,7 @@ export class HistoryPageComponent implements OnInit, OnChanges, OnDestroy {
         ]);
         this.samples.set(Array.isArray(samples) ? samples : []);
         this.why.set(why);
-        queueMicrotask(() => this.renderChart());
+        afterNextRender(() => this.renderChart(), { injector: this.injector });
       } else {
         const apps = this.api.apps();
         if (apps.length === 0) {
