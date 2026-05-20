@@ -21,6 +21,8 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         <tr><td><kbd>g</kbd> <kbd>v</kbd></td><td>Events</td></tr>
         <tr><td><kbd>g</kbd> <kbd>h</kbd></td><td>History</td></tr>
         <tr><td><kbd>g</kbd> <kbd>t</kbd></td><td>Trends</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>x</kbd></td><td>Tests</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>n</kbd></td><td>Sessions</td></tr>
         <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / prev item</td></tr>
         <tr><td><kbd>s</kbd></td><td>Start focused app</td></tr>
         <tr><td><kbd>r</kbd></td><td>Restart focused app</td></tr>
