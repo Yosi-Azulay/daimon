@@ -1,0 +1,19 @@
+chunk-GBOBXAM3.js   | index                                | 18.00 kB |
+chunk-LLGECAUE.js   | foam-thumbnail-harness-page-component | 15.92 kB |
+chunk-IJBKMAAR.js   | shell-v2-component                   | 192 bytes |
+
+Application bundle generation complete. [96.496 seconds] - 2026-05-20T21:24:48.958Z
+Watch mode enabled. Watching for file changes...
+NOTE: Raw file sizes do not reflect development server per-request transformations.
+  ➜ Local:   http://localhost:4200/
+Task "editor:serve:development" is continuous but exited with code 1
+
+
+ NX   Running target serve for project editor failed
+
+ Failed tasks:
+
+ - editor:serve:development
+
+ Hint: run the command with --verbose for more details.
+

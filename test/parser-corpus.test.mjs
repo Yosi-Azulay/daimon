@@ -48,29 +48,34 @@ function matches(actual, want) {
   return true;
 }
 
-const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'webpack', 'node', 'django', 'rails', 'fastapi', 'go-air', 'rust-trunk'];
+const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'nx-serve-fail', 'webpack', 'node', 'django', 'rails', 'fastapi', 'go-air', 'rust-trunk'];
 
 for (const name of FIXTURES) {
   test(`parser corpus: ${name}`, () => {
     const { state, collected, expected } = runFixture(name);
 
-    let hits = 0;
-    const misses = [];
-    for (const want of expected.errors) {
-      const ok = collected.some(actual => matches(actual, want));
-      if (ok) hits++;
-      else misses.push(want);
+    if (expected.errors.length > 0) {
+      let hits = 0;
+      const misses = [];
+      for (const want of expected.errors) {
+        const ok = collected.some(actual => matches(actual, want));
+        if (ok) hits++;
+        else misses.push(want);
+      }
+      const rate = hits / expected.errors.length;
+      assert.ok(
+        rate >= 0.95,
+        `[${name}] capture rate ${(rate * 100).toFixed(0)}% < 95%; missed: ${JSON.stringify(misses)}\ncollected: ${JSON.stringify(collected.map(pick))}`,
+      );
+    } else {
+      // Fixture asserts the failure signal lands (status flips, an entry exists) but doesn't carry parsed file/line/col.
+      assert.ok(collected.length > 0, `[${name}] expected at least one error entry on a parsed-less failure fixture`);
     }
-    const rate = hits / expected.errors.length;
-    assert.ok(
-      rate >= 0.95,
-      `[${name}] capture rate ${(rate * 100).toFixed(0)}% < 95%; missed: ${JSON.stringify(misses)}\ncollected: ${JSON.stringify(collected.map(pick))}`,
-    );
 
     if (expected.status) {
       assert.equal(state.status, expected.status, `[${name}] status mismatch`);
     }
-    if (expected.tool) {
+    if (expected.tool && collected.length > 0) {
       const withTool = collected.filter(e => e.tool === expected.tool);
       assert.ok(
         withTool.length > 0,

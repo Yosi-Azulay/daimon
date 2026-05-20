@@ -509,16 +509,35 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
       .sort((a, b) => b.errors.length - a.errors.length);
   });
 
+  // Membership-keyed via computed: only emits when the app set actually changes (add/remove).
+  private readonly appsKey = computed(() => this.api.apps().map(a => a.name).sort().join('|'));
+  private lastEventCount = 0;
+  // Plain in-flight flag (NOT a signal): keeps the fetchAll guard out of any effect's dependency graph.
+  // If we read `loading()` here, writing `loading.set(true/false)` inside fetchAll would re-fire the
+  // effect that called it, causing an infinite loop.
+  private busy = false;
+
   constructor() {
     this.workspace.set(localStorage.getItem(WS_KEY));
     const onWs = (e: Event) => this.workspace.set(((e as CustomEvent).detail as string | null) ?? null);
     window.addEventListener('daimon:workspace', onWs);
     this.destroyRef.onDestroy(() => window.removeEventListener('daimon:workspace', onWs));
 
-    // Re-fetch whenever the apps list changes (membership-keyed so equal lists don't re-trigger).
+    // Membership change → refetch (e.g. discovered app appears/disappears).
     effect(() => {
-      const key = this.api.apps().map(a => a.name).sort().join('|');
+      const key = this.appsKey();
       if (key) void this.fetchAll();
+    });
+
+    // Push-driven: refetch only when an error or status event arrives on the SSE stream.
+    // Drops the v0.8.0 polling storm (one fetch per app per signal tick) to one fetch per real change.
+    effect(() => {
+      const evs = this.api.events();
+      const tail = evs.slice(this.lastEventCount);
+      this.lastEventCount = evs.length;
+      if (tail.some(e => e.type === 'error-new' || e.type === 'error-recur' || e.type === 'status')) {
+        void this.fetchAll();
+      }
     });
   }
 
@@ -569,7 +588,8 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
   }
 
   private async fetchAll(): Promise<void> {
-    if (this.loading()) return;
+    if (this.busy) return;
+    this.busy = true;
     this.loading.set(true);
     try {
       const apps = this.api.apps();
@@ -580,6 +600,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
       for (const [name, errs] of pairs) next.set(name, errs as RawError[]);
       this.raw.set(next);
     } finally {
+      this.busy = false;
       this.loading.set(false);
     }
   }

@@ -41,7 +41,10 @@ const KEY = 'daimon.nav.expanded';
              [routerLinkActiveOptions]="{ exact: e.path === '/' }"
              routerLinkActive="active"
              [matTooltip]="expanded() ? e.shortcut : (e.label + ' · ' + e.shortcut)"
-             matTooltipPosition="right">
+             matTooltipPosition="right"
+             [matTooltipShowDelay]="300"
+             [matTooltipHideDelay]="0"
+             (click)="dismissTooltip($event)">
             <mat-icon fontSet="material-symbols-outlined">{{ e.icon }}</mat-icon>
             @if (expanded()) {
               <span class="dm-rail-label">{{ e.label }}</span>
@@ -105,5 +108,12 @@ export class NavRailComponent implements OnInit {
   toggle(): void {
     this.expanded.update(v => !v);
     localStorage.setItem(KEY, this.expanded() ? '1' : '0');
+  }
+
+  dismissTooltip(ev: MouseEvent): void {
+    // matTooltip can linger after a routerLink click because the trigger keeps focus.
+    // Blur explicitly so the tooltip dismisses on navigation.
+    const t = ev.currentTarget as HTMLElement | null;
+    t?.blur();
   }
 }

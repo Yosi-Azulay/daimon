@@ -4,6 +4,20 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-05-21
+
+Hotfix for three regressions caught running v0.8.0 against a real workspace.
+
+### Fixed
+
+- **Dashboard Errors page no longer storms the daemon.** The errors-panel `effect()` was tied to the `api.apps()` signal, which emits a new array reference on every SSE tick even when membership is unchanged — causing N parallel `/api/apps/<name>/errors` fetches per emission (1,690 in-flight requests observed during the post-publish smoke test). Replaced with two narrower effects: one keyed on a membership `computed` (refetches only when the app set changes), and a push-driven effect that watches `api.events()` and only refetches when an `error-new` / `error-recur` / `status` event arrives on the existing SSE stream. The dashboard now consumes the event stream instead of polling it via HTTP.
+- **Parser captures real-world Nx serve failures.** v0.7's M33 patterns required a leading `>` decoration (`^\s*>\s+NX\s+.*failed`) — the actual `nx run …:serve` output omits it. Loosened the regex to `^\s*(?:>\s+)?NX\s+.*failed`, added new patterns for `Failed tasks:` and `Task "…" is continuous but exited with code N`, and updated the nx tool-routing regex to recognize the same shapes. New fixture `test/fixtures/parsers/nx-serve-fail.{log,expected.json}` covers the workspace-realistic case where the failure signal lands without a structured `file/line/col`. Resolves the v0.8.0 status/errors disagreement where an app's status flipped to `error` (via process exit code) but the Errors tab said "No errors".
+- **Nav-rail tooltip dismisses on click.** Material tooltip persisted on the just-clicked rail link because the link kept focus through the route change, leaving a stuck "g l" / "g e" floater after keyboard or mouse navigation. Added `matTooltipHideDelay="0"`, `matTooltipShowDelay="300"`, and an explicit `blur()` on click.
+
+### Changed
+
+- `parser-corpus.test.mjs` gains a branch for fixtures whose `expected.errors` is empty — it now asserts the failure signal lands (status flips, at least one error entry is recorded) but does not require a parsed file/line/col.
+
 ## [0.8.0] — 2026-05-20
 
 Strategic theme: **Mature daimon.** v0.5–v0.7 added enormous surface; v0.8 turns inward to polish the surface and harden the internals — a big CLI polish, a reliability pass, self-observability, and a plug-in surface for doctor rules, plus a first-class Tests page that finally lands part of the v0.7.1 dashboard-test debt (H3 contrast audit deferred again to v0.8.1).
