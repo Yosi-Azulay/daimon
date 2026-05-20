@@ -1,6 +1,5 @@
-import { ChangeDetectionStrategy, Component, inject, OnDestroy, OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, OnDestroy, OnInit, signal } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { MatSnackBarModule } from '@angular/material/snack-bar';
 import { NavRailComponent } from './nav-rail';
 import { TopbarComponent } from './topbar';
 import { CommandPaletteComponent } from './command-palette';
@@ -11,7 +10,7 @@ import { DaimonApi } from './daimon-api';
   selector: 'dm-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent, MatSnackBarModule],
+  imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent],
   template: `
     <div class="dm-shell">
       <dm-nav-rail></dm-nav-rail>
@@ -20,7 +19,9 @@ import { DaimonApi } from './daimon-api';
         <router-outlet />
       </main>
     </div>
-    <dm-command-palette></dm-command-palette>
+    @defer (when paletteActivated()) {
+      <dm-command-palette></dm-command-palette>
+    }
   `,
   styles: [`
     :host { display: block; height: 100vh; }
@@ -45,14 +46,24 @@ import { DaimonApi } from './daimon-api';
 export class AppComponent implements OnInit, OnDestroy {
   private readonly api = inject(DaimonApi);
   private readonly keys = inject(KeyboardShortcutsService);
+  readonly paletteActivated = signal(false);
+  private readonly onCmdK = () => {
+    if (this.paletteActivated()) return;
+    this.paletteActivated.set(true);
+    // The palette mounts after defer resolves; re-dispatch so it can hear the
+    // open signal once its own ngOnInit listener is attached.
+    setTimeout(() => window.dispatchEvent(new CustomEvent('daimon:cmdk')), 50);
+  };
 
   ngOnInit(): void {
     this.api.start();
     this.keys.install();
+    window.addEventListener('daimon:cmdk', this.onCmdK);
   }
 
   ngOnDestroy(): void {
     this.api.stop();
     this.keys.uninstall();
+    window.removeEventListener('daimon:cmdk', this.onCmdK);
   }
 }

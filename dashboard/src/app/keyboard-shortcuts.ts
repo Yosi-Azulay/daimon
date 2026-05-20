@@ -1,6 +1,5 @@
-import { inject, Injectable } from '@angular/core';
+import { inject, Injectable, EnvironmentInjector, runInInjectionContext } from '@angular/core';
 import { Router } from '@angular/router';
-import { MatDialog } from '@angular/material/dialog';
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 
 @Component({
@@ -48,10 +47,18 @@ export class ShortcutsHelpComponent {}
 @Injectable({ providedIn: 'root' })
 export class KeyboardShortcutsService {
   private readonly router = inject(Router);
-  private readonly dialog = inject(MatDialog);
+  private readonly envInjector = inject(EnvironmentInjector);
   private pending: 'g' | null = null;
   private pendingTimer?: ReturnType<typeof setTimeout>;
   private handler = (e: KeyboardEvent) => this.onKey(e);
+
+  private async openShortcutsDialog(): Promise<void> {
+    const { MatDialog } = await import('@angular/material/dialog');
+    runInInjectionContext(this.envInjector, () => {
+      const dialog = inject(MatDialog);
+      dialog.open(ShortcutsHelpComponent, { width: '420px' });
+    });
+  }
 
   install(): void { window.addEventListener('keydown', this.handler); }
   uninstall(): void { window.removeEventListener('keydown', this.handler); }
@@ -77,7 +84,7 @@ export class KeyboardShortcutsService {
       return;
     }
 
-    if (e.key === '?') { e.preventDefault(); this.dialog.open(ShortcutsHelpComponent, { width: '420px' }); return; }
+    if (e.key === '?') { e.preventDefault(); void this.openShortcutsDialog(); return; }
     if (e.key === '/') { e.preventDefault(); window.dispatchEvent(new CustomEvent('daimon:focus-filter')); return; }
     if (e.key === 'g') { this.pending = 'g'; this.pendingTimer = setTimeout(() => (this.pending = null), 1200); return; }
     if (e.key === '.') { e.preventDefault(); window.dispatchEvent(new CustomEvent('daimon:toggle-density')); return; }

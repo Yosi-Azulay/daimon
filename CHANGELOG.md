@@ -37,9 +37,14 @@ Strategic theme: **Every signal becomes actionable.** M33 deepens parser coverag
 - **H1 — Vitest + Playwright dashboard tests.** Adds non-trivial dev-deps (Vitest + Playwright + Angular bridge config), a fixture-daemon harness, and per-component specs. Out of scope for the v0.6.0 weekend; will land in v0.6.1.
 - **H3 — WCAG AA contrast audit.** Needs visual inspection across all M3 tonal surfaces under light + dark + reduced-motion. Pushed to v0.6.1 alongside H1; reduced-motion path from M30 is already verified.
 
-### Known (carry-over from v0.5)
+### Fixed (M35 follow-up) — Initial-route bundle back under budget
 
-- **Initial-route gzip transfer is 151 KB** (not 111 KB as the M29 line claims). The growth happened during M30–M32 dashboard polish, before v0.6 work started; M33+M34 are daemon-only and M35 adds &lt;100 B to the initial bundle. Reducing back under 130 KB is a v0.6.1 task and likely needs lazy-loading the snack-bar / dialog modules currently in the initial chunk.
+- **Initial-route gzip transfer: 126.01 KB** (down from 151 KB at v0.5 HEAD; well under the 130 KB v0.6 ceiling). Achieved with three surgical lazy-loads, no functional change:
+  - `MatDialog` import is now dynamic — the keyboard `?` help dialog imports `@angular/material/dialog` only when triggered.
+  - `<dm-command-palette>` is wrapped in `@defer (when paletteActivated())`; the palette mounts on first `Ctrl/⌘+K`, and the activation handler re-dispatches the `daimon:cmdk` event so the user only presses the chord once.
+  - `MatMenu`-based dropdowns in `dm-topbar` and `dm-theme-toggle` are replaced with native-button + `@if` popovers (`HostListener('document:click')` for outside-click close). Removes `MatMenuModule` + CDK overlay/portal from the initial chunk.
+  - `MatSnackBar` is no longer eager in `dm-topbar`; `runProfile()` now uses a small inline DOM toast (positioned via `mat-sys-inverse-surface` tokens to stay in M3). The apps-list (route-lazy) keeps `MatSnackBar` for the `r` restart confirm — that import lives in its own lazy chunk.
+- Bundle structure delta: `MatDialog`/`MatMenu`/`MatSnackBar`/Overlay+Portal moved out of eager into either a deferred chunk or are absent. No functional regression: the help dialog still opens on `?`, the palette still opens on `⌘K`, the workspace + profile dropdowns still work, and the runProfile toast still appears.
 
 ### Added (M36) — Auto-heal expansion
 
