@@ -238,7 +238,7 @@ const ROUTINES: RoutineDef[] = [
               </mat-card-header>
               <mat-card-content>
                 @if (p.error) { <div class="dm-detail dm-warn">{{ p.error }}</div> }
-                @if (p.findings?.length) {
+                @if (p.findings.length) {
                   <ul class="dm-list">
                     @for (f of p.findings; track f.id) {
                       <li><span class="dm-pill" [attr.data-kind]="f.severity === 'error' ? 'err' : f.severity === 'warn' ? 'warn' : 'ok'"><span class="dm-dot"></span>{{ f.severity || 'info' }}</span> <span>{{ f.message }}</span></li>
