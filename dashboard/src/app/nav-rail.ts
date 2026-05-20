@@ -38,12 +38,11 @@ const KEY = 'daimon.nav.expanded';
              [routerLink]="e.path"
              [routerLinkActiveOptions]="{ exact: e.path === '/' }"
              routerLinkActive="active"
-             [matTooltip]="expanded() ? '' : (e.label + ' · ' + e.shortcut)"
+             [matTooltip]="expanded() ? e.shortcut : (e.label + ' · ' + e.shortcut)"
              matTooltipPosition="right">
             <mat-icon fontSet="material-symbols-outlined">{{ e.icon }}</mat-icon>
             @if (expanded()) {
               <span class="dm-rail-label">{{ e.label }}</span>
-              <span class="dm-rail-shortcut">{{ e.shortcut }}</span>
             }
           </a>
         }
@@ -90,14 +89,6 @@ const KEY = 'daimon.nav.expanded';
       color: var(--mat-sys-primary);
     }
     .dm-rail-label { flex: 1; }
-    .dm-rail-shortcut {
-      font-family: 'Roboto Mono', ui-monospace, monospace;
-      font-size: .6875rem;
-      color: var(--mat-sys-on-surface-variant);
-      padding: 2px 6px;
-      border-radius: 4px;
-      background: var(--mat-sys-surface-container-low);
-    }
   `],
 })
 export class NavRailComponent implements OnInit {
