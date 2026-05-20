@@ -4,6 +4,18 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (M41) — CLI polish
+
+- **C1 — Unified help system.** `daimon --help` now groups commands by category (lifecycle / queries / agent verbs / introspection / config / claude / plugin). Per-command help is available as `daimon <verb> --help` (or `daimon help <verb>`) and follows a single template — synopsis, description, options table, examples, exit codes — driven entirely by `cliSurface.ts` so help, completion, and skill text cannot drift.
+- **C2 — Shell completions.** New `daimon completion <bash|zsh|fish|powershell>` emits a completion script to stdout for the chosen shell. All four shells supported at launch. Completions cover verbs, aliases, and common flags; the bash/PowerShell scripts also auto-complete app names by querying a running daemon (`--no-spawn` is used to avoid starting one for completion).
+- **C3 — Color and TTY awareness.** New `--no-color` flag and `NO_COLOR` env var disable ANSI coloring. When stdout is **not** a TTY (the agent / piped case), output is **never** colored — compact JSON default from M26 is preserved unchanged. TTY mode colors errors red, hints dim, headings bold, keywords cyan. `FORCE_COLOR=1` honored as the per-CI override.
+- **C4 — Levenshtein "did-you-mean" suggestions.** Unknown commands and unknown apps now emit a `did you mean '<X>'?` hint. Tuned to a 2-edit-distance threshold to avoid noise. Apps lookup polls the running daemon.
+- **C5 — Flag convention block in `--help`.** A new "flag conventions" section in the main help documents the canonical flag vocabulary (`--timeout`, `--since`, `--budget`, `--until`, `--app`, `--profile`, `--full/--compact`, `--stream`, `--explain`, `--dry-run`, `--yes`). No flag renames — convergence is documented.
+- **C6 — Muscle-memory aliases.** New aliases: `daimon ls` → `list`, `daimon ps` → `status`, `daimon log` → `logs`. Aliases are documented in `--help` but not duplicated in the main verb list and do not conflict with existing verbs.
+- **C7 — Error message rewrite.** CLI errors now carry a `{ "error": "<short>", "hint": "<actionable next step>", "exit": <code> }` shape in JSON (piped) mode. TTY mode renders the one-line human variant (`error: …` + dim `hint: …`). The "daimon is not running" error nudges the user to `daimon daemon start --detach`. Unknown command / unknown app errors carry suggestions.
+- **C8 — `daimon --version` / `daimon --about`.** `--version` now prints the bare SemVer string (was `{"version":"..."}`). `--about` prints `{version, nodeVersion, platform, configPath, lockPath, running, runningPid, runningPort, claudeArtifacts}` — useful for bug reports. `daimon self` (new lightweight verb) reaches the daemon's `/api/self` endpoint introduced in M43.
+- **Test surface.** New `test/cli-surface.test.mjs` asserts every subcommand has the full help template, aliases resolve to canonical verbs, did-you-mean returns sensible candidates within 2 edits, and the completion script generator produces non-empty output for all four shells.
+
 ## [0.7.0] — 2026-05-20
 
 Strategic theme: **Memory and reach.** v0.7 makes the *past* actionable (history surfaces) and broadens *what* daimon can manage (polyglot dev servers, whole-workspace orchestration, refreshed TUI).

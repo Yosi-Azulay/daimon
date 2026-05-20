@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import os from 'node:os';
+import path from 'node:path';
 import { loadConfig } from './config.js';
 import { discoverApps } from './discovery.js';
 import { runDoctor } from './doctor.js';
@@ -7,7 +8,19 @@ import { findPortHolder, killHolder } from './portDiag.js';
 import { readSession } from './session.js';
 import { readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
 import { DAIMON_VERSION } from './version.js';
-import { CLI_SUBCOMMANDS, findSubcommand, usageString } from './cliSurface.js';
+import { CLI_SUBCOMMANDS, CLI_ALIASES, findSubcommand, usageString } from './cliSurface.js';
+import {
+  setColorOverride,
+  isColorEnabled,
+  color,
+  renderMainHelp,
+  renderSubcommandHelp,
+  suggestCommand,
+  suggestApp,
+  formatError,
+  formatHumanError,
+  emitCompletion,
+} from './cliHelp.js';
 import {
   checkVersionDriftAndNudge,
   COMMAND_NAMES as CLAUDE_COMMAND_NAMES,
@@ -25,14 +38,52 @@ if (nodeMajor && nodeMajor < 20) {
 }
 
 let noSpawnFlag = false;
+let helpRequested = false;
 
 function fail(msg: string, code = 1): never {
+  if (msg.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(msg);
+      const exit = typeof parsed.exit === 'number' ? parsed.exit : code;
+      if (isColorEnabled()) {
+        process.stderr.write(formatHumanError({ error: parsed.error ?? msg, hint: parsed.hint }) + '\n');
+      } else {
+        process.stderr.write(JSON.stringify({ error: parsed.error, ...(parsed.hint ? { hint: parsed.hint } : {}), exit }) + '\n');
+      }
+      process.exit(exit);
+    } catch {}
+  }
   process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
   process.exit(code);
 }
 
+function failHint(error: string, hint?: string, exit = 1): never {
+  if (isColorEnabled()) {
+    process.stderr.write(formatHumanError({ error, hint }) + '\n');
+  } else {
+    process.stderr.write(formatError({ error, hint, exit }) + '\n');
+  }
+  process.exit(exit);
+}
+
 function out(obj: unknown): void {
   process.stdout.write(JSON.stringify(obj) + '\n');
+}
+
+async function suggestUnknownApp(name: string): Promise<never> {
+  let known: string[] = [];
+  try {
+    const r = await fetch(getBaseUrl() + '/api/apps', { headers: authHeaders() });
+    if (r.ok) {
+      const arr = await r.json();
+      if (Array.isArray(arr)) known = arr.map((a: any) => a.name).filter(Boolean);
+    }
+  } catch {}
+  const guess = suggestApp(name, known);
+  const hint = guess
+    ? `did you mean '${guess}'? — list apps with \`daimon list\``
+    : `list available with \`daimon list\``;
+  failHint(`unknown app: ${name}`, hint);
 }
 
 function readApiPort(): number {
@@ -107,7 +158,7 @@ async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch {
-    fail(JSON.stringify({ error: 'daimon is not running — start it with: daimon daemon start --detach' }));
+    failHint('daimon is not running', 'start it with: daimon daemon start --detach');
   }
 }
 
@@ -119,7 +170,7 @@ async function callJson(pathname: string, method: 'GET' | 'POST', payload: unkno
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch {
-    fail(JSON.stringify({ error: 'daimon is not running — start it with: daimon daemon start --detach' }));
+    failHint('daimon is not running', 'start it with: daimon daemon start --detach');
   }
 }
 
@@ -167,6 +218,7 @@ interface Flags {
   accept?: boolean;
   path?: string;
   goal?: string;
+  self?: boolean;
   passthrough: string[];
 }
 
@@ -210,6 +262,7 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--accept') f.accept = true;
     else if (a === '--path') f.path = args[++i];
     else if (a === '--goal') f.goal = args[++i];
+    else if (a === '--self') f.self = true;
     else f.positional.push(a);
   }
   return f;
@@ -235,18 +288,44 @@ function durationToSeconds(s: string): number | null {
 }
 
 function printHelp(): void {
-  const w = Math.max(...CLI_SUBCOMMANDS.map(c => c.name.length));
-  const lines = [
-    `daimon v${DAIMON_VERSION}`,
-    'usage: daimon <command> [args]',
-    '',
-  ];
-  for (const c of CLI_SUBCOMMANDS) {
-    lines.push(`  ${c.name.padEnd(w)}  ${c.summary}`);
-  }
-  lines.push('');
-  lines.push('Flags: --no-spawn (skip auto-spawn), DAIMON_PORT=N (target a non-default daemon), DAIMON_NO_SPAWN=1');
-  process.stdout.write(lines.join('\n') + '\n');
+  process.stdout.write(renderMainHelp() + '\n');
+}
+
+function printSubHelp(name: string): boolean {
+  const c = findSubcommand(name);
+  if (!c) return false;
+  process.stdout.write(renderSubcommandHelp(c) + '\n');
+  return true;
+}
+
+function printAbout(): void {
+  const lock = readLock();
+  let configPath: string | null = null;
+  try {
+    const r = loadConfig();
+    if (r.kind === 'loaded') configPath = r.path;
+  } catch {}
+  const lockPath = path.join(os.homedir(), '.daimon', 'lock.json');
+  const claudeArtifacts: string[] = [];
+  try {
+    const m = readClaudeManifest(defaultClaudeDir());
+    if (m) {
+      if (m.skill) claudeArtifacts.push('skill');
+      if (m.agent) claudeArtifacts.push('agent');
+      if (Array.isArray((m as any).commands) && (m as any).commands.length) claudeArtifacts.push('commands');
+    }
+  } catch {}
+  out({
+    version: DAIMON_VERSION,
+    nodeVersion: process.versions.node,
+    platform: process.platform,
+    configPath,
+    lockPath,
+    running: !!lock,
+    runningPid: lock?.pid ?? null,
+    runningPort: lock?.apiPort ?? null,
+    claudeArtifacts,
+  });
 }
 
 function parseClaudeFlags(args: string[]): { positional: string[]; flags: ClaudeFlags } {
@@ -413,15 +492,45 @@ async function handleDaemon(rest: string[]): Promise<void> {
 async function main() {
   const argv = process.argv.slice(2).filter(a => {
     if (a === '--no-spawn') { noSpawnFlag = true; return false; }
+    if (a === '--no-color') { setColorOverride('off'); return false; }
+    if (a === '--help' || a === '-h') { helpRequested = true; return false; }
     return true;
   });
 
-  const [cmd, ...rest] = argv;
+  let [cmd, ...rest] = argv;
 
   try { checkVersionDriftAndNudge(); } catch {}
 
-  if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { printHelp(); return; }
-  if (cmd === '--version' || cmd === '-v') { out({ version: DAIMON_VERSION }); return; }
+  if (!cmd && helpRequested) { printHelp(); return; }
+  if (!cmd) { printHelp(); return; }
+  if (cmd === 'help') { const sub = rest[0]; if (sub && printSubHelp(sub)) return; printHelp(); return; }
+  if (cmd === '--version' || cmd === '-v') { process.stdout.write(DAIMON_VERSION + '\n'); return; }
+  if (cmd === '--about') { printAbout(); return; }
+
+  if (CLI_ALIASES[cmd]) cmd = CLI_ALIASES[cmd];
+
+  if (helpRequested) {
+    if (printSubHelp(cmd)) return;
+    printHelp();
+    return;
+  }
+
+  if (cmd === 'completion') {
+    const shell = rest[0];
+    if (!shell) failHint('missing shell', 'usage: daimon completion <bash|zsh|fish|powershell>');
+    const r = emitCompletion(shell);
+    if (!r.ok) failHint(r.error, 'supported shells: bash, zsh, fish, powershell');
+    process.stdout.write(r.script);
+    return;
+  }
+
+  if (cmd === 'self') {
+    await ensureDaemon();
+    const r = await call('/api/self');
+    if (r.status === 404) failHint('self endpoint not available', 'daemon may be from an older daimon version — run `daimon daemon restart`');
+    out(r.body);
+    return;
+  }
 
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
   if (cmd === 'claude') { await handleClaude(rest); return; }
@@ -563,21 +672,21 @@ async function main() {
     case 'stop':
     case 'restart': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: `usage: daimon ${cmd} <name>` }));
+      if (!name) failHint(`missing app name`, `usage: daimon ${cmd} <name>`);
       const suffix = cmd === 'status' ? '' : '/' + cmd;
       const method: 'GET' | 'POST' = cmd === 'status' ? 'GET' : 'POST';
       const qs = cmd === 'status' ? formatQuery(f) : '';
       const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}${qs}`, method);
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
     }
     case 'start': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon start <name> [--with-deps]' }));
+      if (!name) failHint('missing app name', 'usage: daimon start <name> [--with-deps]');
       const qs = f.withDeps ? '?withDeps=1' : '';
       const r = await call(`/api/apps/${encodeURIComponent(name)}/start${qs}`, 'POST');
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
     }
@@ -946,8 +1055,11 @@ async function main() {
       out(r.body);
       return;
     }
-    default:
-      fail(JSON.stringify({ error: `unknown command: ${cmd}. ${usageString()}` }));
+    default: {
+      const guess = suggestCommand(cmd);
+      const hint = guess ? `did you mean '${guess}'? — run \`daimon --help\` to list commands` : 'run `daimon --help` to list commands';
+      failHint(`unknown command: ${cmd}`, hint);
+    }
   }
 }
 

@@ -1,51 +1,549 @@
+export type CliGroup =
+  | 'lifecycle'
+  | 'queries'
+  | 'agent'
+  | 'introspection'
+  | 'config'
+  | 'claude'
+  | 'plugin';
+
+export interface CliOption {
+  flag: string;
+  arg?: string;
+  description: string;
+}
+
 export interface CliSubcommand {
   name: string;
   args: string;
   summary: string;
   example: string;
   needsDaemon: boolean;
+  group: CliGroup;
+  description: string;
+  options?: CliOption[];
+  examples?: string[];
+  exitCodes?: { code: number; meaning: string }[];
+  aliases?: string[];
 }
 
-export const CLI_SUBCOMMANDS: CliSubcommand[] = [
-  { name: 'list', args: '[--tag <name>] [--workspace <label>] [--full|--compact] [--stream] [--explain]', summary: 'List apps. Compact by default; --full for v0.4 shape; --stream for NDJSON; --explain wraps with _meta (searchRoots, scanned, rejected, suggestion).', example: 'daimon list', needsDaemon: true },
-  { name: 'status', args: '<name> [--full|--compact]', summary: 'Get the current status of one app. Compact by default.', example: 'daimon status web-admin', needsDaemon: true },
-  { name: 'errors', args: '<name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact]', summary: 'Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}).', example: 'daimon errors web-admin --since 5m', needsDaemon: true },
-  { name: 'events', args: '[--since 1h] [--app <name>] [--stream]', summary: 'Get the event log. --stream emits NDJSON until SIGINT.', example: 'daimon events --since 1h', needsDaemon: true },
-  { name: 'wait', args: '<name> [--until serving|healthy|stopped|error] [--timeout 60s]', summary: 'Block until app reaches the given state.', example: 'daimon wait web-admin --until healthy', needsDaemon: true },
-  { name: 'ensure', args: '<name> [--until serving|healthy] [--timeout 180s]', summary: 'One-call: start if needed, block to target state, return terminal state. Idempotent.', example: 'daimon ensure web-admin', needsDaemon: true },
-  { name: 'ensure-up', args: '<profile> [--until serving|healthy] [--timeout 300s]', summary: 'One-call: cascade-start every app in the profile and wait for each to reach target.', example: 'daimon ensure-up fullstack', needsDaemon: true },
-  { name: 'overview', args: '[--workspace <label>] [--profile <name>] [--budget <tokens>]', summary: 'Decision-ready snapshot: totals, byStatus, needsAttention (with first parsed error), recentlyChanged. First call in a session. --budget caps the response size for agents; overflow collapses to _meta.omitted.', example: 'daimon overview --budget 1500', needsDaemon: true },
-  { name: 'focus', args: '<name> [--until serving|healthy|stable] [--timeout 180s]', summary: 'One round-trip subscribe-then-act: streams NDJSON of status/error/url events for one app until target state or timeout. Designed for agents.', example: 'daimon focus web-admin --until stable', needsDaemon: true },
-  { name: 'try-fix', args: '<name> [--until serving|healthy] [--timeout 180s]', summary: 'Composite: run doctor --auto-fix on permitted rules, restart the app, wait for target, return {before,after,fixed,stillFailing}. Never edits user source.', example: 'daimon try-fix web-admin', needsDaemon: true },
-  { name: 'orchestrate', args: '<profile> [--goal serving|healthy|stable] [--timeout 300s] [--dry-run] [--budget <tokens>]', summary: 'Bring up a whole profile in one call: cascade-start, wait for goal, run ONE try-fix round on stragglers. Returns {profile, goal, perApp, totalMs, allReached}. --dry-run reports planned order only. Designed for agents.', example: 'daimon orchestrate fullstack --goal stable', needsDaemon: true },
-  { name: 'pin-health', args: '<name> [--accept] [--path <p>]', summary: 'Show the auto-discovered health-probe path for an app; --accept persists it as overrides.<name>.healthProbePath in daimon.config.json and soft-reloads. Default behaviour is opt-in: nothing is written without --accept.', example: 'daimon pin-health api --accept', needsDaemon: true },
-  { name: 'logs', args: '<name> [--tail N] [--since 30s]', summary: 'Recent log lines for an app.', example: 'daimon logs web-admin --tail 100', needsDaemon: true },
-  { name: 'start', args: '<name> [--with-deps]', summary: 'Start an app.', example: 'daimon start web-admin', needsDaemon: true },
-  { name: 'stop', args: '<name>', summary: 'Stop an app.', example: 'daimon stop web-admin', needsDaemon: true },
-  { name: 'restart', args: '<name>', summary: 'Restart an app.', example: 'daimon restart web-admin', needsDaemon: true },
-  { name: 'up', args: '[<profile>]', summary: 'Start a profile (or autoStart). Waits for each to reach serving.', example: 'daimon up fullstack', needsDaemon: true },
-  { name: 'down', args: '[<profile>]', summary: 'Stop a profile (or all apps).', example: 'daimon down', needsDaemon: true },
-  { name: 'history', args: '<name>', summary: 'Summary metrics (uptime%, restarts, compile p50/p95, top errors).', example: 'daimon history web-admin', needsDaemon: true },
-  { name: 'why', args: '<name>', summary: 'Last status transition + 5 preceding events.', example: 'daimon why web-admin', needsDaemon: true },
-  { name: 'why-empty', args: '', summary: 'Explain why `daimon list` is empty: configured searchRoots, scanned/rejected counts, suggested next step.', example: 'daimon why-empty', needsDaemon: true },
-  { name: 'discover', args: '[--dry-run]', summary: 'Run discovery without changing state. Prints _meta: searchRoots, scanned, rejected per folder, suggestion.', example: 'daimon discover --dry-run', needsDaemon: true },
-  { name: 'export-config', args: '[--redacted]', summary: 'Emit the active config to stdout. --redacted replaces apiToken with "<redacted>" and rewrites home paths to ~/...', example: 'daimon export-config --redacted', needsDaemon: false },
-  { name: 'tasks', args: '<name>', summary: 'List discovered non-serve tasks.', example: 'daimon tasks web-admin', needsDaemon: true },
-  { name: 'run', args: '<name> <task> [--watch] [-- args...]', summary: 'Run a discovered task.', example: 'daimon run web-admin test', needsDaemon: true },
-  { name: 'snapshot', args: '<name>', summary: 'Write a snapshot of app state to ~/.daimon/snapshots.', example: 'daimon snapshot web-admin', needsDaemon: true },
-  { name: 'env', args: '<name> [--use <file>]', summary: 'List or set the active env file for an app.', example: 'daimon env web-admin --use .env.staging', needsDaemon: true },
-  { name: 'clean', args: '<name> [--deep] [--yes]', summary: 'Remove build artifacts for an app.', example: 'daimon clean web-admin --yes', needsDaemon: true },
-  { name: 'record', args: '', summary: 'Toggle session recording.', example: 'daimon record', needsDaemon: true },
-  { name: 'replay', args: '<session.jsonl> [--speed N]', summary: 'Replay a recorded session.', example: 'daimon replay session.jsonl', needsDaemon: true },
-  { name: 'doctor', args: '[--auto-fix] [--dry-run]', summary: 'Sanity-check config + env. --auto-fix repairs orphan daemon, stale lock, missing search root, corrupt history db.', example: 'daimon doctor --auto-fix', needsDaemon: false },
-  { name: 'free-port', args: '<port> [--force]', summary: 'Diagnose / free a port.', example: 'daimon free-port 4200 --force', needsDaemon: false },
-  { name: 'daemon', args: 'start|stop|status|restart|attach|install-service [--detach] [--headless]', summary: 'Manage the daimon daemon.', example: 'daimon daemon status', needsDaemon: false },
-  { name: 'claude', args: 'install|update|uninstall|status [--skill] [--commands] [--agent] [--all] [--dir <path>] [--yes]', summary: 'Install/update Claude Code integration artifacts.', example: 'daimon claude install --all', needsDaemon: false },
-  { name: 'init', args: '[--force] [--auto]', summary: 'Create a daimon config in cwd; --auto picks safe defaults (no prompts) for workspaces with nx/angular/vite markers.', example: 'daimon init --auto', needsDaemon: false },
+export const CLI_GROUPS: { id: CliGroup; title: string }[] = [
+  { id: 'lifecycle', title: 'lifecycle' },
+  { id: 'queries', title: 'queries' },
+  { id: 'agent', title: 'agent verbs' },
+  { id: 'introspection', title: 'introspection' },
+  { id: 'config', title: 'config' },
+  { id: 'claude', title: 'claude' },
+  { id: 'plugin', title: 'plugin' },
 ];
 
+const stdExit = [
+  { code: 0, meaning: 'success' },
+  { code: 1, meaning: 'error' },
+];
+
+const exitWithTimeout = [
+  ...stdExit,
+  { code: 2, meaning: 'target state not reached within --timeout' },
+];
+
+export const CLI_SUBCOMMANDS: CliSubcommand[] = [
+  {
+    name: 'list',
+    args: '[--tag <name>] [--workspace <label>] [--full|--compact] [--stream] [--explain]',
+    summary: 'List apps. Compact by default; --full for v0.4 shape; --stream for NDJSON; --explain wraps with _meta (searchRoots, scanned, rejected, suggestion).',
+    description: 'List discovered apps. Compact JSON is the default; pass --full for the v0.4-shape full snapshot. --stream emits NDJSON until SIGINT. --explain wraps the response with _meta describing discovery.',
+    example: 'daimon list',
+    examples: ['daimon list', 'daimon list --tag web', 'daimon list --full --workspace fullstack', 'daimon list --stream'],
+    options: [
+      { flag: '--tag', arg: '<name>', description: 'Filter to apps carrying this tag (repeatable).' },
+      { flag: '--workspace', arg: '<label>', description: 'Filter to a workspace label.' },
+      { flag: '--full', description: 'Emit the full v0.4-shape snapshot per app.' },
+      { flag: '--compact', description: 'Emit compact JSON (default).' },
+      { flag: '--stream', description: 'NDJSON stream until SIGINT.' },
+      { flag: '--explain', description: 'Wrap with discovery _meta (searchRoots, scanned, rejected, suggestion).' },
+    ],
+    needsDaemon: true,
+    group: 'queries',
+    aliases: ['ls'],
+    exitCodes: stdExit,
+  },
+  {
+    name: 'status',
+    args: '<name> [--full|--compact]',
+    summary: 'Get the current status of one app. Compact by default.',
+    description: 'Show the current status of one app. Compact JSON is the default.',
+    example: 'daimon status web-admin',
+    options: [
+      { flag: '--full', description: 'Full v0.4-shape snapshot.' },
+      { flag: '--compact', description: 'Compact JSON (default).' },
+    ],
+    needsDaemon: true,
+    group: 'queries',
+    aliases: ['ps'],
+    exitCodes: stdExit,
+  },
+  {
+    name: 'errors',
+    args: '<name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact]',
+    summary: 'Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}).',
+    description: 'Deduplicated parsed errors for an app. Compact JSON by default.',
+    example: 'daimon errors web-admin --since 5m',
+    options: [
+      { flag: '--since', arg: '<duration>', description: 'Time window (e.g. 30s, 5m, 1h).' },
+      { flag: '--since-last', description: 'Only errors since the previous --since-last call (per --client).' },
+      { flag: '--client', arg: '<id>', description: 'Cursor identity for --since-last.' },
+      { flag: '--structured', description: 'Emit only parsed {file,line,col,code,message} rows.' },
+      { flag: '--full', description: 'Full per-error entries.' },
+      { flag: '--compact', description: 'Compact JSON (default).' },
+    ],
+    needsDaemon: true,
+    group: 'queries',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'events',
+    args: '[--since 1h] [--app <name>] [--stream]',
+    summary: 'Get the event log. --stream emits NDJSON until SIGINT.',
+    description: 'Get the global event log. --stream emits NDJSON until SIGINT. Filter to a single app with --app.',
+    example: 'daimon events --since 1h',
+    options: [
+      { flag: '--since', arg: '<duration>', description: 'Time window.' },
+      { flag: '--app', arg: '<name>', description: 'Filter to a single app.' },
+      { flag: '--stream', description: 'NDJSON stream.' },
+    ],
+    needsDaemon: true,
+    group: 'queries',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'wait',
+    args: '<name> [--until serving|healthy|stopped|error] [--timeout 60s]',
+    summary: 'Block until app reaches the given state.',
+    description: 'Block until an app reaches the given terminal state. Exits 2 on timeout.',
+    example: 'daimon wait web-admin --until healthy',
+    options: [
+      { flag: '--until', arg: '<state>', description: 'Target state (serving|healthy|stopped|error). Default: serving.' },
+      { flag: '--timeout', arg: '<duration>', description: 'Max wait, parsed as 60s/5m (default 60s).' },
+    ],
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: exitWithTimeout,
+  },
+  {
+    name: 'ensure',
+    args: '<name> [--until serving|healthy] [--timeout 180s]',
+    summary: 'One-call: start if needed, block to target state, return terminal state. Idempotent.',
+    description: 'Idempotent start+wait: starts the app if not already serving, then blocks until --until is reached.',
+    example: 'daimon ensure web-admin',
+    options: [
+      { flag: '--until', arg: '<state>', description: 'Target state (serving|healthy). Default: healthy.' },
+      { flag: '--timeout', arg: '<duration>', description: 'Max wait (default 180s).' },
+    ],
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: exitWithTimeout,
+  },
+  {
+    name: 'ensure-up',
+    args: '<profile> [--until serving|healthy] [--timeout 300s]',
+    summary: 'One-call: cascade-start every app in the profile and wait for each to reach target.',
+    description: 'Cascade-start every app in the profile and wait for each to reach the target state.',
+    example: 'daimon ensure-up fullstack',
+    options: [
+      { flag: '--until', arg: '<state>', description: 'serving|healthy (default: healthy).' },
+      { flag: '--timeout', arg: '<duration>', description: 'Global budget (default 300s).' },
+    ],
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: exitWithTimeout,
+  },
+  {
+    name: 'overview',
+    args: '[--workspace <label>] [--profile <name>] [--budget <tokens>]',
+    summary: 'Decision-ready snapshot: totals, byStatus, needsAttention (with first parsed error), recentlyChanged. First call in a session. --budget caps the response size for agents; overflow collapses to _meta.omitted.',
+    description: 'Decision-ready snapshot — totals, byStatus, needsAttention (with first parsed error), recentlyChanged. Designed as the first call in an agent session.',
+    example: 'daimon overview --budget 1500',
+    options: [
+      { flag: '--workspace', arg: '<label>', description: 'Filter to one workspace label.' },
+      { flag: '--profile', arg: '<name>', description: 'Filter to apps in this profile.' },
+      { flag: '--budget', arg: '<tokens>', description: 'Cap response size; overflow collapses to _meta.omitted.' },
+    ],
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'focus',
+    args: '<name> [--until serving|healthy|stable] [--timeout 180s]',
+    summary: 'One round-trip subscribe-then-act: streams NDJSON of status/error/url events for one app until target state or timeout. Designed for agents.',
+    description: 'Subscribe-then-act: stream NDJSON of status/error/url events for one app until --until or --timeout.',
+    example: 'daimon focus web-admin --until stable',
+    options: [
+      { flag: '--until', arg: '<state>', description: 'serving|healthy|stable (default: healthy).' },
+      { flag: '--timeout', arg: '<duration>', description: 'Max wait (default 180s).' },
+    ],
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: exitWithTimeout,
+  },
+  {
+    name: 'try-fix',
+    args: '<name> [--until serving|healthy] [--timeout 180s]',
+    summary: 'Composite: run doctor --auto-fix on permitted rules, restart the app, wait for target, return {before,after,fixed,stillFailing}. Never edits user source.',
+    description: 'Run doctor --auto-fix on permitted rules, restart the app, wait for target. Never edits user source.',
+    example: 'daimon try-fix web-admin',
+    options: [
+      { flag: '--until', arg: '<state>', description: 'serving|healthy (default: healthy).' },
+      { flag: '--timeout', arg: '<duration>', description: 'Max wait (default 180s).' },
+    ],
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: exitWithTimeout,
+  },
+  {
+    name: 'orchestrate',
+    args: '<profile> [--goal serving|healthy|stable] [--timeout 300s] [--dry-run] [--budget <tokens>]',
+    summary: 'Bring up a whole profile in one call: cascade-start, wait for goal, run ONE try-fix round on stragglers. Returns {profile, goal, perApp, totalMs, allReached}. --dry-run reports planned order only. Designed for agents.',
+    description: 'Bring up a whole profile in one call: cascade-start, wait, one try-fix round on stragglers.',
+    example: 'daimon orchestrate fullstack --goal stable',
+    options: [
+      { flag: '--goal', arg: '<state>', description: 'serving|healthy|stable (default: healthy).' },
+      { flag: '--timeout', arg: '<duration>', description: 'Global budget (default 300s).' },
+      { flag: '--dry-run', description: 'Print planned order without executing.' },
+      { flag: '--budget', arg: '<tokens>', description: 'Cap response size.' },
+    ],
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: exitWithTimeout,
+  },
+  {
+    name: 'pin-health',
+    args: '<name> [--accept] [--path <p>]',
+    summary: 'Show the auto-discovered health-probe path for an app; --accept persists it as overrides.<name>.healthProbePath in daimon.config.json and soft-reloads. Default behaviour is opt-in: nothing is written without --accept.',
+    description: 'Show the auto-discovered health-probe path for an app. --accept persists it to daimon.config.json.',
+    example: 'daimon pin-health api --accept',
+    options: [
+      { flag: '--accept', description: 'Persist the candidate path to overrides.<name>.healthProbePath.' },
+      { flag: '--path', arg: '<p>', description: 'Override the candidate path explicitly.' },
+    ],
+    needsDaemon: true,
+    group: 'config',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'logs',
+    args: '<name> [--tail N] [--since 30s]',
+    summary: 'Recent log lines for an app.',
+    description: 'Recent log lines for an app.',
+    example: 'daimon logs web-admin --tail 100',
+    options: [
+      { flag: '--tail', arg: '<N>', description: 'Last N lines (default 50).' },
+      { flag: '--since', arg: '<duration>', description: 'Time window.' },
+    ],
+    needsDaemon: true,
+    group: 'queries',
+    aliases: ['log'],
+    exitCodes: stdExit,
+  },
+  {
+    name: 'start',
+    args: '<name> [--with-deps]',
+    summary: 'Start an app.',
+    description: 'Start an app.',
+    example: 'daimon start web-admin',
+    options: [
+      { flag: '--with-deps', description: 'Also start declared dependencies.' },
+    ],
+    needsDaemon: true,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'stop',
+    args: '<name>',
+    summary: 'Stop an app.',
+    description: 'Stop an app.',
+    example: 'daimon stop web-admin',
+    needsDaemon: true,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'restart',
+    args: '<name>',
+    summary: 'Restart an app.',
+    description: 'Restart an app.',
+    example: 'daimon restart web-admin',
+    needsDaemon: true,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'up',
+    args: '[<profile>]',
+    summary: 'Start a profile (or autoStart). Waits for each to reach serving.',
+    description: 'Start a profile (or autoStart). Waits for each to reach serving.',
+    example: 'daimon up fullstack',
+    needsDaemon: true,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'down',
+    args: '[<profile>]',
+    summary: 'Stop a profile (or all apps).',
+    description: 'Stop a profile (or all apps).',
+    example: 'daimon down',
+    needsDaemon: true,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'history',
+    args: '<name>',
+    summary: 'Summary metrics (uptime%, restarts, compile p50/p95, top errors).',
+    description: 'Summary metrics for an app (uptime%, restarts, compile p50/p95, top errors).',
+    example: 'daimon history web-admin',
+    needsDaemon: true,
+    group: 'queries',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'why',
+    args: '<name>',
+    summary: 'Last status transition + 5 preceding events.',
+    description: 'Explain the most recent state transition with the 5 events leading up to it.',
+    example: 'daimon why web-admin',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'why-empty',
+    args: '',
+    summary: 'Explain why `daimon list` is empty: configured searchRoots, scanned/rejected counts, suggested next step.',
+    description: 'Explain why `daimon list` is empty — search roots, scanned/rejected counts, suggestion.',
+    example: 'daimon why-empty',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'discover',
+    args: '[--dry-run]',
+    summary: 'Run discovery without changing state. Prints _meta: searchRoots, scanned, rejected per folder, suggestion.',
+    description: 'Run discovery without changing state. Emits per-folder scanned/rejected and suggestion.',
+    example: 'daimon discover --dry-run',
+    options: [
+      { flag: '--dry-run', description: 'Report planned discovery without persisting.' },
+    ],
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'export-config',
+    args: '[--redacted]',
+    summary: 'Emit the active config to stdout. --redacted replaces apiToken with "<redacted>" and rewrites home paths to ~/...',
+    description: 'Emit the active config to stdout. --redacted replaces apiToken with "<redacted>" and home paths with ~/...',
+    example: 'daimon export-config --redacted',
+    options: [
+      { flag: '--redacted', description: 'Replace apiToken and home paths.' },
+    ],
+    needsDaemon: false,
+    group: 'config',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'tasks',
+    args: '<name>',
+    summary: 'List discovered non-serve tasks.',
+    description: 'List discovered non-serve tasks for an app.',
+    example: 'daimon tasks web-admin',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'run',
+    args: '<name> <task> [--watch] [-- args...]',
+    summary: 'Run a discovered task.',
+    description: 'Run a discovered task. Pass extra args after `--`.',
+    example: 'daimon run web-admin test',
+    options: [
+      { flag: '--watch', description: 'Keep running and stream output.' },
+    ],
+    needsDaemon: true,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'snapshot',
+    args: '<name>',
+    summary: 'Write a snapshot of app state to ~/.daimon/snapshots.',
+    description: 'Write a diagnostic snapshot of app state to ~/.daimon/snapshots.',
+    example: 'daimon snapshot web-admin',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'env',
+    args: '<name> [--use <file>]',
+    summary: 'List or set the active env file for an app.',
+    description: 'List or set the active env file for an app.',
+    example: 'daimon env web-admin --use .env.staging',
+    options: [
+      { flag: '--use', arg: '<file>', description: 'Activate an env file for the app.' },
+    ],
+    needsDaemon: true,
+    group: 'config',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'clean',
+    args: '<name> [--deep] [--yes]',
+    summary: 'Remove build artifacts for an app.',
+    description: 'Remove build artifacts for an app. --deep also removes node_modules; --yes skips the confirmation prompt.',
+    example: 'daimon clean web-admin --yes',
+    options: [
+      { flag: '--deep', description: 'Also remove node_modules / language-specific deps caches.' },
+      { flag: '--yes', description: 'Skip confirmation prompt.' },
+    ],
+    needsDaemon: true,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'record',
+    args: '',
+    summary: 'Toggle session recording.',
+    description: 'Toggle JSONL session recording (~/.daimon/sessions).',
+    example: 'daimon record',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'replay',
+    args: '<session.jsonl> [--speed N]',
+    summary: 'Replay a recorded session.',
+    description: 'Replay a recorded session.',
+    example: 'daimon replay session.jsonl',
+    options: [
+      { flag: '--speed', arg: '<N>', description: 'Speed multiplier (default 1).' },
+    ],
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'doctor',
+    args: '[--auto-fix] [--dry-run] [--self]',
+    summary: 'Sanity-check config + env. --auto-fix repairs orphan daemon, stale lock, missing search root, corrupt history db. --self checks daimon\'s own metrics.',
+    description: 'Sanity-check config + env. --auto-fix repairs known issues; --dry-run shows what would change. --self runs the self-observability checks (heap, event-loop lag, history.db query p95).',
+    example: 'daimon doctor --auto-fix',
+    options: [
+      { flag: '--auto-fix', description: 'Apply permitted repairs.' },
+      { flag: '--dry-run', description: 'Report planned changes without writing.' },
+      { flag: '--self', description: 'Run self-observability checks against the running daemon.' },
+    ],
+    needsDaemon: false,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'free-port',
+    args: '<port> [--force]',
+    summary: 'Diagnose / free a port.',
+    description: 'Show which process is holding a port. --force kills it.',
+    example: 'daimon free-port 4200 --force',
+    options: [
+      { flag: '--force', description: 'Kill the holder.' },
+    ],
+    needsDaemon: false,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'daemon',
+    args: 'start|stop|status|restart|attach|install-service [--detach] [--headless]',
+    summary: 'Manage the daimon daemon.',
+    description: 'Manage the daimon daemon lifecycle.',
+    example: 'daimon daemon status',
+    options: [
+      { flag: '--detach', description: 'Spawn detached (for `start`).' },
+      { flag: '--headless', description: 'Start without the TUI (for `start`).' },
+    ],
+    needsDaemon: false,
+    group: 'lifecycle',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'claude',
+    args: 'install|update|uninstall|status [--skill] [--commands] [--agent] [--all] [--dir <path>] [--yes]',
+    summary: 'Install/update Claude Code integration artifacts.',
+    description: 'Install/update/uninstall the Claude Code integration artifacts.',
+    example: 'daimon claude install --all',
+    needsDaemon: false,
+    group: 'claude',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'init',
+    args: '[--force] [--auto]',
+    summary: 'Create a daimon config in cwd; --auto picks safe defaults (no prompts) for workspaces with nx/angular/vite markers.',
+    description: 'Create a daimon config in cwd. --auto picks safe defaults for known workspace markers.',
+    example: 'daimon init --auto',
+    options: [
+      { flag: '--force', description: 'Overwrite an existing daimon.config.json.' },
+      { flag: '--auto', description: 'Skip prompts; pick safe defaults.' },
+    ],
+    needsDaemon: false,
+    group: 'config',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'completion',
+    args: '<bash|zsh|fish|powershell>',
+    summary: 'Emit a shell completion script for the given shell.',
+    description: 'Emit a shell-completion script for bash, zsh, fish, or PowerShell. Pipe the output to the appropriate per-shell location (see README).',
+    example: 'daimon completion bash > /etc/bash_completion.d/daimon',
+    needsDaemon: false,
+    group: 'config',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'plugin',
+    args: 'list|show <name>|validate <path>',
+    summary: 'Manage doctor plug-ins.',
+    description: 'Manage doctor plug-ins. `list` shows installed plug-ins with status; `show <name>` prints a plug-in manifest; `validate <path>` sanity-checks a plug-in file.',
+    example: 'daimon plugin list',
+    needsDaemon: true,
+    group: 'plugin',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'self',
+    args: '',
+    summary: 'Print daimon\'s own runtime metrics (pid, version, uptime, rss, heap, event-loop lag, history-db p95).',
+    description: 'Print daimon\'s own runtime metrics. Useful for bug reports.',
+    example: 'daimon self',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+];
+
+export const CLI_ALIASES: Record<string, string> = {};
+for (const c of CLI_SUBCOMMANDS) {
+  for (const a of c.aliases ?? []) CLI_ALIASES[a] = c.name;
+}
+
 export function findSubcommand(name: string): CliSubcommand | undefined {
-  return CLI_SUBCOMMANDS.find(c => c.name === name);
+  const canonical = CLI_ALIASES[name] ?? name;
+  return CLI_SUBCOMMANDS.find(c => c.name === canonical);
 }
 
 export function commandsTable(): string {
