@@ -433,6 +433,27 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'orchestrate' && method === 'POST') {
+        const cfg = opts.getConfig?.();
+        if (!cfg) { sendJson(res, 500, { error: 'no config loaded' }); return; }
+        const profile = url.searchParams.get('profile');
+        if (!profile) { sendJson(res, 400, { error: 'profile query param required' }); return; }
+        const goalRaw = (url.searchParams.get('goal') || 'healthy').toLowerCase();
+        if (!['serving', 'healthy', 'stable'].includes(goalRaw)) { sendJson(res, 400, { error: 'goal must be serving|healthy|stable' }); return; }
+        const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
+        let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 300_000;
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 300_000;
+        timeoutMs = Math.min(timeoutMs, 1_200_000);
+        const dryRun = url.searchParams.get('dryRun') === 'true' || url.searchParams.get('dry-run') === 'true';
+        const budgetRaw = url.searchParams.get('budget');
+        const budgetTokens = budgetRaw && Number.isFinite(Number(budgetRaw)) ? Number(budgetRaw) : undefined;
+        const { orchestrateProfile } = await import('./orchestrate.js');
+        const r = await orchestrateProfile(registry, cfg, { profile, goal: goalRaw as any, timeoutMs, dryRun, budgetTokens });
+        if ((r as any).error) { sendJson(res, 404, r); return; }
+        sendJson(res, 200, r);
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'discovery' && parts[2] === 'explain' && method === 'GET') {
         const cfg = opts.getConfig?.();
         if (!cfg) { sendJson(res, 200, { searchRoots: [], scanned: 0, rejected: {}, warnings: [], suggestion: 'no config loaded' }); return; }

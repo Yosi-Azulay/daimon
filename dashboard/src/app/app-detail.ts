@@ -620,7 +620,7 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     const s = this.state();
     const raw: BundleFile[] = s?.bundle?.files ?? [];
     if (!Array.isArray(raw)) return [];
-    const score = (f: BundleFile) => f.sizeKb ?? f.kb ?? (f.size ? f.size / 1024 : 0) ?? 0;
+    const score = (f: BundleFile) => f.sizeKb ?? f.kb ?? (f.size ? f.size / 1024 : 0);
     return [...raw].sort((a, b) => (score(b) - score(a))).slice(0, 8);
   });
 

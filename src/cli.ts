@@ -166,6 +166,7 @@ interface Flags {
   budget?: number;
   accept?: boolean;
   path?: string;
+  goal?: string;
   passthrough: string[];
 }
 
@@ -208,6 +209,7 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--budget') f.budget = Number(args[++i]);
     else if (a === '--accept') f.accept = true;
     else if (a === '--path') f.path = args[++i];
+    else if (a === '--goal') f.goal = args[++i];
     else f.positional.push(a);
   }
   return f;
@@ -826,6 +828,30 @@ async function main() {
       const r = await callJson(`/api/apps/${encodeURIComponent(name)}/health/pin`, 'POST', { path: candidate });
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
+      return;
+    }
+    case 'orchestrate': {
+      const profile = f.positional[0];
+      if (!profile) fail(JSON.stringify({ error: 'usage: daimon orchestrate <profile> [--goal serving|healthy|stable] [--timeout 300s] [--dry-run] [--budget <tokens>]' }));
+      const params = new URLSearchParams();
+      params.set('profile', profile);
+      const goal = (f.goal || f.until || 'healthy').toLowerCase();
+      if (!['serving', 'healthy', 'stable'].includes(goal)) fail(JSON.stringify({ error: 'orchestrate --goal must be serving|healthy|stable' }));
+      params.set('goal', goal);
+      let timeoutSec = 300;
+      if (f.timeout) {
+        const t = durationToSeconds(f.timeout);
+        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        timeoutSec = Math.min(t, 1200);
+      }
+      params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
+      if (f.dryRun) params.set('dryRun', 'true');
+      if (f.budget && Number.isFinite(f.budget) && f.budget > 0) params.set('budget', String(Math.floor(f.budget)));
+      const r = await call(`/api/orchestrate?${params.toString()}`, 'POST');
+      if (r.status === 404) fail(JSON.stringify(r.body));
+      if (r.status === 400) fail(JSON.stringify(r.body));
+      out(r.body);
+      if (r.body && r.body.allReached === false) process.exit(2);
       return;
     }
     case 'try-fix': {

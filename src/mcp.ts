@@ -250,6 +250,28 @@ async function main() {
     return ok(r.body);
   });
 
+  server.registerTool('orchestrate', {
+    description: 'Bring up an entire profile in one MCP call: cascade-start every app via depends-order, wait until each reaches the goal, and run ONE round of try-fix on stragglers. Returns { profile, goal, perApp:[{name, reached, tries, fixed?, stillFailing?}], totalMs, allReached }. goal=stable means serving+healthy+5s idle. Honors --budget (drops stillFailing first when over-budget). --dryRun reports planned order + currently-unhealthy apps without starting anything. Recommended way to "bring up my whole workspace" in one call.',
+    inputSchema: {
+      profile: z.string(),
+      goal: z.enum(['serving', 'healthy', 'stable']).optional(),
+      timeoutMs: z.number().int().positive().max(1_200_000).optional(),
+      dryRun: z.boolean().optional(),
+      budget: z.number().int().positive().optional(),
+    },
+  }, async ({ profile, goal, timeoutMs, dryRun, budget }) => {
+    const qs = new URLSearchParams();
+    qs.set('profile', profile);
+    qs.set('goal', goal || 'healthy');
+    qs.set('timeoutMs', String(Math.min(timeoutMs ?? 300_000, 1_200_000)));
+    if (dryRun) qs.set('dryRun', 'true');
+    if (typeof budget === 'number') qs.set('budget', String(budget));
+    const r = await callJson(`/api/orchestrate?${qs.toString()}`, 'POST');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err(r.body?.error || 'unknown profile');
+    return ok(r.body);
+  });
+
   server.registerTool('ensure_up', {
     description: 'One-call profile bring-up: cascade-start every app in the profile (resolving deps) and block until each reaches the target. Returns per-app terminal state plus _meta.totalMs. Use this instead of daimon up + per-app waits.',
     inputSchema: {

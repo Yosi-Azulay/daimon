@@ -22,6 +22,15 @@ Strategic theme: **Memory and reach.** v0.7 makes the *past* actionable (history
 
 - **Initial-route gzip transfer: 126.44 KB** — Trends route + `getTrends` + `getBundles` API are entirely lazy. Initial bundle stays under the 130 KB v0.6 ceiling.
 
+### Added (M38) — Whole-workspace orchestration
+
+- **T2a — `daimon orchestrate <profile>`.** New CLI / HTTP / MCP verb. `POST /api/orchestrate?profile=<name>&goal=serving|healthy|stable&timeoutMs=<n>[&dryRun=true&budget=<tokens>]`. Resolves the profile's app list, cascade-starts every app via the existing F18 depends-topo ordering, waits up to `timeoutMs/2` per app for the goal, and runs **one** round of `runAutoFix` + restart + wait on stragglers. Returns `{profile, goal, perApp:[{name, reached, tries, fixed?, stillFailing?:[…first 3 parsed errors], waitedMs}], totalMs, allReached}`. `goal=stable` requires serving + healthy + 5s idle (same definition as `focus --until stable`).
+- **T2b — MCP `orchestrate` tool.** Same surface exposed to Claude; documented as the recommended way to "bring up my whole workspace" in one call. Inputs: `profile, goal?, timeoutMs?, dryRun?, budget?`. Returns the same shape as the HTTP endpoint.
+- **T2c — Idempotency + dry-run.** Apps already at goal are no-ops (`tries:0, reached:true`). `--dry-run` returns `{dryRun:true, plannedOrder:[…topo levels…], alreadyHealthy:[…]}` without starting anything.
+- **`--budget <tokens>`.** Honors a token budget like `overview`: drops `stillFailing` entries first (≈60 tokens each), then trims already-reached `perApp` rows, recording counts in `_meta.omitted`.
+- **Decision locked in (no recursion).** Orchestrate runs at most **one** try-fix round per app. Stragglers land in `stillFailing` and the caller decides the next move. Keeps results predictable, preserves per-rule attribution, and avoids compound-round confusion. Upgrade path is bounded-by-progress retry, not an N-round cap.
+- **Tests:** new `test/orchestrate.test.mjs` covers (1) dry-run reports planned order, (2) unknown profile error, (3) already-healthy short-circuit, (4) happy-path cascade reaches goal, (5) one try-fix round + stillFailing surfacing.
+
 ## [0.6.0] — 2026-05-20
 
 Strategic theme: **Every signal becomes actionable.** M33 deepens parser coverage so every tool's errors land structured; M34 turns daimon into a 3-call agent surface (overview → try-fix → focus); M35 ships keyboard / logs / ribbon polish; M36 broadens auto-heal with four new doctor rules and opt-in health-probe path discovery.
