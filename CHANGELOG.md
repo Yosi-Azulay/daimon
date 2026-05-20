@@ -4,6 +4,10 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-20
+
+Strategic theme: **Mature daimon.** v0.5–v0.7 added enormous surface; v0.8 turns inward to polish the surface and harden the internals — a big CLI polish, a reliability pass, self-observability, and a plug-in surface for doctor rules, plus a first-class Tests page that finally lands part of the v0.7.1 dashboard-test debt (H3 contrast audit deferred again to v0.8.1).
+
 ### Added (M45) — Tests dashboard + H1 carry-over
 
 - **T1 — Structured `test`-target summaries.** `parseTaskSummary` (in `src/taskRunner.ts`) now recognizes seven runners: Jest, Vitest, Karma, Playwright, pytest, RSpec, `cargo test`, and `go test` (the last sums multi-package `ok|FAIL pkg D.DDDs` lines). Output shape is now `{ passed, failed, total, suites?, durationMs?, framework, failedTests? }`. `failedTests` captures `{ name, file, line }` from the per-runner failure formatting and is the source of the dashboard's failed-test jumper. `task_runs.summary` continues to be a JSON blob — the new fields are additive.
