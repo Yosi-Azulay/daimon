@@ -218,6 +218,44 @@ const ROUTINES: RoutineDef[] = [
     </section>
 
     <section class="dm-section">
+      <h2 class="dm-section-title">Custom rules</h2>
+      @if (plugins() === null) {
+        <dm-skeleton height="2rem" width="40%"></dm-skeleton>
+      } @else if (plugins()!.length === 0) {
+        <div class="dm-muted">No plug-ins installed. Drop a <dm-mono>doctor-*.mjs</dm-mono> file into <dm-mono>~/.daimon/plugins/</dm-mono> and restart the daemon.</div>
+      } @else {
+        <div class="dm-grid-2">
+          @for (p of plugins()!; track p.name) {
+            <mat-card class="dm-card">
+              <mat-card-header>
+                <mat-card-title>
+                  <span class="dm-pill" [attr.data-kind]="p.status === 'ok' ? 'ok' : 'err'">
+                    <span class="dm-dot"></span>{{ p.status }}
+                  </span>
+                  <dm-mono>{{ p.name }}</dm-mono>
+                </mat-card-title>
+                @if (p.description) { <mat-card-subtitle>{{ p.description }}</mat-card-subtitle> }
+              </mat-card-header>
+              <mat-card-content>
+                @if (p.error) { <div class="dm-detail dm-warn">{{ p.error }}</div> }
+                @if (p.findings?.length) {
+                  <ul class="dm-list">
+                    @for (f of p.findings; track f.id) {
+                      <li><span class="dm-pill" [attr.data-kind]="f.severity === 'error' ? 'err' : f.severity === 'warn' ? 'warn' : 'ok'"><span class="dm-dot"></span>{{ f.severity || 'info' }}</span> <span>{{ f.message }}</span></li>
+                    }
+                  </ul>
+                } @else {
+                  <div class="dm-muted">No findings.</div>
+                }
+                <div class="dm-detail dm-muted"><dm-mono>{{ p.file }}</dm-mono></div>
+              </mat-card-content>
+            </mat-card>
+          }
+        </div>
+      }
+    </section>
+
+    <section class="dm-section">
       <h2 class="dm-section-title">Quick links</h2>
       <div class="dm-quick">
         <button mat-stroked-button routerLink="/config">
@@ -405,6 +443,7 @@ export class DoctorPageComponent implements OnInit {
   readonly daemonPort = signal<number | null>(null);
   readonly configLoaded = signal<boolean>(false);
   readonly overview = signal<Overview | null>(null);
+  readonly plugins = signal<{ name: string; description: string | null; file: string; status: string; error: string | null; findings: { id: string; severity?: string; message: string }[] }[] | null>(null);
 
   readonly busyMap = signal<Map<AutoFixName, 'dry' | 'fix'>>(new Map());
   readonly busyAll = signal<boolean>(false);
@@ -454,6 +493,10 @@ export class DoctorPageComponent implements OnInit {
       this.overview.set(overview);
       if (overview?.version) this.daemonVersion.set(overview.version);
       if (!this.api.apps().length) await this.api.refresh();
+      try {
+        const pl = await firstValueFrom(this.http.get<any[]>('/api/plugins'));
+        this.plugins.set(Array.isArray(pl) ? pl : []);
+      } catch { this.plugins.set([]); }
     } finally {
       this.loading.set(false);
     }

@@ -1,4 +1,5 @@
 import React from 'react';
+import path from 'node:path';
 import { render } from 'ink';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, configLookupPaths } from './config.js';
@@ -20,6 +21,7 @@ import { patchConfigOnDisk, softReloadFromDisk } from './configManager.js';
 import { installCrashHandlers } from './crashDump.js';
 import { consumeHandoff } from './stateHandoff.js';
 import { SelfMetricsCollector } from './selfMetrics.js';
+import { loadPlugins, pluginsDir, runPluginScans, buildContext, type LoadedPlugin } from './plugins.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -116,6 +118,14 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { registry.pruneOldErrors(); } catch {}
   }, 60 * 60 * 1000);
 
+  let plugins: LoadedPlugin[] = [];
+  try {
+    plugins = await loadPlugins(pluginsDir(config.plugins?.dir ?? undefined));
+    for (const p of plugins) {
+      if (p.status === 'failed') process.stderr.write(`[daimon] plug-in skipped: ${path.basename(p.file)} — ${p.error}\n`);
+    }
+  } catch {}
+
   const selfMetrics = new SelfMetricsCollector(history);
   selfMetrics.setSelfWarnHandler(msg => {
     try { registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: msg }); } catch {}
@@ -170,6 +180,15 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
       return { ok: true, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired };
     },
     selfMetrics,
+    getPlugins: () => plugins.map(p => ({ name: p.name, description: p.description, file: p.file, status: p.status, error: p.error, lastFindings: p.lastFindings })),
+    runPluginScans: async () => {
+      const ctx = buildContext({
+        config: registry.getConfig(),
+        apps: registry.names().map(n => ({ name: n, workspaceRoot: registry.getApp(n)?.workspaceRoot ?? '' })),
+        history,
+      });
+      await runPluginScans(plugins, ctx);
+    },
   });
   process.stdout.write(`[daimon] api: http://127.0.0.1:${apiPort}\n`);
   try { writeLock(buildLockInfo(apiPort, headless, cfgPath)); } catch (err: any) { process.stderr.write(`[daimon] warning: could not write daemon.lock: ${err?.message || err}\n`); }

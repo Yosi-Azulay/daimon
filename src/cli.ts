@@ -532,6 +532,38 @@ async function main() {
     return;
   }
 
+  if (cmd === 'plugin') {
+    const sub = rest[0];
+    if (!sub) failHint('missing subcommand', 'usage: daimon plugin <list|show <name>|validate <path>>');
+    if (sub === 'list') {
+      await ensureDaemon();
+      const r = await call('/api/plugins');
+      out(r.body);
+      return;
+    }
+    if (sub === 'show') {
+      const name = rest[1];
+      if (!name) failHint('missing plug-in name', 'usage: daimon plugin show <name>');
+      await ensureDaemon();
+      const r = await call('/api/plugins');
+      const arr: any[] = Array.isArray(r.body) ? r.body : [];
+      const match = arr.find(p => p.name === name);
+      if (!match) failHint(`unknown plug-in: ${name}`, 'list installed plug-ins with: daimon plugin list');
+      out(match);
+      return;
+    }
+    if (sub === 'validate') {
+      const p = rest[1];
+      if (!p) failHint('missing file path', 'usage: daimon plugin validate <path>');
+      const { validatePluginFile } = await import('./plugins.js');
+      const r = await validatePluginFile(path.resolve(p));
+      out(r);
+      if (!r.ok) process.exit(1);
+      return;
+    }
+    failHint(`unknown plugin subcommand: ${sub}`, 'usage: daimon plugin <list|show <name>|validate <path>>');
+  }
+
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
   if (cmd === 'claude') { await handleClaude(rest); return; }
   if (cmd === 'export-config') {

@@ -56,6 +56,7 @@ function defaultConfig(): AppmanConfig {
     doctor: { autoFix: { onInit: false, permitted: ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db', 'port-conflict-pred', 'node-version-mismatch', 'orphan-node-modules', 'orphan-venv', 'orphan-bundler-cache', 'orphan-cargo-target', 'dead-search-root'] } },
     dashboard: { theme: 'auto', density: 'comfortable' },
     errorRetention: { maxAgeMs: 86400000 },
+    plugins: { dir: null },
   };
 }
 
@@ -204,6 +205,11 @@ function validate(raw: unknown, source: string): AppmanConfig {
   if (obj.errorRetention && typeof obj.errorRetention === 'object') {
     const er = obj.errorRetention as Partial<AppmanConfig['errorRetention']>;
     if (typeof er.maxAgeMs === 'number' && er.maxAgeMs > 0) cfg.errorRetention.maxAgeMs = er.maxAgeMs;
+  }
+  if (obj.plugins && typeof obj.plugins === 'object') {
+    const pl = obj.plugins as Partial<AppmanConfig['plugins']>;
+    if (typeof pl.dir === 'string' && pl.dir.trim()) cfg.plugins.dir = expandTilde(pl.dir);
+    else if (pl.dir === null) cfg.plugins.dir = null;
   }
 
   return cfg;

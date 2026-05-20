@@ -67,6 +67,10 @@ export interface ErrorRetentionConfig {
   maxAgeMs: number;
 }
 
+export interface PluginsConfig {
+  dir: string | null;
+}
+
 export interface DashboardConfig {
   theme: 'auto' | 'light' | 'dark';
   density: 'comfortable' | 'compact';
@@ -105,6 +109,7 @@ export interface AppmanConfig {
   doctor: DoctorConfig;
   dashboard: DashboardConfig;
   errorRetention: ErrorRetentionConfig;
+  plugins: PluginsConfig;
 }
 
 export interface SearchRoot {

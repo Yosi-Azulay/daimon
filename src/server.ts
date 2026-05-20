@@ -146,6 +146,8 @@ export interface ServerOpts {
   reloadConfig?: () => Promise<{ ok: boolean; addedApps: string[]; removedApps: string[] }>;
   patchConfig?: (patch: any) => { ok: true; applied: string[]; addedApps?: string[]; removedApps?: string[]; restartRequired?: string[] } | { ok: false; error: string };
   selfMetrics?: SelfMetricsCollector | null;
+  getPlugins?: () => { name: string; description?: string; file: string; status: string; error?: string; lastFindings?: any[] }[];
+  runPluginScans?: () => Promise<void>;
 }
 
 const REDACT_KEY = /key|secret|token|password|pass/i;
@@ -253,6 +255,23 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           return;
         }
         sendJson(res, 200, opts.selfMetrics.snapshot());
+        return;
+      }
+      if (url.pathname === '/api/plugins' && method === 'GET') {
+        const list = opts.getPlugins ? opts.getPlugins() : [];
+        sendJson(res, 200, list.map(p => ({
+          name: p.name, description: p.description ?? null, file: p.file,
+          status: p.status, error: p.error ?? null,
+          findings: p.lastFindings ?? [],
+        })));
+        return;
+      }
+      if (url.pathname === '/api/plugins/scan' && method === 'POST') {
+        if (!requireAuth()) return;
+        if (!opts.runPluginScans) { sendJson(res, 503, { error: 'plug-in scan not available' }); return; }
+        try { await opts.runPluginScans(); } catch (err: any) { sendJson(res, 500, { error: err?.message || String(err) }); return; }
+        const list = opts.getPlugins ? opts.getPlugins() : [];
+        sendJson(res, 200, list);
         return;
       }
       if (url.pathname === '/api/self/history' && method === 'GET') {
