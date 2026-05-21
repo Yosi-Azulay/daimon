@@ -1,0 +1,15 @@
+> editor@0.1.0 lint:biome
+> biome check src
+
+src/foo.ts:14:7 lint/correctness/noUnusedVariables ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  This variable is unused.
+
+  > 14 │ const greeting = 'hi';
+       │       ^^^^^^^^
+
+src/bar.ts:3:1 lint/style/useConst ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  This let declares a variable that is never reassigned; convert it to const.
+
+Checked 8 files in 23ms. Fixed 0 files. Found 2 errors.

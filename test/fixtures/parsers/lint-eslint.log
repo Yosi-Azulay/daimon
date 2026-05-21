@@ -1,0 +1,13 @@
+> editor@0.1.0 lint
+> eslint .
+
+/Users/me/repo/src/index.ts
+  3:1   warning  '_unused' is defined but never used        no-unused-vars
+  7:14  warning  Missing return type on function           @typescript-eslint/explicit-function-return-type
+ 12:5   error    Expected '!==' and instead saw '!='        eqeqeq
+
+/Users/me/repo/src/util.ts
+  5:1   warning  'fs' is defined but never used             no-unused-vars
+
+✖ 4 problems (1 error, 3 warnings)
+  1 error and 3 warnings potentially fixable with the `--fix` option.

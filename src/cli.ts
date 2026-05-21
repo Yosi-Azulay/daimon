@@ -139,7 +139,9 @@ async function ensureCurrentWorkspace(): Promise<void> {
 
 function authHeaders(): Record<string, string> {
   const tok = process.env.DAIMON_TOKEN;
-  return tok ? { authorization: `Bearer ${tok}` } : {};
+  const h: Record<string, string> = { 'x-daimon-cwd': process.cwd() };
+  if (tok) h.authorization = `Bearer ${tok}`;
+  return h;
 }
 
 async function streamNdjson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<void> {
@@ -236,6 +238,10 @@ interface Flags {
   goal?: string;
   self?: boolean;
   all?: boolean;
+  level?: string;
+  label?: string;
+  kinds?: string;
+  open?: boolean;
   passthrough: string[];
 }
 
@@ -281,6 +287,10 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--goal') f.goal = args[++i];
     else if (a === '--self') f.self = true;
     else if (a === '--all') f.all = true;
+    else if (a === '--level') f.level = args[++i];
+    else if (a === '--label') f.label = args[++i];
+    else if (a === '--kinds') f.kinds = args[++i];
+    else if (a === '--open') f.open = true;
     else f.positional.push(a);
   }
   return f;
@@ -290,6 +300,31 @@ function formatQuery(f: Flags): string {
   if (f.full) return '?format=full';
   if (f.compact) return '?format=compact';
   return '';
+}
+
+// Build a `cwd=<process.cwd()>` query fragment for per-app commands, unless
+// the user explicitly opted out with --all or pinned a workspace label.
+function scopeQs(f: Flags): URLSearchParams {
+  const qs = new URLSearchParams();
+  if (!f.all && !f.workspace) qs.set('cwd', process.cwd());
+  return qs;
+}
+
+// Pretty-print the 412 name-collision body that the server returns when a
+// baseName matches more than one workspace. Exits with code 4.
+function reportCollisionAndExit(body: any): never {
+  const cands: any[] = Array.isArray(body?.candidates) ? body.candidates : [];
+  process.stderr.write(`error: ${body?.error || 'name-collision'}\n`);
+  if (body?.hint) process.stderr.write(`hint: ${body.hint}\n`);
+  if (cands.length) {
+    process.stderr.write('candidates:\n');
+    for (const c of cands) {
+      const label = c.workspaceLabel ? ` [${c.workspaceLabel}]` : '';
+      process.stderr.write(`  - ${c.name}${label}  (${c.workspaceRoot ?? '?'})\n`);
+    }
+  }
+  out({ error: body?.error || 'name-collision', candidates: cands });
+  process.exit(4);
 }
 
 function durationToSeconds(s: string): number | null {
@@ -582,6 +617,59 @@ async function main() {
     failHint(`unknown plugin subcommand: ${sub}`, 'usage: daimon plugin <list|show <name>|validate <path>>');
   }
 
+  if (cmd === 'workspaces') {
+    await ensureDaemon();
+    const sub = rest[0];
+    const f2 = parseFlags(rest.slice(1));
+    if (!sub || sub === 'list') {
+      const r = await call('/api/workspaces');
+      out(r.body);
+      return;
+    }
+    if (sub === 'add') {
+      const p = f2.positional[0] || process.cwd();
+      const payload: any = { path: path.resolve(p) };
+      if (f2.label) payload.label = f2.label;
+      const r = await callJson('/api/workspaces/ensure', 'POST', payload);
+      out(r.body);
+      return;
+    }
+    if (sub === 'rm' || sub === 'remove') {
+      const p = f2.positional[0];
+      if (!p) failHint('missing path', 'usage: daimon workspaces rm <path>');
+      const r = await callJson('/api/workspaces/remove', 'POST', { path: path.resolve(p) });
+      if (r.status === 404) failHint(`not registered: ${p}`, `run 'daimon workspaces list' to see registered searchRoots`);
+      out(r.body);
+      return;
+    }
+    if (sub === 'show') {
+      const p = f2.positional[0] || process.cwd();
+      const r = await call('/api/workspaces/resolve?cwd=' + encodeURIComponent(path.resolve(p)));
+      out(r.body);
+      return;
+    }
+    failHint(`unknown workspaces subcommand: ${sub}`, 'usage: daimon workspaces <list|add|rm|show> [--label <name>]');
+  }
+
+  if (cmd === 'dashboard') {
+    await ensureDaemon();
+    const lock = readLock();
+    const port = lock?.apiPort ?? readApiPort();
+    const url = `http://127.0.0.1:${port}/?cwd=${encodeURIComponent(process.cwd())}`;
+    // Best-effort open. Falls back to printing the URL when no opener is found.
+    const opener = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    try {
+      const { spawn } = await import('node:child_process');
+      if (process.platform === 'win32') {
+        spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
+      } else {
+        spawn(opener, [url], { detached: true, stdio: 'ignore' }).unref();
+      }
+    } catch {}
+    out({ url, cwd: process.cwd() });
+    return;
+  }
+
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
   if (cmd === 'claude') { await handleClaude(rest); return; }
   if (cmd === 'export-config') {
@@ -729,10 +817,15 @@ async function main() {
     case 'restart': {
       const name = f.positional[0];
       if (!name) failHint(`missing app name`, `usage: daimon ${cmd} <name>`);
+      if (!f.all) await ensureCurrentWorkspace();
       const suffix = cmd === 'status' ? '' : '/' + cmd;
       const method: 'GET' | 'POST' = cmd === 'status' ? 'GET' : 'POST';
-      const qs = cmd === 'status' ? formatQuery(f) : '';
-      const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}${qs}`, method);
+      const params = scopeQs(f);
+      if (cmd === 'status' && f.full) params.set('format', 'full');
+      else if (cmd === 'status' && f.compact) params.set('format', 'compact');
+      const qs = params.toString();
+      const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}${qs ? '?' + qs : ''}`, method);
+      if (r.status === 412) reportCollisionAndExit(r.body);
       if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
@@ -740,8 +833,12 @@ async function main() {
     case 'start': {
       const name = f.positional[0];
       if (!name) failHint('missing app name', 'usage: daimon start <name> [--with-deps]');
-      const qs = f.withDeps ? '?withDeps=1' : '';
-      const r = await call(`/api/apps/${encodeURIComponent(name)}/start${qs}`, 'POST');
+      if (!f.all) await ensureCurrentWorkspace();
+      const params = scopeQs(f);
+      if (f.withDeps) params.set('withDeps', '1');
+      const qs = params.toString();
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/start${qs ? '?' + qs : ''}`, 'POST');
+      if (r.status === 412) reportCollisionAndExit(r.body);
       if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
@@ -882,8 +979,12 @@ async function main() {
       const name = f.positional[0];
       const task = f.positional[1];
       if (!name || !task) fail(JSON.stringify({ error: 'usage: daimon run <name> <task> [--watch] [-- args...]' }));
+      if (!f.all) await ensureCurrentWorkspace();
       const body = { args: f.passthrough, watch: !!f.watch };
-      const r = await callJson(`/api/apps/${encodeURIComponent(name)}/run/${encodeURIComponent(task)}`, 'POST', body);
+      const params = scopeQs(f);
+      const qs = params.toString();
+      const r = await callJson(`/api/apps/${encodeURIComponent(name)}/run/${encodeURIComponent(task)}${qs ? '?' + qs : ''}`, 'POST', body);
+      if (r.status === 412) reportCollisionAndExit(r.body);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
       if (!f.watch && typeof r.body?.exitCode === 'number') process.exit(r.body.exitCode === 0 ? 0 : 1);
@@ -891,8 +992,9 @@ async function main() {
     }
     case 'errors': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact]' }));
-      const params = new URLSearchParams();
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact] [--level error|warning|lint|all]' }));
+      if (!f.all) await ensureCurrentWorkspace();
+      const params = scopeQs(f);
       let endpoint = `/api/apps/${encodeURIComponent(name)}/errors`;
       if (f.sinceLast) {
         endpoint += '/since-last';
@@ -900,10 +1002,12 @@ async function main() {
       } else if (f.since) {
         params.set('since', f.since);
       }
+      if (f.level) params.set('level', f.level);
       if (f.full) params.set('format', 'full');
       else if (f.compact) params.set('format', 'compact');
       const qs = params.toString();
       const r = await call(endpoint + (qs ? '?' + qs : ''));
+      if (r.status === 412) reportCollisionAndExit(r.body);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       let body = r.body;
       if (f.structured && Array.isArray(body)) {
@@ -1059,7 +1163,8 @@ async function main() {
     case 'wait': {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]' }));
-      const params = new URLSearchParams();
+      if (!f.all) await ensureCurrentWorkspace();
+      const params = scopeQs(f);
       if (f.until) params.set('until', f.until);
       let timeoutSec = 120;
       if (f.timeout) {
@@ -1069,6 +1174,7 @@ async function main() {
       }
       params.set('timeout', String(Math.ceil(timeoutSec)));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/wait?${params.toString()}`);
+      if (r.status === 412) reportCollisionAndExit(r.body);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
       if (r.body?.timedOut) process.exit(2);
@@ -1116,14 +1222,26 @@ async function main() {
       out(summary);
       return;
     }
+    case 'timeline': {
+      const params = new URLSearchParams();
+      if (f.since) params.set('since', f.since);
+      if (f.app) params.set('app', f.app);
+      if (f.kinds) params.set('kinds', f.kinds);
+      const qs = params.toString();
+      const r = await call('/api/history/timeline' + (qs ? '?' + qs : ''));
+      out(r.body);
+      return;
+    }
     case 'logs': {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: daimon logs <name> [--tail N] [--since 30s]' }));
-      const params = new URLSearchParams();
+      if (!f.all) await ensureCurrentWorkspace();
+      const params = scopeQs(f);
       if (f.tail != null && !Number.isNaN(f.tail)) params.set('tail', String(f.tail));
       if (f.since) params.set('since', f.since);
       const qs = params.toString();
       const r = await call(`/api/apps/${encodeURIComponent(name)}/logs${qs ? '?' + qs : ''}`);
+      if (r.status === 412) reportCollisionAndExit(r.body);
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
       return;

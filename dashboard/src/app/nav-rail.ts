@@ -13,6 +13,7 @@ const ENTRIES: NavEntry[] = [
   { path: '/doctor',   icon: 'medical_services',     label: 'Doctor',   shortcut: 'g d' },
   { path: '/events',   icon: 'timeline',             label: 'Events',   shortcut: 'g v' },
   { path: '/history',  icon: 'query_stats',          label: 'History',  shortcut: 'g h' },
+  { path: '/timeline', icon: 'view_timeline',        label: 'Timeline', shortcut: 'g i' },
   { path: '/trends',   icon: 'show_chart',           label: 'Trends',   shortcut: 'g t' },
   { path: '/tests',    icon: 'science',              label: 'Tests',    shortcut: 'g x' },
   { path: '/sessions', icon: 'radio_button_checked', label: 'Sessions', shortcut: 'g n' },

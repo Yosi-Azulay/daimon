@@ -43,8 +43,39 @@ function bump(stats: DiscoveryStats | undefined, reason: string): void {
   stats.rejected[reason] = (stats.rejected[reason] ?? 0) + 1;
 }
 
+// Pick a globally unique storage key for `baseName`. When two workspaces have
+// apps with the same baseName (e.g., both have an "editor"), the second one
+// gets a suffix so both can coexist in the registry's Map. The user-facing
+// baseName remains on the DiscoveredApp; CLI/server use `?cwd=` to resolve.
+function uniqueKey(
+  found: Map<string, DiscoveredApp>,
+  baseName: string,
+  workspaceLabel: string | undefined,
+  workspaceRoot: string,
+): { key: string; collided: boolean } {
+  if (!found.has(baseName)) return { key: baseName, collided: false };
+  const existing = found.get(baseName)!;
+  if (existing.workspaceRoot === workspaceRoot) return { key: baseName, collided: true };
+  const labelHint = workspaceLabel || path.basename(workspaceRoot);
+  let candidate = `${baseName}@${labelHint}`;
+  let i = 2;
+  while (found.has(candidate)) candidate = `${baseName}@${labelHint}-${i++}`;
+  return { key: candidate, collided: false };
+}
+
 function fileContains(p: string, rx: RegExp): boolean {
   try { return rx.test(fs.readFileSync(p, 'utf8')); } catch { return false; }
+}
+
+function addUnique(
+  found: Map<string, DiscoveredApp>,
+  baseName: string,
+  app: Omit<DiscoveredApp, 'name' | 'baseName'>,
+): boolean {
+  const { key, collided } = uniqueKey(found, baseName, app.workspaceLabel, app.workspaceRoot);
+  if (collided) return false;
+  found.set(key, { name: key, baseName, ...app });
+  return true;
 }
 
 function detectPolyglotApps(
@@ -57,38 +88,30 @@ function detectPolyglotApps(
 
   const managePy = path.join(root, 'manage.py');
   if (fs.existsSync(managePy) && fileContains(managePy, /\bdjango\b/i)) {
-    const name = baseName;
-    if (!found.has(name)) {
-      found.set(name, {
-        name,
-        workspaceRoot: root,
-        workspaceType: 'polyglot',
-        serverProfile: 'django',
-        command: 'python manage.py runserver',
-        hidden: false,
-        tags: [],
-        workspaceLabel,
-      });
-    }
+    addUnique(found, baseName, {
+      workspaceRoot: root,
+      workspaceType: 'polyglot',
+      serverProfile: 'django',
+      command: 'python manage.py runserver',
+      hidden: false,
+      tags: [],
+      workspaceLabel,
+    });
     matched = true;
   }
 
   const railsBin = path.join(root, 'bin', 'rails');
   const gemfile = path.join(root, 'Gemfile');
   if (fs.existsSync(railsBin) && fs.existsSync(gemfile)) {
-    const name = baseName;
-    if (!found.has(name)) {
-      found.set(name, {
-        name,
-        workspaceRoot: root,
-        workspaceType: 'polyglot',
-        serverProfile: 'rails',
-        command: 'bin/rails server',
-        hidden: false,
-        tags: [],
-        workspaceLabel,
-      });
-    }
+    addUnique(found, baseName, {
+      workspaceRoot: root,
+      workspaceType: 'polyglot',
+      serverProfile: 'rails',
+      command: 'bin/rails server',
+      hidden: false,
+      tags: [],
+      workspaceLabel,
+    });
     matched = true;
   }
 
@@ -97,9 +120,8 @@ function detectPolyglotApps(
   const hasFastapi =
     (fs.existsSync(pyproject) && fileContains(pyproject, /\bfastapi\b/i)) ||
     (fs.existsSync(requirementsTxt) && fileContains(requirementsTxt, /\bfastapi\b/i));
-  if (hasFastapi && !found.has(baseName)) {
-    found.set(baseName, {
-      name: baseName,
+  if (hasFastapi) {
+    addUnique(found, baseName, {
       workspaceRoot: root,
       workspaceType: 'polyglot',
       serverProfile: 'fastapi',
@@ -112,9 +134,8 @@ function detectPolyglotApps(
   }
 
   const airToml = fs.existsSync(path.join(root, '.air.toml')) || fs.existsSync(path.join(root, 'air.toml'));
-  if (airToml && !found.has(baseName)) {
-    found.set(baseName, {
-      name: baseName,
+  if (airToml) {
+    addUnique(found, baseName, {
       workspaceRoot: root,
       workspaceType: 'polyglot',
       serverProfile: 'go-air',
@@ -127,9 +148,8 @@ function detectPolyglotApps(
   }
 
   const trunkToml = path.join(root, 'Trunk.toml');
-  if (fs.existsSync(trunkToml) && !found.has(baseName)) {
-    found.set(baseName, {
-      name: baseName,
+  if (fs.existsSync(trunkToml)) {
+    addUnique(found, baseName, {
       workspaceRoot: root,
       workspaceType: 'polyglot',
       serverProfile: 'rust-trunk',
@@ -178,13 +198,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
         if (!hasServeTarget(pj)) { bump(opts.stats, 'no serve target'); continue; }
         const name: string | undefined = pj.name || path.basename(path.dirname(pf));
         if (!name) { bump(opts.stats, 'project has no name'); continue; }
-        if (found.has(name)) {
-          warnings.push(`duplicate project name "${name}" — keeping first`);
-          bump(opts.stats, 'duplicate name');
-          continue;
-        }
-        found.set(name, {
-          name,
+        const added = addUnique(found, name, {
           workspaceRoot: root,
           workspaceType: 'nx',
           serverProfile: 'nx',
@@ -194,6 +208,10 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
           tasks: listTargetsExceptServe(pj),
           workspaceLabel,
         });
+        if (!added) {
+          warnings.push(`duplicate project name "${name}" within ${root} — keeping first`);
+          bump(opts.stats, 'duplicate name');
+        }
       }
       continue;
     }
@@ -203,12 +221,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
       const projects = ng?.projects || {};
       for (const [name, p] of Object.entries<any>(projects)) {
         if (!hasServeTarget(p)) continue;
-        if (found.has(name)) {
-          warnings.push(`duplicate project name "${name}" — keeping first`);
-          continue;
-        }
-        found.set(name, {
-          name,
+        const added = addUnique(found, name, {
           workspaceRoot: root,
           workspaceType: 'angular',
           serverProfile: 'angular',
@@ -218,6 +231,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
           tasks: listTargetsExceptServe(p),
           workspaceLabel,
         });
+        if (!added) warnings.push(`duplicate project name "${name}" within ${root} — keeping first`);
       }
       continue;
     }
@@ -227,28 +241,24 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
     let matched = false;
 
     if (hasVite.length > 0) {
-      const name = path.basename(root);
-      if (!found.has(name)) {
-        found.set(name, {
-          name,
-          workspaceRoot: root,
-          workspaceType: 'vite',
-          serverProfile: 'vite',
-          command: `npx vite`,
-          hidden: false,
-          tags: [],
-          workspaceLabel,
-        });
-      }
+      const baseName = path.basename(root);
+      addUnique(found, baseName, {
+        workspaceRoot: root,
+        workspaceType: 'vite',
+        serverProfile: 'vite',
+        command: `npx vite`,
+        hidden: false,
+        tags: [],
+        workspaceLabel,
+      });
       matched = true;
       if (viteSubfolders) {
         const sub = fg.sync('*/vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true });
         for (const f of sub) {
           const dir = path.dirname(f);
-          const subName = path.basename(dir);
-          if (subName === name || found.has(subName)) continue;
-          found.set(subName, {
-            name: subName,
+          const subBase = path.basename(dir);
+          if (subBase === baseName) continue;
+          addUnique(found, subBase, {
             workspaceRoot: dir,
             workspaceType: 'vite',
             serverProfile: 'vite',
@@ -262,19 +272,16 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
     }
 
     if (hasStorybook) {
-      const name = `${path.basename(root)}-storybook`;
-      if (!found.has(name)) {
-        found.set(name, {
-          name,
-          workspaceRoot: root,
-          workspaceType: 'storybook',
-          serverProfile: 'storybook',
-          command: `npx storybook dev --no-open`,
-          hidden: false,
-          tags: [],
-          workspaceLabel,
-        });
-      }
+      const baseName = `${path.basename(root)}-storybook`;
+      addUnique(found, baseName, {
+        workspaceRoot: root,
+        workspaceType: 'storybook',
+        serverProfile: 'storybook',
+        command: `npx storybook dev --no-open`,
+        hidden: false,
+        tags: [],
+        workspaceLabel,
+      });
       matched = true;
     }
 
@@ -288,15 +295,21 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
   }
 
   for (const [name, ov] of Object.entries(config.overrides || {})) {
-    const existing = found.get(name);
-    if (existing) {
-      if (ov.command) existing.command = ov.command;
-      if (typeof ov.hidden === 'boolean') existing.hidden = ov.hidden;
-      if (typeof ov.port === 'number') existing.pinnedPort = ov.port;
-      if (ov.env) existing.env = ov.env;
+    // Override lookup is by baseName: a user's `overrides["editor"]` should
+    // match all entries whose baseName is "editor", not just the one stored
+    // under the literal key "editor".
+    const matches = [...found.values()].filter(a => (a.baseName ?? a.name) === name);
+    if (matches.length > 0) {
+      for (const existing of matches) {
+        if (ov.command) existing.command = ov.command;
+        if (typeof ov.hidden === 'boolean') existing.hidden = ov.hidden;
+        if (typeof ov.port === 'number') existing.pinnedPort = ov.port;
+        if (ov.env) existing.env = ov.env;
+      }
     } else if (ov.command) {
       found.set(name, {
         name,
+        baseName: name,
         workspaceRoot: process.cwd(),
         workspaceType: 'nx',
         command: ov.command,
@@ -309,7 +322,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
   }
 
   for (const a of found.values()) {
-    a.tags = config.tags?.[a.name] ?? [];
+    a.tags = config.tags?.[a.baseName ?? a.name] ?? [];
   }
 
   if (ownsWarnings && warnings.length) {

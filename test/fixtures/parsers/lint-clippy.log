@@ -1,0 +1,20 @@
+    Checking app v0.1.0 (/Users/me/repo/app)
+warning: this `if` chain can be rewritten with `match`
+  --> src/main.rs:42:5
+   |
+42 | /     if x == 1 {
+43 | |         println!("one");
+44 | |     } else if x == 2 {
+45 | |         println!("two");
+46 | |     }
+   | |_____^
+   |
+   = note: `#[warn(clippy::single_match)]` on by default
+
+warning: unused variable: `s`
+  --> src/util.rs:8:9
+   |
+ 8 |     let s = "hi";
+   |         ^
+
+    Finished dev [unoptimized + debuginfo] target(s) in 1.83s

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, OnInit, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
 import { DaimonApi } from './daimon-api';
 import { ThemeToggleComponent } from './theme-toggle';
 
@@ -54,6 +54,14 @@ type MenuKey = 'ws' | 'profile' | null;
           </div>
         }
       </div>
+
+      @if (workspace(); as ws) {
+        <span class="dm-scope" [title]="'Scope: ' + ws + (api.cwdHint() ? '  (cwd ' + api.cwdHint() + ')' : '')">
+          <span class="material-symbols-outlined">filter_alt</span>
+          <span>scope: <strong>{{ ws }}</strong></span>
+          <button type="button" class="dm-scope-x" (click)="setWorkspace(null)" title="Clear scope">×</button>
+        </span>
+      }
 
       <span class="dm-topbar-spacer"></span>
 
@@ -137,9 +145,26 @@ type MenuKey = 'ws' | 'profile' | null;
       background: transparent; border: 1px solid var(--mat-sys-outline); color: var(--mat-sys-on-surface); cursor: pointer; }
     .dm-cmdk:hover { background: var(--mat-sys-surface-container); }
     .dm-cmdk .material-symbols-outlined { font-size: 18px; }
+    .dm-scope {
+      display: inline-flex; align-items: center; gap: .375rem;
+      padding: 4px 4px 4px 10px; border-radius: 999px;
+      background: color-mix(in oklch, var(--mat-sys-primary) 14%, var(--mat-sys-surface-container));
+      border: 1px solid color-mix(in oklch, var(--mat-sys-primary) 40%, transparent);
+      color: var(--mat-sys-on-surface);
+      font: 500 .75rem/1rem Roboto;
+    }
+    .dm-scope .material-symbols-outlined { font-size: 16px; color: var(--mat-sys-primary); }
+    .dm-scope strong { font-weight: 600; }
+    .dm-scope-x {
+      width: 22px; height: 22px;
+      background: transparent; border: 0; border-radius: 999px;
+      color: var(--mat-sys-on-surface-variant); cursor: pointer;
+      font-size: 1.125rem; line-height: 1; padding: 0;
+    }
+    .dm-scope-x:hover { background: var(--mat-sys-surface-container-highest); }
   `],
 })
-export class TopbarComponent implements OnInit {
+export class TopbarComponent implements OnInit, OnDestroy {
   readonly api = inject(DaimonApi);
   private readonly host = inject(ElementRef);
   workspace = signal<string | null>(null);
@@ -156,7 +181,19 @@ export class TopbarComponent implements OnInit {
     this.workspace.set(localStorage.getItem(WS_KEY));
     this.profile.set(localStorage.getItem(PROFILE_KEY));
     void this.loadProfiles();
+    // Stay in sync when other components (or the cwd auto-pick) update the
+    // active workspace.
+    window.addEventListener('daimon:workspace', this.onWorkspaceChanged);
   }
+
+  ngOnDestroy(): void {
+    window.removeEventListener('daimon:workspace', this.onWorkspaceChanged);
+  }
+
+  private readonly onWorkspaceChanged = (e: Event) => {
+    const detail = (e as CustomEvent).detail as string | null;
+    this.workspace.set(detail ?? null);
+  };
 
   toggle(k: Exclude<MenuKey, null>): void {
     this.openMenu.update(prev => prev === k ? null : k);

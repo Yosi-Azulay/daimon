@@ -238,7 +238,8 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           const newEtag = configEtag(opts.configPath);
           try {
             const remote = (req.socket as any).remoteAddress || '127.0.0.1';
-            appendAuditEntry(remote, body, body, r.applied);
+            const cwdHdr = (req.headers['x-daimon-cwd'] as string | undefined) || null;
+            appendAuditEntry(remote, body, body, r.applied, cwdHdr);
           } catch {}
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'etag': newEtag });
           res.end(JSON.stringify({ etag: newEtag, applied: r.applied, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired }));
@@ -302,6 +303,68 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // Workspace registry — read.
+      if (url.pathname === '/api/workspaces' && method === 'GET' && opts.getConfig) {
+        const cfg = opts.getConfig();
+        const all = registry.list();
+        const rows = cfg.searchRoots.map(s => {
+          const wsPath = typeof s === 'string' ? s : s.path;
+          const label = typeof s === 'string' ? null : (s.label ?? null);
+          const apps = all.filter(a => {
+            const r2 = a.workspaceRoot;
+            return !!r2 && isPathUnder(r2, wsPath);
+          });
+          return {
+            path: wsPath,
+            label,
+            appCount: apps.length,
+            apps: apps.map(a => a.name),
+          };
+        });
+        sendJson(res, 200, rows);
+        return;
+      }
+
+      if (url.pathname === '/api/workspaces/resolve' && method === 'GET' && opts.getConfig) {
+        const cwdParam = url.searchParams.get('cwd');
+        if (!cwdParam) { sendJson(res, 400, { error: 'cwd query param required' }); return; }
+        const cfg = opts.getConfig();
+        const roots = cfg.searchRoots.map(s => typeof s === 'string' ? { path: s, label: null as string | null } : { path: s.path, label: s.label ?? null });
+        const match = roots.find(r2 => isPathUnder(cwdParam, r2.path));
+        if (!match) {
+          sendJson(res, 404, { error: 'no workspace covers cwd', cwd: cwdParam });
+          return;
+        }
+        sendJson(res, 200, { path: match.path, label: match.label, cwd: cwdParam });
+        return;
+      }
+
+      if (url.pathname === '/api/workspaces/remove' && method === 'POST' && opts.getConfig && opts.patchConfig) {
+        if (!requireAuth()) return;
+        let body: any = {};
+        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+          await new Promise<void>(resolve => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(c));
+            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+          });
+        }
+        const targetPath = typeof body?.path === 'string' ? body.path : '';
+        if (!targetPath) { sendJson(res, 400, { error: 'path is required' }); return; }
+        const cfg = opts.getConfig();
+        const norm = (s: string | { path: string }) => typeof s === 'string' ? s : s.path;
+        const before = cfg.searchRoots.map(norm);
+        const nextRoots = cfg.searchRoots.filter(s => norm(s) !== targetPath);
+        if (nextRoots.length === before.length) {
+          sendJson(res, 404, { error: `not a registered searchRoot: ${targetPath}` });
+          return;
+        }
+        const r = opts.patchConfig({ searchRoots: nextRoots });
+        if (!r.ok) { sendJson(res, 400, { error: r.error }); return; }
+        sendJson(res, 200, { removed: targetPath, removedApps: r.removedApps ?? [] });
+        return;
+      }
+
       // Multi-workspace auto-register. CLI calls this once per invocation with its cwd
       // so a daemon spawned in folder A can also serve folder B's apps.
       if (url.pathname === '/api/workspaces/ensure' && method === 'POST' && opts.getConfig && opts.patchConfig) {
@@ -315,6 +378,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           });
         }
         const targetPath = typeof body?.path === 'string' ? body.path : '';
+        const labelOpt = typeof body?.label === 'string' && body.label ? body.label : null;
         if (!targetPath) { sendJson(res, 400, { error: 'path is required' }); return; }
         if (!fs.existsSync(targetPath)) { sendJson(res, 400, { error: `path does not exist: ${targetPath}` }); return; }
         const cfg = opts.getConfig();
@@ -325,10 +389,11 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           sendJson(res, 200, { added: false, root: matched, reason: 'already covered' });
           return;
         }
-        const nextRoots = [...cfg.searchRoots, targetPath];
+        const nextEntry = labelOpt ? { path: targetPath, label: labelOpt } : targetPath;
+        const nextRoots = [...cfg.searchRoots, nextEntry];
         const r = opts.patchConfig({ searchRoots: nextRoots });
         if (!r.ok) { sendJson(res, 400, { error: r.error }); return; }
-        sendJson(res, 200, { added: true, root: targetPath, addedApps: r.addedApps ?? [] });
+        sendJson(res, 200, { added: true, root: targetPath, label: labelOpt, addedApps: r.addedApps ?? [] });
         return;
       }
 
@@ -430,6 +495,13 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         if (sub3 === 'tasks') {
           sendJson(res, 200, h.queryTasks({ app, task: url.searchParams.get('task') || undefined, since: sinceMs, limit: lim }));
+          return;
+        }
+        if (sub3 === 'timeline') {
+          const kindsRaw = url.searchParams.get('kinds');
+          const kinds = kindsRaw ? new Set(kindsRaw.split(',').map(s => s.trim()).filter(Boolean)) : undefined;
+          const rows = h.queryTimeline({ app, since: sinceMs, kinds, limit: lim ?? 5000 });
+          sendJson(res, 200, rows);
           return;
         }
         if (sub3 === 'bundles') {
@@ -687,7 +759,8 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (cwd) {
           all = all.filter(s => {
             const app = registry.getApp(s.name);
-            return !!app && isPathUnder(app.workspaceRoot, cwd);
+            if (!app) return false;
+            return isPathUnder(app.workspaceRoot, cwd) || isPathUnder(cwd, app.workspaceRoot);
           });
         }
         const rows = fmt === 'full' ? all : all.map(compactSummary);
@@ -729,9 +802,37 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
-      const name = decodeURIComponent(parts[2]);
+      const requestedName = decodeURIComponent(parts[2]);
       const sub = parts[3];
       const sub2 = parts[4];
+
+      // Resolve `<name>` to a single internal key. Two workspaces can register
+      // apps with the same baseName ("editor"); the CLI sends `?cwd=` to pick
+      // one. Without `?cwd=`, a single-match name resolves directly; a
+      // collision returns 412 with the candidate list.
+      const cwdQ = url.searchParams.get('cwd') || null;
+      const resolved = registry.resolveByCwd(requestedName, cwdQ);
+      let name = requestedName;
+      if (resolved.kind === 'unique' && resolved.key) {
+        name = resolved.key;
+      } else if (resolved.kind === 'none' && cwdQ) {
+        sendJson(res, 404, {
+          error: `no app named '${requestedName}' under cwd '${cwdQ}'`,
+          hint: 'use --all (or omit cwd) to broaden the search, or --workspace <label> to target a specific workspace',
+        });
+        return;
+      } else if (resolved.kind === 'collision') {
+        sendJson(res, 412, {
+          error: 'name-collision',
+          candidates: resolved.candidates,
+          hint: cwdQ
+            ? 'multiple apps under that cwd share this name — use --workspace <label> to disambiguate'
+            : 'multiple workspaces share this app name — pass --cwd or --workspace <label>',
+        });
+        return;
+      }
+      // resolved.kind === 'none' && !cwdQ falls through; subsequent handlers
+      // 404 individually so legacy endpoints (no cwd) keep the same error shape.
 
       if (!sub) {
         if (method !== 'GET') {
@@ -753,12 +854,13 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
 
       // Optional ?level= filter. Default 'error' preserves pre-warnings CLI/MCP behavior.
-      // 'warning' returns warnings only; 'all' returns both.
+      // 'warning' returns warnings only; 'lint' returns lint findings only; 'all' returns everything.
       const levelFilter = (url.searchParams.get('level') || 'error').toLowerCase();
       const matchesLevel = (e: ErrorEntry) => {
         const lvl = e.level ?? 'error';
         if (levelFilter === 'all') return true;
         if (levelFilter === 'warning') return lvl === 'warning';
+        if (levelFilter === 'lint') return lvl === 'lint';
         return lvl === 'error';
       };
 

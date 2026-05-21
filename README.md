@@ -16,8 +16,55 @@ After install, `daimon` is on your PATH globally.
 
 ```bash
 daimon init             # interactive scaffolder; writes ./daimon.config.json or ~/.daimon/config.json
-daimon list             # auto-spawns the daemon on first call
+daimon list             # auto-spawns the daemon on first call (defaults to cwd-scoped — pass --all for every workspace)
 daimon daemon status
+```
+
+## Multi-agent / multi-workspace (v0.9)
+
+A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
+
+```bash
+# In repo A:
+daimon list             # only A's apps
+daimon start editor     # cwd disambiguates which "editor"
+
+# In repo B (concurrent, different terminal):
+daimon list             # only B's apps
+daimon start editor     # B's editor — even though A also has one
+
+# To see every workspace's apps:
+daimon list --all
+
+# Manage the workspace registry directly:
+daimon workspaces list
+daimon workspaces add /path/to/another-repo --label other
+daimon workspaces show              # which workspace covers cwd?
+
+# Open the dashboard scoped to the current cwd:
+daimon dashboard        # opens http://127.0.0.1:4999/?cwd=<cwd>
+```
+
+When two workspaces register apps with the same name, daimon stores the second under `<name>@<workspaceLabel>` so both coexist. CLI commands resolve from `process.cwd()`; a 412 `name-collision` body with candidate workspaces is returned only when no cwd disambiguates.
+
+## Three signal classes: errors, warnings, lint
+
+Errors flip app status to `error`. Warnings (TS6133, NG8107, deprecation notes) are surfaced as a separate signal class — they do not flip status. **Lint findings** (eslint, biome, ruff, clippy) are a third channel: parsed from the dev-server log stream, never spawn a linter, never flip status, and live behind a dedicated severity chip on the Errors page.
+
+```bash
+daimon errors editor                       # errors only (back-compat default)
+daimon errors editor --level warning
+daimon errors editor --level lint
+daimon errors editor --level all
+```
+
+## Unified event timeline
+
+`daimon timeline` and the dashboard `/timeline` route merge status, errors, warnings, lint, health, bundle, compile, and task-run rows into one chronological stream:
+
+```bash
+daimon timeline --since 7d --kinds status,error,lint
+daimon timeline --app editor --since 24h
 ```
 
 Config lookup order:

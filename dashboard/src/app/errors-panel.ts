@@ -18,7 +18,7 @@ import { AppRow, DaimonApi } from './daimon-api';
 import { EmptyStateComponent, MonoComponent, SkeletonComponent, StatusPillComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
 
-type Level = 'error' | 'warning';
+type Level = 'error' | 'warning' | 'lint';
 
 interface RawError {
   message: string;
@@ -47,7 +47,7 @@ interface FlatError {
   level: Level;
 }
 
-type Severity = 'errors' | 'warnings' | 'all';
+type Severity = 'errors' | 'warnings' | 'lint' | 'all';
 type GroupBy = 'app' | 'file' | 'code' | 'tool';
 
 const WS_KEY = 'daimon.workspace';
@@ -88,6 +88,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
             } @else {
               {{ totalErrors() }} {{ totalErrors() === 1 ? 'error' : 'errors' }}
               · {{ totalWarnings() }} {{ totalWarnings() === 1 ? 'warning' : 'warnings' }}
+              · {{ totalLint() }} lint
               across {{ appsWithErrors() }} {{ appsWithErrors() === 1 ? 'app' : 'apps' }}
               @if (workspace()) { · workspace <dm-mono>{{ workspace() }}</dm-mono> }
             }
@@ -187,7 +188,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows" [class.rows-nofile]="g.allMissingFile">
                     @for (e of g.errors; track $index) {
-                      <div class="row" [class.is-warning]="e.level === 'warning'">
+                      <div class="row" [class.is-warning]="e.level === 'warning'" [class.is-lint]="e.level === 'lint'">
                         @if (e.file) {
                           <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)"
                              [matTooltip]="e.file">
@@ -216,7 +217,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows">
                     @for (e of g.errors; track $index) {
-                      <div class="row" [class.is-warning]="e.level === 'warning'">
+                      <div class="row" [class.is-warning]="e.level === 'warning'" [class.is-lint]="e.level === 'lint'">
                         <a class="loc" [routerLink]="['/apps', e.app]"
                            (click)="$event.stopPropagation()">
                           <dm-mono>{{ e.app }}</dm-mono>
@@ -247,7 +248,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows">
                     @for (e of g.errors; track $index) {
-                      <div class="row" [class.is-warning]="e.level === 'warning'">
+                      <div class="row" [class.is-warning]="e.level === 'warning'" [class.is-lint]="e.level === 'lint'">
                         <a class="loc" [routerLink]="['/apps', e.app]"
                            (click)="$event.stopPropagation()">
                           <dm-mono>{{ e.app }}</dm-mono>
@@ -275,7 +276,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows">
                     @for (e of g.errors; track $index) {
-                      <div class="row" [class.is-warning]="e.level === 'warning'">
+                      <div class="row" [class.is-warning]="e.level === 'warning'" [class.is-lint]="e.level === 'lint'">
                         <a class="loc" [routerLink]="['/apps', e.app]"
                            (click)="$event.stopPropagation()">
                           <dm-mono>{{ e.app }}</dm-mono>
@@ -353,6 +354,8 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto minmax(0,2fr) auto;align-items:center;gap:.75rem;padding:.5rem .25rem;border-bottom:1px solid var(--mat-sys-outline-variant);border-left:3px solid transparent;padding-left:.5rem}
     .row.is-warning{border-left-color:color-mix(in oklch,var(--mat-sys-tertiary) 70%,transparent);background:color-mix(in oklch,var(--mat-sys-tertiary) 4%,transparent)}
     .row.is-warning .code{background:color-mix(in oklch,var(--mat-sys-tertiary) 18%,transparent);color:var(--mat-sys-tertiary)}
+    .row.is-lint{border-left-color:color-mix(in oklch,var(--mat-sys-secondary) 70%,transparent);background:color-mix(in oklch,var(--mat-sys-secondary) 4%,transparent)}
+    .row.is-lint .code{background:color-mix(in oklch,var(--mat-sys-secondary) 18%,transparent);color:var(--mat-sys-secondary)}
     .rows-nofile .row{grid-template-columns:auto minmax(0,1fr) auto}
     .row:last-child{border-bottom:0}
     .row:hover{background:var(--mat-sys-surface-container)}
@@ -389,9 +392,11 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
   readonly workspace = signal<string | null>(null);
 
   readonly skeletonItems = [0, 1, 2];
+  readonly totalLint = computed(() => this.flat().reduce((acc, e) => acc + (e.level === 'lint' ? e.count : 0), 0));
   readonly severityFilters: { key: Severity; label: string }[] = [
     { key: 'errors', label: 'errors' },
     { key: 'warnings', label: 'warnings' },
+    { key: 'lint', label: 'lint' },
     { key: 'all', label: 'all' },
   ];
   readonly groupOptions: { key: GroupBy; label: string }[] = [
@@ -447,11 +452,14 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
   readonly filteredFlat = computed<FlatError[]>(() => {
     const q = this.query().trim().toLowerCase();
     const sev = this.severity();
+    // Lint findings live in a separate severity tab. The default 'errors' tab
+    // hides them entirely so they don't drown the headline metric.
     const ws = this.workspace();
     return this.flat().filter(e => {
       if (ws && e.workspaceLabel !== ws) return false;
       if (sev === 'errors' && e.level !== 'error') return false;
       if (sev === 'warnings' && e.level !== 'warning') return false;
+      if (sev === 'lint' && e.level !== 'lint') return false;
       if (q) {
         const hay = `${e.file} ${e.code} ${e.message}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -550,7 +558,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
       const evs = this.api.events();
       const tail = evs.slice(this.lastEventCount);
       this.lastEventCount = evs.length;
-      if (tail.some(e => e.type === 'error-new' || e.type === 'error-recur' || e.type === 'warning-new' || e.type === 'warning-recur' || e.type === 'status')) {
+      if (tail.some(e => e.type === 'error-new' || e.type === 'error-recur' || e.type === 'warning-new' || e.type === 'warning-recur' || e.type === 'lint-new' || e.type === 'lint-recur' || e.type === 'status')) {
         void this.fetchAll();
       }
     });

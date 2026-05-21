@@ -5,6 +5,8 @@ import { readLock, removeLock, lockPath, spawnDetached, waitForExit } from './da
 import { configLookupPaths, loadConfig } from './config.js';
 import { History } from './history.js';
 import { isPortFree } from './ports.js';
+import { discoverApps } from './discovery.js';
+import { profileProbePath } from './healthProfiles.js';
 
 export type AutoFixName =
   | 'orphan-daemon'
@@ -17,7 +19,8 @@ export type AutoFixName =
   | 'orphan-venv'
   | 'orphan-bundler-cache'
   | 'orphan-cargo-target'
-  | 'dead-search-root';
+  | 'dead-search-root'
+  | 'health-probe-missing';
 
 export const ALL_AUTO_FIX: AutoFixName[] = [
   'orphan-daemon',
@@ -31,6 +34,7 @@ export const ALL_AUTO_FIX: AutoFixName[] = [
   'orphan-bundler-cache',
   'orphan-cargo-target',
   'dead-search-root',
+  'health-probe-missing',
 ];
 
 export interface RoutineResult {
@@ -407,6 +411,52 @@ function fixDeadSearchRoot(): string {
   return `removed ${removed} dead searchRoot entr${removed === 1 ? 'y' : 'ies'} from ${target} (${[...dead].join(', ')}); triggered soft-reload. To undo: edit ${target} and re-add the path(s).`;
 }
 
+function detectHealthProbeMissing(): { detected: boolean; description: string; entries?: { name: string; profile: string; path: string }[] } {
+  const r = loadConfig();
+  if (r.kind !== 'loaded') return { detected: false, description: 'no config loaded' };
+  // Match the daemon's discovery so a polyglot app with a profile but no
+  // resolved probe path surfaces here. Each entry carries the
+  // profile-suggested default that the auto-fix would write.
+  const apps = discoverApps(r.config, {});
+  const overrides = r.config.overrides ?? {};
+  const entries: { name: string; profile: string; path: string }[] = [];
+  for (const a of apps) {
+    if (!a.serverProfile) continue;
+    const baseName = a.baseName ?? a.name;
+    const userPath = overrides[a.name]?.healthProbePath ?? overrides[baseName]?.healthProbePath;
+    if (userPath) continue;
+    const suggested = profileProbePath(a.serverProfile);
+    if (!suggested || suggested === '/') continue;
+    entries.push({ name: a.name, profile: a.serverProfile, path: suggested });
+  }
+  if (!entries.length) return { detected: false, description: 'every app with a known framework profile already has a probe path resolved' };
+  const summary = entries.map(e => `${e.name} (${e.profile} → ${e.path})`).join(' · ');
+  return { detected: true, description: `apps missing a profile-aware health probe path: ${summary}`, entries };
+}
+
+function fixHealthProbeMissing(): string {
+  const det = detectHealthProbeMissing();
+  if (!det.detected || !det.entries) return 'nothing to set';
+  const { local, user } = configLookupPaths();
+  const target = fs.existsSync(local) ? local : user;
+  let raw: any = {};
+  try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+  if (!raw.overrides || typeof raw.overrides !== 'object') raw.overrides = {};
+  const wrote: string[] = [];
+  for (const e of det.entries) {
+    if (!raw.overrides[e.name] || typeof raw.overrides[e.name] !== 'object') raw.overrides[e.name] = {};
+    if (raw.overrides[e.name].healthProbePath) continue;
+    raw.overrides[e.name].healthProbePath = e.path;
+    wrote.push(`${e.name} → ${e.path}`);
+  }
+  if (!wrote.length) return 'every detected app already had a healthProbePath in overrides; nothing changed.';
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+  const lock = readLock();
+  if (lock) { try { void fetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`, { method: 'POST' }); } catch {} }
+  return `wrote healthProbePath to overrides in ${target} for: ${wrote.join(', ')}; triggered soft-reload. To undo: edit ${target}.`;
+}
+
 const ROUTINES: Record<AutoFixName, { detect: () => any | Promise<any>; fix: () => string | Promise<string> }> = {
   'orphan-daemon': { detect: detectOrphan, fix: fixOrphan },
   'stale-lock': { detect: detectStaleLock, fix: fixStaleLock },
@@ -419,6 +469,7 @@ const ROUTINES: Record<AutoFixName, { detect: () => any | Promise<any>; fix: () 
   'orphan-bundler-cache': { detect: detectOrphanBundlerCache, fix: fixOrphanBundlerCache },
   'orphan-cargo-target': { detect: detectOrphanCargoTarget, fix: fixOrphanCargoTarget },
   'dead-search-root': { detect: detectDeadSearchRoot, fix: fixDeadSearchRoot },
+  'health-probe-missing': { detect: detectHealthProbeMissing, fix: fixHealthProbeMissing },
 };
 
 export async function runAutoFix(opts: { permitted: AutoFixName[]; dryRun?: boolean }): Promise<RunResult> {

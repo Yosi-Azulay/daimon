@@ -2,6 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import type { Registry } from './registry.js';
 import type { AppmanConfig, HealthProbeConfig } from './types.js';
+import { isFatalProbeError, isHealthyHttpStatus, profileProbePath } from './healthProfiles.js';
 
 const FRESH_SERVING_RETRY_MS = 1000;
 const INITIAL_DELAY_MS = 500;
@@ -114,10 +115,20 @@ export class HealthMonitor {
     const s = this.registry.getState(name);
     if (!s || s.status !== 'serving') return;
     const override = this.fullConfig?.overrides?.[name]?.url;
-    const overridePath = this.fullConfig?.overrides?.[name]?.healthProbePath;
+    // Resolve healthProbePath against (1) user override, (2) prior auto-discovery,
+    // (3) framework profile default from M52. The profile default takes effect
+    // before discovery runs, so a fresh Rails/FastAPI app probes the right path
+    // on the first cycle instead of churning through HEALTH_PROBE_CANDIDATES.
+    const app = this.registry.getApp(name);
+    const baseName = (s as any).baseName ?? name;
+    const overridePath =
+      this.fullConfig?.overrides?.[name]?.healthProbePath
+      ?? this.fullConfig?.overrides?.[baseName]?.healthProbePath;
+    const profilePath = profileProbePath(app?.serverProfile);
     let cfg = this.cfg;
     if (overridePath) cfg = { ...this.cfg, path: overridePath };
     else if (s.discoveredHealthPath) cfg = { ...this.cfg, path: s.discoveredHealthPath };
+    else if (profilePath && (this.cfg.path === '/' || !this.cfg.path)) cfg = { ...this.cfg, path: profilePath };
     const candidates = resolveProbeUrls(cfg, override, s.announcedUrl, s.port, s.cachedProbeHost);
     if (
       !override && !overridePath && !s.discoveredHealthPath &&
@@ -202,11 +213,29 @@ export class HealthMonitor {
         const req = lib.get(url, reqOpts, (res: any) => {
           const code = res.statusCode ?? 0;
           res.resume();
-          if (code >= 200 && code < upper) done({ ok: true });
-          else done({ ok: false, error: `http ${code}` });
+          // M52 smart probe outcome: trust isHealthyHttpStatus for the common
+          // case (200/302/401) and fall back to the legacy <500 window for
+          // anything else 2xx/3xx/4xx — the latter keeps existing fixtures
+          // passing. 5xx is unhealthy. `strict2xx` (used by path discovery)
+          // still demands a real 2xx.
+          if (probeOpts.strict2xx) {
+            if (code >= 200 && code < upper) done({ ok: true });
+            else done({ ok: false, error: `http ${code}` });
+          } else if (isHealthyHttpStatus(code) || (code >= 200 && code < upper)) {
+            done({ ok: true });
+          } else {
+            done({ ok: false, error: `http ${code}` });
+          }
         });
         req.on('timeout', () => req.destroy(new Error('timeout')));
-        req.on('error', (err: any) => done({ ok: false, error: err?.code || err?.message || 'error' }));
+        req.on('error', (err: any) => {
+          const code = err?.code || err?.message || 'error';
+          if (isFatalProbeError(err?.code)) {
+            done({ ok: false, error: `${code} (server not responding)` });
+          } else {
+            done({ ok: false, error: code });
+          }
+        });
       } catch (err: any) {
         done({ ok: false, error: err?.message || 'throw' });
       }

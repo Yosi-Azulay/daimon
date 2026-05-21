@@ -19,3 +19,7 @@ test('M39: polyglot orphan rules present', () => {
     assert.ok(ALL_AUTO_FIX.includes(name), `${name} missing from ALL_AUTO_FIX`);
   }
 });
+
+test('M52: health-probe-missing rule present', () => {
+  assert.ok(ALL_AUTO_FIX.includes('health-probe-missing'), 'health-probe-missing missing from ALL_AUTO_FIX');
+});

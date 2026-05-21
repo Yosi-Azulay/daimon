@@ -10,13 +10,13 @@ const fixturesDir = path.join(here, 'fixtures', 'parsers');
 
 function freshState() {
   return {
-    name: 'x', status: 'compiling', port: null, pid: null, startedAt: Date.now(),
+    name: 'x', baseName: 'x', status: 'compiling', port: null, pid: null, startedAt: Date.now(),
     compileStartedAt: Date.now(), lastCompileMs: null, lastCompileAt: null, logBuffer: [],
     errors: new Map(), compileHistory: [], health: 'unknown', lastHealthAt: null, cpu: null, memMB: null,
     restartAttempts: 0, restartWindowStart: null, nextRestartAt: null, tags: [],
     announcedUrl: null, lastHealthError: null, cachedProbeHost: null, lastLogTs: null,
     stale: false, bundle: null, bundleRegressionPct: null, activeEnvFile: null,
-    sessionOverrides: null, dependsOn: [],
+    sessionOverrides: null, dependsOn: [], workspaceLabel: null, workspaceRoot: null,
   };
 }
 
@@ -48,7 +48,7 @@ function matches(actual, want) {
   return true;
 }
 
-const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'nx-serve-fail', 'ng-warning', 'webpack', 'node', 'django', 'rails', 'fastapi', 'go-air', 'rust-trunk'];
+const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'nx-serve-fail', 'ng-warning', 'webpack', 'node', 'django', 'rails', 'fastapi', 'go-air', 'rust-trunk', 'lint-eslint', 'lint-biome', 'lint-ruff', 'lint-clippy'];
 
 for (const name of FIXTURES) {
   test(`parser corpus: ${name}`, () => {
@@ -100,3 +100,22 @@ test('parser corpus: ng-warning entries are tagged level="warning" and do not fl
   }
   assert.notEqual(state.status, 'error', 'warnings must not flip status to error');
 });
+
+for (const [tool, fixtureName] of [
+  ['eslint', 'lint-eslint'],
+  ['biome', 'lint-biome'],
+  ['ruff', 'lint-ruff'],
+  ['clippy', 'lint-clippy'],
+]) {
+  test(`parser corpus: ${tool} findings are tagged level="lint" and never flip status to error`, () => {
+    const { state } = runFixture(fixtureName);
+    const entries = [...state.errors.values()];
+    const lints = entries.filter(e => e.level === 'lint');
+    assert.ok(lints.length > 0, `[${fixtureName}] expected at least one lint entry; got ${entries.length} entries with levels ${entries.map(e => e.level).join(',')}`);
+    assert.notEqual(state.status, 'error', `[${fixtureName}] lint findings must not flip status to error`);
+    // Lint entries should not be classified as 'error' anywhere — eslint's
+    // own "error" severity is still a lint finding from daimon's POV.
+    const realErrors = entries.filter(e => (e.level ?? 'error') === 'error');
+    assert.equal(realErrors.length, 0, `[${fixtureName}] no real errors expected; got ${realErrors.length}`);
+  });
+}

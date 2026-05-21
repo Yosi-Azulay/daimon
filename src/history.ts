@@ -313,6 +313,65 @@ export class History {
     return { points, count };
   }
 
+  // Unified timeline: merge events + compile_times + bundles + task_runs into a
+  // single sorted-desc stream. Each row carries a `kind` chip the UI uses to
+  // color-code rows, plus a tight summary string and the full payload for
+  // drilldown. The server route accepts ?since=&app=&kinds=<csv>.
+  queryTimeline(opts: { app?: string; since?: number; kinds?: Set<string>; limit?: number }): { ts: number; app: string; kind: string; summary: string; payload: any }[] {
+    if (!this.db) return [];
+    const limit = opts.limit ?? 5000;
+    const since = opts.since;
+    const want = opts.kinds;
+    const out: { ts: number; app: string; kind: string; summary: string; payload: any }[] = [];
+
+    const wantStatus = !want || want.has('status');
+    const wantError = !want || want.has('error');
+    const wantWarning = !want || want.has('warning');
+    const wantLint = !want || want.has('lint');
+    const wantHealth = !want || want.has('health');
+    const wantBundle = !want || want.has('bundle');
+    const wantTask = !want || want.has('task');
+    const wantRestart = !want || want.has('restart');
+
+    if (wantStatus || wantError || wantWarning || wantLint || wantHealth || wantRestart) {
+      const evs = this.queryEvents({ app: opts.app, since, limit });
+      for (const r of evs) {
+        let kind: string | null = null;
+        if (r.type === 'status' && wantStatus) kind = 'status';
+        else if ((r.type === 'error-new' || r.type === 'error-recur') && wantError) kind = 'error';
+        else if ((r.type === 'warning-new' || r.type === 'warning-recur') && wantWarning) kind = 'warning';
+        else if ((r.type === 'lint-new' || r.type === 'lint-recur') && wantLint) kind = 'lint';
+        else if (r.type === 'health' && wantHealth) kind = 'health';
+        else if ((r.type === 'restart-scheduled' || r.type === 'bundle-regression' || r.type === 'compile-regression' || r.type === 'stale' || r.type === 'self-warn') && wantRestart) kind = 'restart';
+        if (!kind) continue;
+        const summary = kind === 'status'
+          ? `${r.from_state ?? '?'} → ${r.to_state ?? '?'}`
+          : (r.message ?? r.type);
+        out.push({ ts: r.ts, app: r.app, kind, summary, payload: r });
+      }
+    }
+    if (wantBundle) {
+      const bs = this.queryBundles({ app: opts.app, since, limit });
+      for (const r of bs) {
+        out.push({ ts: r.ts, app: r.app, kind: 'bundle', summary: `initial ${r.initialKB}KB · lazy ${r.lazyKB}KB`, payload: r });
+      }
+    }
+    // compile-times rolls up as 'compile' kind, treated like task runs (a metric event).
+    if (wantTask) {
+      const cs = this.queryCompiles({ app: opts.app, since, limit });
+      for (const r of cs) {
+        out.push({ ts: r.ts, app: r.app, kind: 'compile', summary: `compile ${(r.ms / 1000).toFixed(1)}s`, payload: r });
+      }
+      const ts = this.queryTasks({ app: opts.app, since, limit });
+      for (const r of ts) {
+        const dur = r.duration_ms ?? 0;
+        out.push({ ts: r.ts, app: r.app, kind: 'task', summary: `${r.task} exit=${r.exit_code} ${(dur / 1000).toFixed(1)}s`, payload: r });
+      }
+    }
+    out.sort((a, b) => b.ts - a.ts);
+    return out.slice(0, limit);
+  }
+
   queryTasks(opts: { app?: string; task?: string; since?: number; limit?: number }): TaskRunRow[] {
     if (!this.db) return [];
     const wh: string[] = [];

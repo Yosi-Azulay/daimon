@@ -132,7 +132,15 @@ export type ServerProfile =
   | 'django' | 'rails' | 'fastapi' | 'go-air' | 'rust-trunk';
 
 export interface DiscoveredApp {
+  // Storage key — globally unique across the daemon. Equals baseName when no
+  // collision; otherwise discovery appends `@<workspaceLabel>` (or a numeric
+  // suffix) to keep the registry's Map keys unique. This is what events,
+  // history rows, and registry methods use internally.
   name: string;
+  // What the user typed in package.json / project.json / their workspace.
+  // Two workspaces can share the same baseName ("editor", "web"). The CLI/MCP
+  // resolves a baseName + cwd back to a single `name` via Registry.resolveByCwd.
+  baseName?: string;
   workspaceRoot: string;
   workspaceType: 'nx' | 'angular' | 'vite' | 'storybook' | 'polyglot';
   command: string;
@@ -170,7 +178,7 @@ export interface ParsedError {
   tool?: ParserTool;
 }
 
-export type IssueLevel = 'error' | 'warning';
+export type IssueLevel = 'error' | 'warning' | 'lint';
 
 export interface ErrorEntry {
   message: string;
@@ -193,6 +201,8 @@ export type AppEventType =
   | 'error-recur'
   | 'warning-new'
   | 'warning-recur'
+  | 'lint-new'
+  | 'lint-recur'
   | 'health'
   | 'restart-scheduled'
   | 'stale'
@@ -249,6 +259,8 @@ export interface AppState {
   dependsOn: string[];
   recoveringFromError?: boolean;
   workspaceLabel: string | null;
+  workspaceRoot: string | null;
+  baseName: string;
   lastErrorHash?: string | null;
   discoveredHealthPath?: string | null;
 }
@@ -278,5 +290,8 @@ export interface AppSummary {
   dependsOn: string[];
   activeEnvFile: string | null;
   workspaceLabel: string | null;
+  workspaceRoot: string | null;
+  baseName: string;
   lastChangeMs?: number;
+  lintCount?: number;
 }

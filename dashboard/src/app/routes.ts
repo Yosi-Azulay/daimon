@@ -12,6 +12,7 @@ export const ROUTES: Routes = [
   { path: 'history', loadComponent: () => import('./history-page').then(m => m.HistoryPageComponent) },
   { path: 'history/:name', loadComponent: () => import('./history-page').then(m => m.HistoryPageComponent) },
   { path: 'trends', loadComponent: () => import('./trends-page').then(m => m.TrendsPageComponent) },
+  { path: 'timeline', loadComponent: () => import('./timeline-page').then(m => m.TimelinePageComponent) },
   { path: 'tests', loadComponent: () => import('./tests-page').then(m => m.TestsPageComponent) },
   { path: 'sessions', loadComponent: () => import('./sessions-page').then(m => m.SessionsPageComponent) },
   { path: 'requests/:name', loadComponent: () => import('./requests-page').then(m => m.RequestsPageComponent) },

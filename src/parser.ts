@@ -32,6 +32,26 @@ const COMPILING_PATTERNS = [
   /Compiling \(/i,
 ];
 
+// Lint patterns. Tested FIRST — these are tighter than the generic
+// "file:line:col:" pattern in ERROR_PATTERNS, so checking them first lets us
+// keep lint findings out of the error column. Each pattern must be specific
+// enough that it can't false-positive on a real compile error.
+// Daimon NEVER spawns linters; this is parse-only.
+const LINT_PATTERNS = [
+  // Eslint stylish/compact (no filename on the finding line; just the inner
+  // "<line>:<col>  <severity>  ...  <rule-name>" body). Two-or-more spaces
+  // before the severity distinguishes it from "file:line:col error TS..." prose.
+  /^\s+\d+:\d+\s{2,}(?:warning|error)\s{2,}\S/i,
+  // Biome rule path "lint/<category>/<ruleName>" — only Biome formats it that way.
+  /\blint\/[a-z][a-z0-9-]+\/[a-z][a-zA-Z0-9-]+\b/,
+  // Ruff: "src/foo.py:3:1: F401 [*] `os` imported but unused".
+  /^\s*\S+\.py:\d+:\d+:\s+[A-Z]\d{3,}\b/,
+  // Clippy banner (`warning: ... clippy::`) and the "= note:" hint that
+  // identifies the lint rule.
+  /^warning:\s.*clippy::/i,
+  /^\s*=\s+note:\s+`#\[warn\(clippy::/,
+];
+
 // Warning patterns. Tested AFTER ERROR_PATTERNS so a line matching both stays an error.
 // Captured warnings do NOT flip app status to 'error' — they're informational signals.
 const WARNING_PATTERNS = [
@@ -323,9 +343,15 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
   }
 
   let errorResult: ParseResult['error'];
-  const isError = ERROR_PATTERNS.some(rx => rx.test(trimmed));
-  const isWarning = !isError && WARNING_PATTERNS.some(rx => rx.test(trimmed));
-  if (isError || isWarning) {
+  // Lint patterns are specific enough to win over generic ERROR_PATTERNS (e.g.,
+  // ruff "src/x.py:1:1: F401 …" would otherwise tip the generic
+  // "<file>:<line>:<col>:" error rule). Check lint first; fall back to error;
+  // then warning. Test against the raw line for lint so eslint's indentation
+  // (which carries semantic weight) is preserved.
+  const isLint = LINT_PATTERNS.some(rx => rx.test(line));
+  const isError = !isLint && ERROR_PATTERNS.some(rx => rx.test(trimmed));
+  const isWarning = !isLint && !isError && WARNING_PATTERNS.some(rx => rx.test(trimmed));
+  if (isError || isWarning || isLint) {
     const hash = hashLine(trimmed);
     const now = Date.now();
     const existing = state.errors.get(hash);
@@ -342,7 +368,7 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
         firstSeen: now,
         lastSeen: now,
         parsed: parseStructured(trimmed),
-        level: isWarning ? 'warning' : 'error',
+        level: isLint ? 'lint' : isWarning ? 'warning' : 'error',
       };
       state.errors.set(hash, entry);
       isNew = true;

@@ -9,6 +9,7 @@ import type {
   DiscoveredApp,
   ErrorEntry,
 } from './types.js';
+import { isPathUnder } from './pathScope.js';
 import { AppProcess } from './appProcess.js';
 import { PortAllocator, isPortFree } from './ports.js';
 import { DiskLogger } from './diskLogger.js';
@@ -49,7 +50,7 @@ export class Registry extends EventEmitter {
     for (const app of apps) {
       this.entries.set(app.name, {
         app,
-        state: this.freshState(app.name, app.tags, app.workspaceLabel ?? null),
+        state: this.freshState(app.name, app.baseName ?? app.name, app.tags, app.workspaceLabel ?? null, app.workspaceRoot ?? null),
         proc: null,
       });
     }
@@ -61,7 +62,7 @@ export class Registry extends EventEmitter {
 
   addDiscoveredApp(app: DiscoveredApp): void {
     if (this.entries.has(app.name)) return;
-    this.entries.set(app.name, { app, state: this.freshState(app.name, app.tags, app.workspaceLabel ?? null), proc: null });
+    this.entries.set(app.name, { app, state: this.freshState(app.name, app.baseName ?? app.name, app.tags, app.workspaceLabel ?? null, app.workspaceRoot ?? null), proc: null });
     this.emit('change');
   }
 
@@ -71,7 +72,9 @@ export class Registry extends EventEmitter {
     e.app = app;
     e.state.tags = app.tags;
     e.state.workspaceLabel = app.workspaceLabel ?? null;
-    e.state.dependsOn = this.config.depends?.[app.name] ?? [];
+    e.state.workspaceRoot = app.workspaceRoot ?? null;
+    e.state.baseName = app.baseName ?? app.name;
+    e.state.dependsOn = this.config.depends?.[app.baseName ?? app.name] ?? [];
     this.emit('change');
   }
 
@@ -87,7 +90,7 @@ export class Registry extends EventEmitter {
     return this.history;
   }
 
-  private freshState(name: string, tags: string[], workspaceLabel: string | null = null): AppState {
+  private freshState(name: string, baseName: string, tags: string[], workspaceLabel: string | null = null, workspaceRoot: string | null = null): AppState {
     return {
       name,
       status: 'stopped',
@@ -117,14 +120,49 @@ export class Registry extends EventEmitter {
       bundleRegressionPct: null,
       activeEnvFile: null,
       sessionOverrides: null,
-      dependsOn: this.config.depends?.[name] ?? [],
+      dependsOn: this.config.depends?.[baseName] ?? [],
       workspaceLabel,
+      workspaceRoot,
+      baseName,
       discoveredHealthPath: null,
     };
   }
 
   names(): string[] {
     return [...this.entries.keys()];
+  }
+
+  // Resolve a user-facing name (typically a baseName) plus an optional cwd to a
+  // single internal app key. Used by every per-app endpoint: when two
+  // workspaces share an app baseName ("editor"), the CLI's process.cwd()
+  // disambiguates which one the user means.
+  resolveByCwd(name: string, cwd?: string | null): {
+    kind: 'unique' | 'none' | 'collision';
+    key?: string;
+    candidates: { name: string; baseName: string; workspaceLabel: string | null; workspaceRoot: string | null }[];
+  } {
+    const all = [...this.entries.values()];
+    let matches = all.filter(e => e.state.name === name || (e.state.baseName ?? e.state.name) === name);
+    if (cwd) {
+      matches = matches.filter(e => {
+        const root = e.app.workspaceRoot;
+        if (!root) return false;
+        // Either direction counts: the cwd may sit inside a workspace
+        // (`/repo/apps/editor` under `/repo`) or be an umbrella that contains
+        // workspaces (`/repos` over `/repos/project-a`). Both are intuitive
+        // "cwd belongs to this app" answers.
+        return isPathUnder(root, cwd) || isPathUnder(cwd, root);
+      });
+    }
+    const candidates = matches.map(e => ({
+      name: e.state.name,
+      baseName: e.state.baseName ?? e.state.name,
+      workspaceLabel: e.state.workspaceLabel,
+      workspaceRoot: e.state.workspaceRoot ?? e.app.workspaceRoot ?? null,
+    }));
+    if (matches.length === 0) return { kind: 'none', candidates };
+    if (matches.length > 1) return { kind: 'collision', candidates };
+    return { kind: 'unique', key: matches[0].state.name, candidates };
   }
 
   pruneOldErrors(now = Date.now()): number {
@@ -168,8 +206,12 @@ export class Registry extends EventEmitter {
       status: s.status,
       port: s.port,
       url: resolvedUrl,
-      errorCount: [...s.errors.values()].reduce((acc, x) => acc + (x.level === 'warning' ? 0 : x.count), 0),
+      errorCount: [...s.errors.values()].reduce((acc, x) => {
+        const lvl = x.level ?? 'error';
+        return acc + (lvl === 'error' ? x.count : 0);
+      }, 0),
       warningCount: [...s.errors.values()].reduce((acc, x) => acc + (x.level === 'warning' ? x.count : 0), 0),
+      lintCount: [...s.errors.values()].reduce((acc, x) => acc + (x.level === 'lint' ? x.count : 0), 0),
       uptimeMs,
       lastCompileMs: s.lastCompileMs,
       health: s.health,
@@ -188,6 +230,8 @@ export class Registry extends EventEmitter {
       dependsOn: [...s.dependsOn],
       activeEnvFile: s.activeEnvFile,
       workspaceLabel: s.workspaceLabel,
+      workspaceRoot: s.workspaceRoot,
+      baseName: s.baseName ?? s.name,
       lastChangeMs,
     };
   }
@@ -383,10 +427,11 @@ export class Registry extends EventEmitter {
         }
       },
       onErrorRecorded: (entry, isNew) => {
-        const isWarning = entry.level === 'warning';
-        const type = isWarning
-          ? (isNew ? 'warning-new' : 'warning-recur')
-          : (isNew ? 'error-new' : 'error-recur');
+        const lvl = entry.level ?? 'error';
+        let type: AppEventType;
+        if (lvl === 'lint') type = isNew ? 'lint-new' : 'lint-recur';
+        else if (lvl === 'warning') type = isNew ? 'warning-new' : 'warning-recur';
+        else type = isNew ? 'error-new' : 'error-recur';
         this.recordEvent({ app: name, type, message: entry.message });
       },
       onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),

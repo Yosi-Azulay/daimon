@@ -64,37 +64,53 @@ async function main() {
     return r.status === 0 ? err(r.body?.error || 'unknown') : ok(r.body);
   });
 
-  server.registerTool('get_status', { description: 'Compact status: name, status, port, url, health, errCount, lastChangeMs, uptime. Use get_status_full for the verbose v0.4 shape.', inputSchema: { name: z.string() } }, async ({ name }) => {
-    const r = await callJson(`/api/apps/${encodeURIComponent(name)}?format=compact`);
+  // Default `cwd` used by MCP tools when the caller doesn't pass one. The MCP
+  // server runs in the daemon's process, so `process.cwd()` is the user's
+  // shell cwd when they spawned `daimon mcp`. Accept-but-don't-default to it
+  // would mean two agents share "everything" — so we default in.
+  const defaultCwd = process.cwd();
+  const cwdField = z.string().optional().describe('Workspace cwd for name disambiguation; defaults to the MCP server cwd. Use an explicit value when invoking from a different workspace.');
+
+  server.registerTool('get_status', { description: 'Compact status: name, status, port, url, health, errCount, lastChangeMs, uptime. Use get_status_full for the verbose v0.4 shape.', inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
+    const qs = new URLSearchParams({ format: 'compact', cwd: cwd ?? defaultCwd });
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}?${qs.toString()}`);
     if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 412) return err(JSON.stringify(r.body));
     if (r.status === 404) return err('unknown app');
     return ok(r.body);
   });
 
-  server.registerTool('get_status_full', { description: 'Verbose v0.4 status form including events, compile history, metrics. Prefer get_status unless you need extra fields.', inputSchema: { name: z.string() } }, async ({ name }) => {
-    const r = await callJson(`/api/apps/${encodeURIComponent(name)}?format=full`);
+  server.registerTool('get_status_full', { description: 'Verbose v0.4 status form including events, compile history, metrics. Prefer get_status unless you need extra fields.', inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
+    const qs = new URLSearchParams({ format: 'full', cwd: cwd ?? defaultCwd });
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}?${qs.toString()}`);
     if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 412) return err(JSON.stringify(r.body));
     if (r.status === 404) return err('unknown app');
     return ok(r.body);
   });
 
   server.registerTool('get_errors', {
-    description: 'Get errors for an app. Supports --since duration, --since-last cursor, optional structured form.',
+    description: 'Get errors for an app. Supports --since duration, --since-last cursor, optional structured form, and --level (error|warning|lint|all).',
     inputSchema: {
       name: z.string(),
       since: z.string().optional(),
       sinceLast: z.boolean().optional(),
       client: z.string().optional(),
       structured: z.boolean().optional(),
+      level: z.enum(['error', 'warning', 'lint', 'all']).optional(),
+      cwd: cwdField,
     },
-  }, async ({ name, since, sinceLast, client, structured }) => {
+  }, async ({ name, since, sinceLast, client, structured, level, cwd }) => {
     let path = `/api/apps/${encodeURIComponent(name)}/errors`;
     const qs = new URLSearchParams();
+    qs.set('cwd', cwd ?? defaultCwd);
     if (sinceLast) { path += '/since-last'; if (client) qs.set('client', client); }
     else if (since) qs.set('since', since);
+    if (level) qs.set('level', level);
     const q = qs.toString();
     const r = await callJson(path + (q ? '?' + q : ''));
     if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 412) return err(JSON.stringify(r.body));
     if (r.status === 404) return err('unknown app');
     let body = r.body;
     if (structured && Array.isArray(body)) body = body.map((e: any) => e.parsed ?? { message: e.message });
@@ -103,22 +119,26 @@ async function main() {
 
   server.registerTool('get_logs', {
     description: 'Get recent log lines for an app.',
-    inputSchema: { name: z.string(), tail: z.number().int().positive().optional(), since: z.string().optional() },
-  }, async ({ name, tail, since }) => {
+    inputSchema: { name: z.string(), tail: z.number().int().positive().optional(), since: z.string().optional(), cwd: cwdField },
+  }, async ({ name, tail, since, cwd }) => {
     const qs = new URLSearchParams();
+    qs.set('cwd', cwd ?? defaultCwd);
     if (tail) qs.set('tail', String(tail));
     if (since) qs.set('since', since);
     const q = qs.toString();
     const r = await callJson(`/api/apps/${encodeURIComponent(name)}/logs${q ? '?' + q : ''}`);
     if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 412) return err(JSON.stringify(r.body));
     if (r.status === 404) return err('unknown app');
     return ok(r.body);
   });
 
   for (const action of ['start', 'stop', 'restart'] as const) {
-    server.registerTool(`${action}_app`, { description: `${action} an app.`, inputSchema: { name: z.string() } }, async ({ name }) => {
-      const r = await callJson(`/api/apps/${encodeURIComponent(name)}/${action}`, 'POST');
+    server.registerTool(`${action}_app`, { description: `${action} an app.`, inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
+      const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
+      const r = await callJson(`/api/apps/${encodeURIComponent(name)}/${action}?${qs.toString()}`, 'POST');
       if (r.status === 0) return err(r.body?.error || 'unknown');
+      if (r.status === 412) return err(JSON.stringify(r.body));
       return ok(r.body);
     });
   }

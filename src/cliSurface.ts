@@ -534,6 +534,36 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     group: 'introspection',
     exitCodes: stdExit,
   },
+  {
+    name: 'workspaces',
+    args: 'list|add [path] [--label <name>] | rm <path> | show [path]',
+    summary: 'Manage the workspace registry (searchRoots).',
+    description: 'List, add, remove, and inspect workspaces. `add` ensures the given path (defaults to cwd) is a registered searchRoot. `show` reports which workspace covers a cwd.',
+    example: 'daimon workspaces list',
+    needsDaemon: true,
+    group: 'config',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'dashboard',
+    args: '',
+    summary: 'Open the dashboard in your default browser, scoped to the current cwd.',
+    description: 'Open http://127.0.0.1:4999/?cwd=<process.cwd()> in the default browser. The dashboard pre-selects the workspace pill covering cwd.',
+    example: 'daimon dashboard',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
+    name: 'timeline',
+    args: '[--since 7d] [--app <name>] [--kinds status,error,warning,lint,bundle,task]',
+    summary: 'Print a unified chronological event timeline.',
+    description: 'Merge status / error / warning / lint / bundle / task / health rows into one chronological stream. JSON output suits piping; use `daimon dashboard` then /timeline for the visual view.',
+    example: 'daimon timeline --since 24h --kinds status,error',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
 ];
 
 export const CLI_ALIASES: Record<string, string> = {};

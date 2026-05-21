@@ -7,17 +7,28 @@ export type HealthKind = 'unknown' | 'healthy' | 'unhealthy';
 
 export interface AppRow {
   name: string;
+  baseName?: string;
   status: StatusKind;
   port: number | null;
   url?: string | null;
   health: HealthKind;
   errorCount: number;
+  warningCount?: number;
+  lintCount?: number;
   uptimeMs: number | null;
   workspaceLabel: string | null;
+  workspaceRoot?: string | null;
   lastChangeMs?: number;
   cpu?: number | null;
   memMB?: number | null;
   tags?: string[];
+}
+
+export interface WorkspaceRow {
+  path: string;
+  label: string | null;
+  appCount: number;
+  apps: string[];
 }
 
 export interface Overview {
@@ -60,6 +71,13 @@ export class DaimonApi {
   events = signal<EventRecord[]>([]);
   connected = signal<boolean>(false);
   ready = signal<boolean>(false);
+  // cwd hint from `?cwd=` query param; null when not present. Used by M49
+  // pre-select + unknown-cwd banner. `cwdResolved` is the workspace label
+  // covering that cwd (null when daemon hasn't seen it yet).
+  cwdHint = signal<string | null>(null);
+  cwdResolved = signal<{ path: string; label: string | null } | null>(null);
+  cwdUnknown = signal<boolean>(false);
+  workspaceRows = signal<WorkspaceRow[]>([]);
 
   workspaces = computed(() => {
     const seen = new Set<string>();
@@ -185,6 +203,39 @@ export class DaimonApi {
   async getSelf(): Promise<any | null> {
     try { return await firstValueFrom(this.http.get<any>('/api/self')); }
     catch { return null; }
+  }
+
+  async listWorkspaces(): Promise<WorkspaceRow[]> {
+    try {
+      const r = await firstValueFrom(this.http.get<WorkspaceRow[]>('/api/workspaces'));
+      const arr = Array.isArray(r) ? r : [];
+      this.workspaceRows.set(arr);
+      return arr;
+    } catch { return []; }
+  }
+
+  async resolveCwd(cwd: string): Promise<{ path: string; label: string | null; cwd: string } | null> {
+    try {
+      return await firstValueFrom(this.http.get<any>(`/api/workspaces/resolve?cwd=${encodeURIComponent(cwd)}`));
+    } catch { return null; }
+  }
+
+  async registerWorkspace(p: string, label?: string | null): Promise<{ added: boolean; root?: string; reason?: string }> {
+    const body: any = { path: p };
+    if (label) body.label = label;
+    return firstValueFrom(this.http.post<any>('/api/workspaces/ensure', body));
+  }
+
+  async getTimeline(opts: { since?: string; app?: string; kinds?: string } = {}): Promise<any[]> {
+    try {
+      const qs = new URLSearchParams();
+      if (opts.since) qs.set('since', opts.since);
+      if (opts.app) qs.set('app', opts.app);
+      if (opts.kinds) qs.set('kinds', opts.kinds);
+      const q = qs.toString();
+      const r = await firstValueFrom(this.http.get<any[]>('/api/history/timeline' + (q ? '?' + q : '')));
+      return Array.isArray(r) ? r : [];
+    } catch { return []; }
   }
 
   async getSelfHistory(since: '1h' | '6h' | '24h' | '7d' = '6h'): Promise<{ ts: number; rssMB: number; heapUsedMB: number; eventLoopLagMs: number; historyQueryP95Ms: number }[]> {

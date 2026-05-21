@@ -1,0 +1,5 @@
+$ ruff check .
+src/app.py:1:1: F401 [*] `os` imported but unused
+src/app.py:14:80: E501 Line too long (102 > 79)
+src/util.py:3:5: B008 Do not perform function calls in argument defaults
+Found 3 errors.

@@ -4,6 +4,75 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-21
+
+Strategic theme: **Multi-agent observability.** v0.9 finishes the pivot to many agents on one machine, each in their own workspace, all sharing one daemon and one dashboard. On top of the architectural shift, deepen what daimon *sees* (lint findings as a third signal class beyond errors + warnings) and *shows* (a unified event timeline), and broaden what it *understands* (framework-aware health probes for the polyglot stack landed in v0.7).
+
+### Added (M46) — Multi-workspace foundation
+
+- `src/pathScope.ts` (`isPathUnder`, `normalizeForCompare`) — case-insensitive on Windows, separator-normalized.
+- `POST /api/workspaces/ensure` — idempotent register; returns `{ added, root, addedApps }` or `{ added: false, reason: 'already covered' }`.
+- `GET /api/apps?cwd=<path>` — filter by workspaceRoot under cwd (bidirectional: either direction counts).
+- `daimon list` defaults to cwd-scoped; `--all` bypasses; auto-calls `ensureCurrentWorkspace()`.
+- Warnings as a second signal class: parser `WARNING_PATTERNS`, `ErrorEntry.level?: 'error'|'warning'`, `warning-new` / `warning-recur` events, `?level=` filter, severity chips on the Errors page, tertiary-accent warning rows.
+- `TrendChartComponent` skeleton regression fix: `loading`/`empty`/`title`/`subtitle` are signals (zoneless + OnPush).
+- `scripts/dev-install.mjs` + `npm run dev:install` / `dev:install:fast` / `dev:unlink`.
+
+### Added (M47) — Per-cwd command resolution
+
+- `Registry.resolveByCwd(name, cwd?)`: returns `{ kind: 'unique'|'collision'|'none', key?, candidates }`. Discovery now uniquifies storage names on collision (`<base>@<workspaceLabel>`), keeping the user-facing `baseName` intact.
+- Every per-app endpoint resolves `<name>` via `?cwd=`. **412 `name-collision`** body `{ error, candidates: [...], hint }` when two workspaces share the same app name and no cwd disambiguates.
+- CLI `start/stop/restart/status/logs/errors/wait/run` all send `?cwd=<process.cwd()>` unless `--all` is set. New `reportCollisionAndExit` renders candidates by `workspaceLabel`.
+- MCP tools `get_status`, `get_status_full`, `get_errors`, `get_logs`, `start_app`/`stop_app`/`restart_app` accept an optional `cwd` param (defaults to the MCP server's `process.cwd()`).
+
+### Added (M48) — Workspace registry CLI + audit attribution
+
+- `daimon workspaces list|add [path] [--label <name>] | rm <path> | show [path]`.
+- `GET /api/workspaces`, `POST /api/workspaces/remove`, `GET /api/workspaces/resolve?cwd=<p>`.
+- CLI sends `X-Daimon-Cwd: <process.cwd()>` on every authenticated POST.
+- `appendAuditEntry` now records the cwd as the 5th column. Two agents sharing an IP can be told apart in `~/.daimon/audit.log`.
+
+### Added (M49) — Dashboard cwd context
+
+- Dashboard reads `?cwd=<path>` and pre-selects the workspace pill that covers it.
+- Unknown-cwd banner offers a one-click **Register** that POSTs `/api/workspaces/ensure` and then re-resolves.
+- New `daimon dashboard` verb opens the default browser to `http://127.0.0.1:4999/?cwd=<process.cwd()>`.
+- Header **scope chip** (`scope: <label> ×`) gives a one-click clear back to "all workspaces". No regression when no `?cwd=` is present.
+
+### Added (M50) — Lint findings channel
+
+- Parser `LINT_PATTERNS` for eslint, biome, ruff, clippy. Lint runs **first** (before error/warning) so a tight `F401`/`lint/correctness/...` signal beats the generic `<file>:<line>:<col>:` error rule.
+- `ErrorEntry.level` adds `'lint'`. `AppEventType` adds `lint-new` / `lint-recur`. **Status never flips on lint.**
+- `?level=lint` filter on `/api/apps/:name/errors`. `AppSummary.lintCount`.
+- Errors page severity chips become **errors / warnings / lint / all** with a secondary accent for lint rows. Lint events excluded from error trends.
+- Fixtures: `lint-eslint.log`, `lint-biome.log`, `lint-ruff.log`, `lint-clippy.log`.
+- **Daimon never spawns linters.** This is parse-only — read what the dev server already emits.
+
+### Added (M51) — Unified event timeline
+
+- `History.queryTimeline()`: merges events + compile_times + bundles + task_runs into `{ ts, app, kind, summary, payload }`. Sorted desc; 5000-row cap.
+- `GET /api/history/timeline?since=&app=&kinds=<csv>`.
+- New lazy-loaded `/timeline` dashboard route with virtual scroll, kind/app filters, flyout drawer. Nav-rail entry between History and Trends, keyboard chord `g i`.
+- New CLI verb: `daimon timeline [--since 24h] [--app <name>] [--kinds status,error,…]`.
+
+### Added (M52) — Polyglot v2 health probes
+
+- `src/healthProfiles.ts` with per-profile probe defaults: django → `/admin/login/`, rails → `/up`, fastapi → `/docs`, go-air → `/`, rust-trunk → `/`.
+- Probe resolution uses (in order): user override → prior auto-discovery → profile default → fallback `/`. The first probe cycle on a fresh Rails/FastAPI app now hits the right path instead of churning through `HEALTH_PROBE_CANDIDATES`.
+- Smart probe outcome: 200, 301/302/304/307/308, and 401 (auth-gated but alive) classify healthy; 5xx and `ECONNREFUSED` / `ECONNRESET` / `EHOSTUNREACH` classify unhealthy.
+- New doctor rule **`health-probe-missing`** with auto-fix: writes the profile-suggested `healthProbePath` into `overrides[<app>]` and triggers a soft-reload.
+
+### Added (M53) — Polish + release prep
+
+- Doctor `ALL_AUTO_FIX` now lists 12 rules (added `health-probe-missing`).
+- `CHANGELOG.md` + `RELEASE-v0.9.0.md`. `package.json` 0.8.1 → 0.9.0.
+
+### Migration notes
+
+- **Multi-workspace is the migration headline.** Existing single-workspace setups keep working — `daimon list --all` reproduces the v0.8 default. Two agents in different workspaces sharing an app name now coexist; CLI commands run from a workspace cwd resolve automatically. Pass `--all` to see / act on apps across all workspaces.
+- **Audit format change.** `~/.daimon/audit.log` gains a 5th tab-delimited column carrying the agent's cwd. Existing 4-column rows continue to parse — the cwd is empty for them.
+- **Discovery storage keys.** When two workspaces have apps with the same `baseName`, the second is stored under `<baseName>@<workspaceLabel>`. Its `baseName` field stays as the user-facing name. `daimon list` shows the storage key in the `name` column; `workspaceLabel` distinguishes the rows.
+
 ## [0.8.1] — 2026-05-21
 
 Hotfix for three regressions caught running v0.8.0 against a real workspace.
