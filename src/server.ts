@@ -509,15 +509,32 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           return;
         }
         if (sub3 === 'trends') {
+          const sinceLabel = (url.searchParams.get('since') || '24h').toLowerCase();
+          const windows: Record<string, number> = { '24h': 24 * 3600 * 1000, '7d': 7 * 86400 * 1000, '30d': 30 * 86400 * 1000 };
+          const sinceMsTrend = windows[sinceLabel] ?? windows['24h'];
+          const bucketMs = sinceLabel === '24h' ? 3600 * 1000 : 86400 * 1000;
+          // `metrics=compile,bundle,errors,restarts` (v0.9) returns all metrics
+          // in one round-trip, sharing the queryEvents() scan between errors
+          // and restarts. `metric=<single>` continues to work for back-compat.
+          const metricsParam = url.searchParams.get('metrics');
+          if (metricsParam) {
+            const want = metricsParam.split(',').map(s => s.trim()).filter(Boolean) as ('compile' | 'bundle' | 'errors' | 'restarts')[];
+            const valid: ('compile' | 'bundle' | 'errors' | 'restarts')[] = ['compile', 'bundle', 'errors', 'restarts'];
+            const filtered = want.filter(m => valid.includes(m));
+            if (!filtered.length) { sendJson(res, 400, { error: 'metrics must include at least one of compile|bundle|errors|restarts' }); return; }
+            const out: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }> = {};
+            for (const m of filtered) {
+              const r = h.trends({ app, metric: m, sinceMs: sinceMsTrend, bucketMs });
+              out[m] = { points: r.points, count: r.count };
+            }
+            sendJson(res, 200, { app: app ?? null, since: sinceLabel, metrics: out, _meta: { aggregation: sinceLabel === '24h' ? 'hour' : 'day' } });
+            return;
+          }
           const metric = (url.searchParams.get('metric') || 'compile') as 'compile' | 'bundle' | 'errors' | 'restarts';
           if (!['compile', 'bundle', 'errors', 'restarts'].includes(metric)) {
             sendJson(res, 400, { error: 'metric must be compile|bundle|errors|restarts' });
             return;
           }
-          const sinceLabel = (url.searchParams.get('since') || '24h').toLowerCase();
-          const windows: Record<string, number> = { '24h': 24 * 3600 * 1000, '7d': 7 * 86400 * 1000, '30d': 30 * 86400 * 1000 };
-          const sinceMsTrend = windows[sinceLabel] ?? windows['24h'];
-          const bucketMs = sinceLabel === '24h' ? 3600 * 1000 : 86400 * 1000;
           const { points, count } = h.trends({ app, metric, sinceMs: sinceMsTrend, bucketMs });
           sendJson(res, 200, { app: app ?? null, metric, since: sinceLabel, points, _meta: { aggregation: sinceLabel === '24h' ? 'hour' : 'day', count } });
           return;

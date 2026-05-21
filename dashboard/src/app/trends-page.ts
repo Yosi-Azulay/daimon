@@ -101,13 +101,29 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
         },
       },
     };
-    if (!this.canvasRef) { this.pendingCfg = cfg; return; }
+    if (!this.canvasRef) {
+      // Race: setLoading() destroyed the canvas, then setData() ran before
+      // Angular re-projected the `@else { <canvas> }` branch — so canvasRef is
+      // still null at this microtask. queueMicrotask + a couple of fallback
+      // animation frames let the view query update before we try again. Without
+      // this, the chart silently stays empty after every window/app switch.
+      this.pendingCfg = cfg;
+      this.flushPendingWhenCanvasReady();
+      return;
+    }
     this.applyCfg(cfg);
+  }
+
+  private flushPendingWhenCanvasReady(attempt = 0): void {
+    if (!this.pendingCfg) return;
+    if (this.canvasRef?.nativeElement) { this.applyCfg(this.pendingCfg); return; }
+    if (attempt >= 10) return; // give up after ~10 frames; something else is wrong
+    requestAnimationFrame(() => this.flushPendingWhenCanvasReady(attempt + 1));
   }
 
   private applyCfg(cfg: ChartConfiguration): void {
     const el = this.canvasRef?.nativeElement;
-    if (!el) { this.pendingCfg = cfg; return; }
+    if (!el) { this.pendingCfg = cfg; this.flushPendingWhenCanvasReady(); return; }
     if (this.chart) { this.chart.destroy(); }
     this.chart = new Chart(el, cfg);
     this.pendingCfg = null;
@@ -224,12 +240,21 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
                      'color-mix(in oklch, ' + primary + ' 60%, transparent)',
                      'color-mix(in oklch, ' + tertiary + ' 60%, transparent)'];
 
-    const [compileSeries, bundleSeries, errorSeries, restartSeries] = await Promise.all([
-      this.fetchSeries(apps, 'compile', win),
-      this.fetchSeries(apps, 'bundle', win),
-      this.fetchSeries(apps, 'errors', win),
-      this.fetchSeries(apps, 'restarts', win),
-    ]);
+    // One batched round-trip per app returns all four metrics — cuts the Trends
+    // page from 4N parallel calls down to N. With three apps that's 3 round-
+    // trips instead of 12.
+    const perApp = await Promise.all(apps.map(app =>
+      this.api.getTrendsMulti({ app, metrics: ['compile', 'bundle', 'errors', 'restarts'], since: win })
+        .then(r => ({ app, r })),
+    ));
+    const collect = (m: 'compile' | 'bundle' | 'errors' | 'restarts'): Series[] =>
+      perApp
+        .map(({ app, r }) => ({ app, points: (r?.metrics?.[m]?.points ?? []) as SeriesPoint[] }))
+        .filter(s => s.points.length > 0);
+    const compileSeries = collect('compile');
+    const bundleSeries = collect('bundle');
+    const errorSeries = collect('errors');
+    const restartSeries = collect('restarts');
 
     const labelMap = this.unionLabels([compileSeries, bundleSeries, errorSeries, restartSeries], win);
 

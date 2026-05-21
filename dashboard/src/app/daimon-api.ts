@@ -200,6 +200,18 @@ export class DaimonApi {
     } catch { return null; }
   }
 
+  // Batched v0.9 trends fetch: one HTTP round-trip returns all four metrics
+  // for one app. Cuts the Trends page from 4N parallel calls down to N.
+  async getTrendsMulti(opts: { app?: string; metrics: ('compile' | 'bundle' | 'errors' | 'restarts')[]; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; since: string; metrics: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }>; _meta?: { aggregation: string } } | null> {
+    try {
+      const params = new URLSearchParams();
+      if (opts.app) params.set('app', opts.app);
+      params.set('metrics', opts.metrics.join(','));
+      params.set('since', opts.since);
+      return await firstValueFrom(this.http.get<any>(`/api/history/trends?${params.toString()}`));
+    } catch { return null; }
+  }
+
   async getSelf(): Promise<any | null> {
     try { return await firstValueFrom(this.http.get<any>('/api/self')); }
     catch { return null; }
