@@ -170,12 +170,16 @@ export interface ParsedError {
   tool?: ParserTool;
 }
 
+export type IssueLevel = 'error' | 'warning';
+
 export interface ErrorEntry {
   message: string;
   count: number;
   firstSeen: number;
   lastSeen: number;
   parsed?: ParsedError;
+  // Default 'error' when omitted (back-compat). 'warning' entries do NOT flip status to 'error'.
+  level?: IssueLevel;
 }
 
 export interface LogEntry {
@@ -187,6 +191,8 @@ export type AppEventType =
   | 'status'
   | 'error-new'
   | 'error-recur'
+  | 'warning-new'
+  | 'warning-recur'
   | 'health'
   | 'restart-scheduled'
   | 'stale'
@@ -253,6 +259,7 @@ export interface AppSummary {
   port: number | null;
   url: string | null;
   errorCount: number;
+  warningCount?: number;
   uptimeMs: number | null;
   lastCompileMs: number | null;
   health: AppHealth;

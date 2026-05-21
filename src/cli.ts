@@ -121,6 +121,22 @@ async function ensureDaemon(): Promise<void> {
   } catch {}
 }
 
+// Tells the daemon to register the current cwd as a workspace if it isn't already
+// covered by any searchRoot. Best-effort: silently ignores network/auth failures
+// so we never block a CLI command on this.
+async function ensureCurrentWorkspace(): Promise<void> {
+  try {
+    const res = await fetch(getBaseUrl() + '/api/workspaces/ensure', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ path: process.cwd() }),
+    });
+    // 200 either way (added or already-covered). 401/403 means token gate is on and
+    // we don't have one — silently skip; the user can still use --all.
+    void res;
+  } catch {}
+}
+
 function authHeaders(): Record<string, string> {
   const tok = process.env.DAIMON_TOKEN;
   return tok ? { authorization: `Bearer ${tok}` } : {};
@@ -219,6 +235,7 @@ interface Flags {
   path?: string;
   goal?: string;
   self?: boolean;
+  all?: boolean;
   passthrough: string[];
 }
 
@@ -263,6 +280,7 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--path') f.path = args[++i];
     else if (a === '--goal') f.goal = args[++i];
     else if (a === '--self') f.self = true;
+    else if (a === '--all') f.all = true;
     else f.positional.push(a);
   }
   return f;
@@ -676,6 +694,12 @@ async function main() {
       if (needFull) params.set('format', 'full');
       else if (f.compact) params.set('format', 'compact');
       if (f.explain) params.set('explain', '1');
+      // Default: only show apps under the current cwd. Pass --all to see every app the
+      // daemon knows about (across all registered searchRoots).
+      if (!f.all) {
+        await ensureCurrentWorkspace();
+        params.set('cwd', process.cwd());
+      }
       if (f.stream) {
         params.set('stream', 'ndjson');
         const qs = params.toString();

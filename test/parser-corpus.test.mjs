@@ -48,7 +48,7 @@ function matches(actual, want) {
   return true;
 }
 
-const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'nx-serve-fail', 'webpack', 'node', 'django', 'rails', 'fastapi', 'go-air', 'rust-trunk'];
+const FIXTURES = ['angular-esbuild', 'vite', 'storybook', 'jest', 'nx', 'nx-serve-fail', 'ng-warning', 'webpack', 'node', 'django', 'rails', 'fastapi', 'go-air', 'rust-trunk'];
 
 for (const name of FIXTURES) {
   test(`parser corpus: ${name}`, () => {
@@ -89,4 +89,14 @@ test('parser corpus: angular-esbuild has zero capture regressions on its 3 known
   const { collected } = runFixture('angular-esbuild');
   const withFile = collected.filter(e => e.file && e.line && e.col);
   assert.ok(withFile.length >= 3, `expected 3 file-bearing errors; got ${withFile.length}`);
+});
+
+test('parser corpus: ng-warning entries are tagged level="warning" and do not flip status to error', () => {
+  const { state } = runFixture('ng-warning');
+  const entries = [...state.errors.values()];
+  assert.ok(entries.length > 0, 'expected at least one entry from the NG8107 warning');
+  for (const e of entries) {
+    assert.equal(e.level, 'warning', `entry should be level=warning, got level=${e.level} for: ${e.message}`);
+  }
+  assert.notEqual(state.status, 'error', 'warnings must not flip status to error');
 });

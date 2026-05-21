@@ -113,7 +113,7 @@ export class DaimonApi {
 
   async appErrors(name: string): Promise<any[]> {
     try {
-      const r = await firstValueFrom(this.http.get<any[]>(`/api/apps/${encodeURIComponent(name)}/errors?format=full`));
+      const r = await firstValueFrom(this.http.get<any[]>(`/api/apps/${encodeURIComponent(name)}/errors?format=full&level=all`));
       return Array.isArray(r) ? r : [];
     } catch { return []; }
   }

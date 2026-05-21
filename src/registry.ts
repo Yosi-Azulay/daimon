@@ -168,7 +168,8 @@ export class Registry extends EventEmitter {
       status: s.status,
       port: s.port,
       url: resolvedUrl,
-      errorCount: [...s.errors.values()].reduce((acc, x) => acc + x.count, 0),
+      errorCount: [...s.errors.values()].reduce((acc, x) => acc + (x.level === 'warning' ? 0 : x.count), 0),
+      warningCount: [...s.errors.values()].reduce((acc, x) => acc + (x.level === 'warning' ? x.count : 0), 0),
       uptimeMs,
       lastCompileMs: s.lastCompileMs,
       health: s.health,
@@ -381,8 +382,13 @@ export class Registry extends EventEmitter {
           this.armCascade(name);
         }
       },
-      onErrorRecorded: (entry, isNew) =>
-        this.recordEvent({ app: name, type: isNew ? 'error-new' : 'error-recur', message: entry.message }),
+      onErrorRecorded: (entry, isNew) => {
+        const isWarning = entry.level === 'warning';
+        const type = isWarning
+          ? (isNew ? 'warning-new' : 'warning-recur')
+          : (isNew ? 'error-new' : 'error-recur');
+        this.recordEvent({ app: name, type, message: entry.message });
+      },
       onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),
       onLogLine: line => { e.logger?.write(line); this.emit('log', { name, ts: Date.now(), line }); },
       onCompile: ms => {

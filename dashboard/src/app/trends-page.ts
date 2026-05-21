@@ -44,13 +44,13 @@ function fmtBucketLabel(t: number, window: Window): string {
   template: `
     <mat-card class="dm-trend-card">
       <mat-card-header>
-        <mat-card-title>{{ title }}</mat-card-title>
-        @if (subtitle) { <mat-card-subtitle>{{ subtitle }}</mat-card-subtitle> }
+        <mat-card-title>{{ title() }}</mat-card-title>
+        @if (subtitle()) { <mat-card-subtitle>{{ subtitle() }}</mat-card-subtitle> }
       </mat-card-header>
       <mat-card-content>
-        @if (loading) {
+        @if (loading()) {
           <dm-skeleton height="220px"></dm-skeleton>
-        } @else if (empty) {
+        } @else if (empty()) {
           <dm-empty icon="query_stats" title="No data" hint="Run the app to populate this metric"></dm-empty>
         } @else {
           <div class="dm-chart-box"><canvas #canvas></canvas></div>
@@ -67,10 +67,11 @@ function fmtBucketLabel(t: number, window: Window): string {
 export class TrendChartComponent implements AfterViewInit, OnDestroy {
   @ViewChild('canvas') canvasRef?: ElementRef<HTMLCanvasElement>;
   private chart?: Chart;
-  loading = true;
-  empty = false;
-  title = '';
-  subtitle = '';
+  // Signals so OnPush + zoneless picks up flips from setData/setLoading.
+  readonly loading = signal(true);
+  readonly empty = signal(false);
+  readonly title = signal('');
+  readonly subtitle = signal('');
   pendingCfg: ChartConfiguration | null = null;
 
   ngAfterViewInit(): void {
@@ -78,11 +79,12 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
   }
 
   setData(opts: { title: string; subtitle?: string; chartType: ChartType; labels: string[]; datasets: any[]; stacked?: boolean; yLabel?: string; }): void {
-    this.title = opts.title;
-    this.subtitle = opts.subtitle ?? '';
-    this.loading = false;
-    this.empty = opts.datasets.every(d => !d.data?.length);
-    if (this.empty) { this.destroy(); return; }
+    this.title.set(opts.title);
+    this.subtitle.set(opts.subtitle ?? '');
+    this.loading.set(false);
+    const isEmpty = opts.datasets.every(d => !d.data?.length);
+    this.empty.set(isEmpty);
+    if (isEmpty) { this.destroy(); return; }
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const outline = readToken('--mat-sys-outline-variant') || 'rgba(120,120,120,0.3)';
     const cfg: ChartConfiguration = {
@@ -111,7 +113,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     this.pendingCfg = null;
   }
 
-  setLoading(): void { this.loading = true; this.empty = false; this.destroy(); }
+  setLoading(): void { this.loading.set(true); this.empty.set(false); this.destroy(); }
 
   private destroy(): void { this.chart?.destroy(); this.chart = undefined; }
 

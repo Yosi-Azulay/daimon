@@ -32,6 +32,25 @@ const COMPILING_PATTERNS = [
   /Compiling \(/i,
 ];
 
+// Warning patterns. Tested AFTER ERROR_PATTERNS so a line matching both stays an error.
+// Captured warnings do NOT flip app status to 'error' — they're informational signals.
+const WARNING_PATTERNS = [
+  // Angular compiler: "▲ [WARNING] NG8107: ..." or "[WARNING] ..."
+  /^\s*(?:▲\s*)?\[WARNING\]/,
+  // TypeScript: "warning TS6133:"
+  /\bwarning TS\d+/i,
+  // Generic "[warning]" / "[warn]" tags from various tools.
+  /^\s*\[(?:warning|warn)\]\s+/i,
+  // Eslint-style "warning  '...' is defined but never used"
+  /^\s*warning\s+\S+\s+is\s+/i,
+  // Python DeprecationWarning / UserWarning / FutureWarning lines.
+  /^\s*\S+:\d+:\s*(?:Deprecation|User|Future|Pending|Resource|Runtime|Syntax)Warning:/,
+  // Webpack: "WARNING in ./src/..."
+  /^WARNING in\s+/,
+  // Vite warning prefix.
+  /^\s*\[vite\]\s+warning/i,
+];
+
 const ERROR_PATTERNS = [
   /^\s*ERROR\b/,
   /\berror TS\d+/,
@@ -304,7 +323,9 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
   }
 
   let errorResult: ParseResult['error'];
-  if (ERROR_PATTERNS.some(rx => rx.test(trimmed))) {
+  const isError = ERROR_PATTERNS.some(rx => rx.test(trimmed));
+  const isWarning = !isError && WARNING_PATTERNS.some(rx => rx.test(trimmed));
+  if (isError || isWarning) {
     const hash = hashLine(trimmed);
     const now = Date.now();
     const existing = state.errors.get(hash);
@@ -321,13 +342,16 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
         firstSeen: now,
         lastSeen: now,
         parsed: parseStructured(trimmed),
+        level: isWarning ? 'warning' : 'error',
       };
       state.errors.set(hash, entry);
       isNew = true;
     }
+    // Only errors get status-flip + the lastErrorHash backfill slot.
+    // Warnings can still backfill (they record a hash) but never change status.
     state.lastErrorHash = hash;
     errorResult = { entry, isNew };
-    state.status = 'error';
+    if (isError) state.status = 'error';
   }
 
   statusChanged = state.status !== prev;

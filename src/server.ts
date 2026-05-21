@@ -15,6 +15,7 @@ import { listPresets } from './presets.js';
 import { writeHandoff } from './stateHandoff.js';
 import { DAIMON_VERSION } from './version.js';
 import type { SelfMetricsCollector } from './selfMetrics.js';
+import { isPathUnder } from './pathScope.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -123,10 +124,11 @@ function compactStatus(s: AppSummary): Record<string, unknown> {
 
 function compactError(e: ErrorEntry): Record<string, unknown> {
   const p = e.parsed;
+  const level = e.level ?? 'error';
   if (p && (p.file || p.code)) {
-    return { file: p.file ?? null, line: p.line ?? null, col: p.col ?? null, code: p.code ?? null, message: p.message ?? e.message };
+    return { file: p.file ?? null, line: p.line ?? null, col: p.col ?? null, code: p.code ?? null, message: p.message ?? e.message, level };
   }
-  return { file: null, line: null, col: null, code: null, message: e.message };
+  return { file: null, line: null, col: null, code: null, message: e.message, level };
 }
 
 function parseSinceParam(s: string | null): { sinceMs?: number; sinceTs?: number } {
@@ -297,6 +299,36 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         } catch (err: any) {
           sendJson(res, 400, { error: err?.message || String(err) });
         }
+        return;
+      }
+
+      // Multi-workspace auto-register. CLI calls this once per invocation with its cwd
+      // so a daemon spawned in folder A can also serve folder B's apps.
+      if (url.pathname === '/api/workspaces/ensure' && method === 'POST' && opts.getConfig && opts.patchConfig) {
+        if (!requireAuth()) return;
+        let body: any = {};
+        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+          await new Promise<void>(resolve => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(c));
+            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+          });
+        }
+        const targetPath = typeof body?.path === 'string' ? body.path : '';
+        if (!targetPath) { sendJson(res, 400, { error: 'path is required' }); return; }
+        if (!fs.existsSync(targetPath)) { sendJson(res, 400, { error: `path does not exist: ${targetPath}` }); return; }
+        const cfg = opts.getConfig();
+        const existingRoots = cfg.searchRoots.map(s => typeof s === 'string' ? s : s.path);
+        const covered = existingRoots.some(r => isPathUnder(targetPath, r));
+        if (covered) {
+          const matched = existingRoots.find(r => isPathUnder(targetPath, r));
+          sendJson(res, 200, { added: false, root: matched, reason: 'already covered' });
+          return;
+        }
+        const nextRoots = [...cfg.searchRoots, targetPath];
+        const r = opts.patchConfig({ searchRoots: nextRoots });
+        if (!r.ok) { sendJson(res, 400, { error: r.error }); return; }
+        sendJson(res, 200, { added: true, root: targetPath, addedApps: r.addedApps ?? [] });
         return;
       }
 
@@ -647,7 +679,17 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           return;
         }
         const fmt = resolveFormat(url, opts.getConfig);
-        const all = registry.list();
+        let all = registry.list();
+        // Optional ?cwd= filter: keep only apps whose workspaceRoot is under the given path.
+        // CLI passes its process.cwd() so two agents on the same daemon see distinct app sets.
+        const cwdRaw = url.searchParams.get('cwd');
+        const cwd = cwdRaw && cwdRaw.length > 0 ? cwdRaw : null;
+        if (cwd) {
+          all = all.filter(s => {
+            const app = registry.getApp(s.name);
+            return !!app && isPathUnder(app.workspaceRoot, cwd);
+          });
+        }
         const rows = fmt === 'full' ? all : all.map(compactSummary);
         if (url.searchParams.get('stream') === 'ndjson') {
           res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
@@ -670,10 +712,13 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
               scanned: stats.scanned,
               rejected: stats.rejected,
               warnings,
+              ...(cwd ? { cwdScope: cwd } : {}),
               suggestion: rows.length === 0
                 ? (roots.length === 0
                   ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder to add the current cwd."
-                  : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook, then run 'daimon doctor'.")
+                  : cwd
+                    ? `no apps under cwd '${cwd}'. Run 'daimon list --all' to see apps from other workspaces, or 'daimon init --auto' to register this dir.`
+                    : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook, then run 'daimon doctor'.")
                 : 'apps discovered; _meta is informational.',
             };
           }
@@ -707,11 +752,22 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // Optional ?level= filter. Default 'error' preserves pre-warnings CLI/MCP behavior.
+      // 'warning' returns warnings only; 'all' returns both.
+      const levelFilter = (url.searchParams.get('level') || 'error').toLowerCase();
+      const matchesLevel = (e: ErrorEntry) => {
+        const lvl = e.level ?? 'error';
+        if (levelFilter === 'all') return true;
+        if (levelFilter === 'warning') return lvl === 'warning';
+        return lvl === 'error';
+      };
+
       if (sub === 'errors' && sub2 === 'since-last' && method === 'GET') {
         const client = url.searchParams.get('client') || 'default';
         const cursor = cursors.getErrorCursor(client, name);
-        const errs = registry.errorsSince(name, cursor);
-        if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const errsAll = registry.errorsSince(name, cursor);
+        if (errsAll == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const errs = errsAll.filter(matchesLevel);
         const newest = errs.reduce((acc, e) => Math.max(acc, e.lastSeen), cursor);
         if (newest > cursor) cursors.setErrorCursor(client, name, newest);
         const fmt = resolveFormat(url, opts.getConfig);
@@ -725,13 +781,15 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (sinceRaw) {
           const { sinceMs, sinceTs } = parseSinceParam(sinceRaw);
           const cutoff = sinceTs ?? (sinceMs != null ? Date.now() - sinceMs : 0);
-          const errs = registry.errorsSince(name, cutoff);
-          if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+          const errsAll = registry.errorsSince(name, cutoff);
+          if (errsAll == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+          const errs = errsAll.filter(matchesLevel);
           sendJson(res, 200, fmt === 'full' ? errs : errs.map(compactError));
           return;
         }
-        const errs = registry.errors(name);
-        if (errs == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const errsAll = registry.errors(name);
+        if (errsAll == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const errs = errsAll.filter(matchesLevel);
         sendJson(res, 200, fmt === 'full' ? errs : errs.map(compactError));
         return;
       }

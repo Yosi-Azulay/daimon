@@ -1,0 +1,14 @@
+Building...
+▲ [WARNING] NG8107: NG8107: The left side of this optional chain operation does not include 'null' or 'undefined' in its type, therefore the '?.' operator can be replaced with the '.' operator [plugin angular-compiler]
+
+    libs/plate-editor/src/v2/properties/sections/key-properties-section/key-properties-section.component.html:71:17:
+      71 │         [value]="key.labels?.[0] ?? ''"
+         ╵                  ~~~~~~~~~~~~~~~
+
+  Warning occurs in the template of component KeyPropertiesSectionComponent.
+
+    libs/plate-editor/src/v2/properties/sections/key-properties-section/key-properties-section.component.ts:31:15:
+      31 │   templateUrl: './key-properties-section.component.html',
+         ╵                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Application bundle generation complete. [27.144 seconds]

@@ -18,11 +18,19 @@ import { AppRow, DaimonApi } from './daimon-api';
 import { EmptyStateComponent, MonoComponent, SkeletonComponent, StatusPillComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
 
+type Level = 'error' | 'warning';
+
 interface RawError {
   message: string;
   count: number;
   firstSeen?: number;
   lastSeen?: number;
+  // Both compact (file/line/col/code/message at top level) and full (parsed{...}) shapes flow through here.
+  file?: string | null;
+  line?: number | null;
+  col?: number | null;
+  code?: string | null;
+  level?: Level;
   parsed?: { file?: string; line?: number; col?: number; code?: string; message?: string; tool?: string };
 }
 
@@ -36,9 +44,10 @@ interface FlatError {
   message: string;
   count: number;
   tool: string;
+  level: Level;
 }
 
-type Severity = 'all' | 'with-errors' | 'code:TS' | 'code:other';
+type Severity = 'errors' | 'warnings' | 'all';
 type GroupBy = 'app' | 'file' | 'code' | 'tool';
 
 const WS_KEY = 'daimon.workspace';
@@ -78,6 +87,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
               <dm-skeleton width="14rem" height=".875rem"></dm-skeleton>
             } @else {
               {{ totalErrors() }} {{ totalErrors() === 1 ? 'error' : 'errors' }}
+              · {{ totalWarnings() }} {{ totalWarnings() === 1 ? 'warning' : 'warnings' }}
               across {{ appsWithErrors() }} {{ appsWithErrors() === 1 ? 'app' : 'apps' }}
               @if (workspace()) { · workspace <dm-mono>{{ workspace() }}</dm-mono> }
             }
@@ -141,7 +151,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
             </a>
           </div>
         </dm-empty>
-      } @else if (totalErrors() === 0) {
+      } @else if (totalErrors() === 0 && totalWarnings() === 0) {
         <dm-empty icon="check_circle"
                   [title]="'Clean — 0 errors across ' + api.apps().length + ' apps'"
                   hint="The last build was clean. Keep going."></dm-empty>
@@ -177,7 +187,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows" [class.rows-nofile]="g.allMissingFile">
                     @for (e of g.errors; track $index) {
-                      <div class="row">
+                      <div class="row" [class.is-warning]="e.level === 'warning'">
                         @if (e.file) {
                           <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)"
                              [matTooltip]="e.file">
@@ -206,7 +216,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows">
                     @for (e of g.errors; track $index) {
-                      <div class="row">
+                      <div class="row" [class.is-warning]="e.level === 'warning'">
                         <a class="loc" [routerLink]="['/apps', e.app]"
                            (click)="$event.stopPropagation()">
                           <dm-mono>{{ e.app }}</dm-mono>
@@ -237,7 +247,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows">
                     @for (e of g.errors; track $index) {
-                      <div class="row">
+                      <div class="row" [class.is-warning]="e.level === 'warning'">
                         <a class="loc" [routerLink]="['/apps', e.app]"
                            (click)="$event.stopPropagation()">
                           <dm-mono>{{ e.app }}</dm-mono>
@@ -265,7 +275,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                   </mat-expansion-panel-header>
                   <div class="rows">
                     @for (e of g.errors; track $index) {
-                      <div class="row">
+                      <div class="row" [class.is-warning]="e.level === 'warning'">
                         <a class="loc" [routerLink]="['/apps', e.app]"
                            (click)="$event.stopPropagation()">
                           <dm-mono>{{ e.app }}</dm-mono>
@@ -340,7 +350,9 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .lnk:hover{text-decoration:underline}
     .lnk .material-symbols-outlined{font-size:16px}
     .rows{display:flex;flex-direction:column}
-    .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto minmax(0,2fr) auto;align-items:center;gap:.75rem;padding:.5rem .25rem;border-bottom:1px solid var(--mat-sys-outline-variant)}
+    .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto minmax(0,2fr) auto;align-items:center;gap:.75rem;padding:.5rem .25rem;border-bottom:1px solid var(--mat-sys-outline-variant);border-left:3px solid transparent;padding-left:.5rem}
+    .row.is-warning{border-left-color:color-mix(in oklch,var(--mat-sys-tertiary) 70%,transparent);background:color-mix(in oklch,var(--mat-sys-tertiary) 4%,transparent)}
+    .row.is-warning .code{background:color-mix(in oklch,var(--mat-sys-tertiary) 18%,transparent);color:var(--mat-sys-tertiary)}
     .rows-nofile .row{grid-template-columns:auto minmax(0,1fr) auto}
     .row:last-child{border-bottom:0}
     .row:hover{background:var(--mat-sys-surface-container)}
@@ -372,16 +384,15 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
   readonly raw = signal<Map<string, RawError[]>>(new Map());
   readonly loading = signal<boolean>(false);
   readonly query = signal<string>('');
-  readonly severity = signal<Severity>('with-errors');
+  readonly severity = signal<Severity>('errors');
   readonly groupBy = signal<GroupBy>('app');
   readonly workspace = signal<string | null>(null);
 
   readonly skeletonItems = [0, 1, 2];
   readonly severityFilters: { key: Severity; label: string }[] = [
+    { key: 'errors', label: 'errors' },
+    { key: 'warnings', label: 'warnings' },
     { key: 'all', label: 'all' },
-    { key: 'with-errors', label: 'with-errors' },
-    { key: 'code:TS', label: 'code:TS*' },
-    { key: 'code:other', label: 'code:other' },
   ];
   readonly groupOptions: { key: GroupBy; label: string }[] = [
     { key: 'app', label: 'app' },
@@ -403,26 +414,33 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
     for (const [name, errs] of this.raw()) {
       const app = apps.get(name);
       for (const e of errs) {
+        // Server compact-format puts file/line/col/code at top level; full-format nests under parsed{}.
+        const file = e.parsed?.file ?? e.file ?? '';
+        const line = e.parsed?.line ?? e.line ?? null;
+        const col = e.parsed?.col ?? e.col ?? null;
+        const code = e.parsed?.code ?? e.code ?? '';
         out.push({
           app: name,
           workspaceLabel: app?.workspaceLabel ?? null,
-          file: e.parsed?.file ?? '',
-          line: e.parsed?.line ?? null,
-          col: e.parsed?.col ?? null,
-          code: e.parsed?.code ?? '',
+          file: file ?? '',
+          line: line ?? null,
+          col: col ?? null,
+          code: code ?? '',
           message: e.parsed?.message ?? e.message ?? '',
           count: e.count ?? 1,
           tool: e.parsed?.tool ?? '',
+          level: e.level ?? 'error',
         });
       }
     }
     return out;
   });
 
-  readonly totalErrors = computed(() => this.flat().reduce((acc, e) => acc + e.count, 0));
+  readonly totalErrors = computed(() => this.flat().reduce((acc, e) => acc + (e.level === 'error' ? e.count : 0), 0));
+  readonly totalWarnings = computed(() => this.flat().reduce((acc, e) => acc + (e.level === 'warning' ? e.count : 0), 0));
   readonly appsWithErrors = computed(() => {
     const s = new Set<string>();
-    for (const e of this.flat()) s.add(e.app);
+    for (const e of this.flat()) if (e.level === 'error') s.add(e.app);
     return s.size;
   });
 
@@ -432,11 +450,8 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
     const ws = this.workspace();
     return this.flat().filter(e => {
       if (ws && e.workspaceLabel !== ws) return false;
-      if (sev === 'with-errors' && !e.code && !e.file) {
-        // keep — every flat error is "with errors" by definition, fall through
-      }
-      if (sev === 'code:TS' && !/^TS\d+/i.test(e.code)) return false;
-      if (sev === 'code:other' && /^TS\d+/i.test(e.code)) return false;
+      if (sev === 'errors' && e.level !== 'error') return false;
+      if (sev === 'warnings' && e.level !== 'warning') return false;
       if (q) {
         const hay = `${e.file} ${e.code} ${e.message}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -535,7 +550,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
       const evs = this.api.events();
       const tail = evs.slice(this.lastEventCount);
       this.lastEventCount = evs.length;
-      if (tail.some(e => e.type === 'error-new' || e.type === 'error-recur' || e.type === 'status')) {
+      if (tail.some(e => e.type === 'error-new' || e.type === 'error-recur' || e.type === 'warning-new' || e.type === 'warning-recur' || e.type === 'status')) {
         void this.fetchAll();
       }
     });
