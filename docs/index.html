@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v0.9.0 — docs</title>
+<title>daimon v0.10.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -31,7 +31,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v0.9.0</span></h1>
+<h1>daimon <span class="badge">v0.10.0</span></h1>
 <p class="lede">Local dev-server manager for Angular / Nx / Vite / Storybook (+ polyglot) with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -114,6 +114,8 @@ npx daimon init --auto</code></pre>
 <dd>List active agents touching this daemon and any current per-app soft-locks.</dd>
 <dt><code>daimon handoff &lt;app&gt; &lt;agentId&gt;</code></dt>
 <dd>Transfer the soft-lock on &lt;app&gt; to another agent.</dd>
+<dt><code>daimon profiles suggest [--since 30d] [--min 5]</code></dt>
+<dd>Suggest profile candidates from recurring co-starts.</dd>
 <dt><code>daimon ci start &lt;profile&gt; [--until ready|healthy] [--timeout 5m] [--json]</code></dt>
 <dd>CI helper: start a profile and block until all apps are healthy. Designed for GitHub Actions / Jenkins steps.</dd>
 </dl>

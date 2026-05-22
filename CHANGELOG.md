@@ -43,6 +43,7 @@ Strategic theme: **Mature & Aware.** The biggest release yet. 11 milestones (M54
 
 - New MCP tools: `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`.
 - Per-app lock + recent-interaction list queryable via `/api/apps/<n>/lock`.
+- New dashboard `/agents` route: live list of every agent touching this daemon with per-agent cards showing call counts, last-seen, cwd, and the apps each agent currently holds. Orphan-lock surface lists locks held by agents that have gone inactive. Chord `g g` jumps straight to it; the help dialog and command palette pick it up automatically.
 
 ### Added (M60) — Pattern detection
 
@@ -51,17 +52,20 @@ Strategic theme: **Mature & Aware.** The biggest release yet. 11 milestones (M54
 - Bundle: 10% initialKB growth vs the previous baseline.
 - Error-flap: ≥5 errors/hour AND ≥3× the 23h-prior baseline.
 - Suspect-commit hint pulled via `git log -1 --format=%h:%s` (best-effort; null on non-git workspaces).
+- New dashboard `/regressions` route: filterable cards (all / compile / bundle / error-flap) showing baseline-vs-current, factor, fingerprint, and suspect-commit. Live-updates from the SSE stream and seeds from `/api/history/events?type=regression-detected`. Chord `g r`.
 
 ### Added (M61) — Predictive UX (ready-time)
 
 - `AppSummary.estimatedReadyAtMs` projected from p50 of last 10 compiles during `compiling` state. Surfaced in compact CLI status and MCP `get_status` payloads.
-- Stretch items (profile-suggestion + smart-restart-tune doctor rule) deferred to v0.11.
+- `daimon profiles suggest` CLI verb backed by `GET /api/profiles/suggest`. Sweeps the last 30d of `status → starting` events into co-start sessions (60s windows), counts canonical app-sets, and emits suggestions for clusters seen ≥5 times that don't already match an existing profile. Each suggestion carries a name, app list, occurrence count, last-seen, and reason string. `--since` and `--min` flags tune the window.
+- `smart-restart-tune` doctor rule. Scans the last 7d of `status` events for non-stopped→starting transitions per app; flags any app restarting ≥5×/day with `restartPolicy` review guidance.
 
 ### Added (M62) — VS Code extension
 
 - New `vscode-extension/` subpackage. Marketplace name `flycotech.daimon`.
 - Features: status bar (cwd app health), errors sidebar (cwd-filtered, click-to-open), commands `Daimon: Start / Stop / Open dashboard / Show logs`, soft-lock-aware Start (offers to steal on 409).
 - New root `npm run build:vscode` script (delegates to `vscode-extension` after `npm install`).
+- `.vsix` built: `vscode-extension/daimon-vscode.vsix` (7.85 KB). LICENSE bundled. Ready for `vsce publish` to the marketplace.
 
 ### Added (M63) — Webhooks + CI verb
 
@@ -71,9 +75,11 @@ Strategic theme: **Mature & Aware.** The biggest release yet. 11 milestones (M54
 
 ### Added (M64) — Polish + ship
 
-- Help dialog automatically picks up new chords (`agents`, `handoff`, `ci`, `--steal`) from `cliSurface.ts`.
+- Help dialog automatically picks up new chords (`agents`, `handoff`, `ci`, `--steal`) from `cliSurface.ts`. Two new chord entries surfaced: `g g` (Agents), `g r` (Regressions), `g i` (Timeline).
+- Playwright drive landed at `dashboard/e2e/dashboard.spec.ts`. Visits 13 routes (all existing + new `/agents`, `/regressions`), asserts page-specific landmarks, enforces a console-error budget, and verifies the `g g` / `g r` chord routing. Seed helper at `dashboard/e2e/seed.ts` writes 6 fixture events (≥1 serving, ≥1 error, ≥2 regressions). Run with `npm run e2e:install && npm run e2e:seed && npm run e2e` from `dashboard/`.
 - Doctor 11-rule UI tightening carry-over from v0.9.
 - `RELEASE-v0.10.0.md` with migration steps for the audit-column add and webhooks config.
+- Test suite now at 225 / 17.0s (added 6 profile-suggester / restart-cadence tests).
 
 ### Migration
 

@@ -307,6 +307,16 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     exitCodes: stdExit,
   },
   {
+    name: 'profiles suggest',
+    args: '[--since 30d] [--min 5]',
+    summary: 'Suggest profile candidates from recurring co-starts.',
+    description: 'Scan recent status events for app sets the user repeatedly starts together within a short window. Returns suggested profiles with name, apps, cooccurrence count, and last-seen time. Skips clusters that already match an existing profile.',
+    example: 'daimon profiles suggest --since 30d --min 5',
+    needsDaemon: true,
+    group: 'agent',
+    exitCodes: stdExit,
+  },
+  {
     name: 'up',
     args: '[<profile>]',
     summary: 'Start a profile (or autoStart). Waits for each to reach serving.',

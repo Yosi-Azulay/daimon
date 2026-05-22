@@ -50,6 +50,20 @@ export interface EventRecord {
   message?: string;
 }
 
+export interface AgentRecord {
+  id: string;
+  firstSeen: number;
+  lastSeen: number;
+  cwd: string | null;
+  callCount: number;
+}
+
+export interface LockSnapshot {
+  agent: string;
+  lockedAt: number;
+  expiresAt: number;
+}
+
 export interface DiscoveryMeta {
   searchRoots: string[];
   scanned: number;
@@ -267,6 +281,38 @@ export class DaimonApi {
   async getHistoryWhy(name: string): Promise<any | null> {
     try { return await firstValueFrom(this.http.get<any>(`/api/history/why/${encodeURIComponent(name)}`)); }
     catch { return null; }
+  }
+
+  async getAgents(): Promise<{ agents: AgentRecord[]; locks: Record<string, LockSnapshot>; self: string | null }> {
+    try {
+      const r = await firstValueFrom(this.http.get<any>('/api/agents'));
+      return {
+        agents: Array.isArray(r?.agents) ? r.agents : [],
+        locks: r?.locks && typeof r.locks === 'object' ? r.locks : {},
+        self: typeof r?.self === 'string' ? r.self : null,
+      };
+    } catch { return { agents: [], locks: {}, self: null }; }
+  }
+
+  async getHistoryEvents(opts: { type?: string; app?: string; since?: string; limit?: number } = {}): Promise<EventRecord[]> {
+    try {
+      const qs = new URLSearchParams();
+      if (opts.type) qs.set('type', opts.type);
+      if (opts.app) qs.set('app', opts.app);
+      if (opts.since) qs.set('since', opts.since);
+      if (opts.limit) qs.set('limit', String(opts.limit));
+      const q = qs.toString();
+      const r = await firstValueFrom(this.http.get<any[]>('/api/history/events' + (q ? '?' + q : '')));
+      if (!Array.isArray(r)) return [];
+      return r.map(row => ({
+        ts: row.ts,
+        app: row.app,
+        type: row.type,
+        from: row.from_state ?? row.from,
+        to: row.to_state ?? row.to,
+        message: row.message,
+      }));
+    } catch { return []; }
   }
 
   openLogStream(name: string, onLine: (line: { ts: number; line: string }) => void): () => void {

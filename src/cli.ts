@@ -250,6 +250,7 @@ interface Flags {
   open?: boolean;
   steal?: boolean;
   json?: boolean;
+  min?: number;
   passthrough: string[];
 }
 
@@ -262,6 +263,7 @@ function parseFlags(args: string[]): Flags {
     if (a === '--') { afterDD = true; continue; }
     if (a === '--tail') f.tail = Number(args[++i]);
     else if (a === '--since') f.since = args[++i];
+    else if (a === '--min' || a === '--min-occurrences') f.min = Number(args[++i]);
     else if (a === '--since-last') f.sinceLast = true;
     else if (a === '--client') f.client = args[++i];
     else if (a === '--structured') f.structured = true;
@@ -867,6 +869,17 @@ async function main() {
     }
     case 'agents': {
       const r = await call('/api/agents');
+      out(r.body);
+      return;
+    }
+    case 'profiles': {
+      const sub = f.positional[0];
+      if (sub !== 'suggest') failHint('usage: daimon profiles suggest [--since 30d] [--min 5]');
+      const params = new URLSearchParams();
+      if (f.since) params.set('since', f.since);
+      if (f.min != null) params.set('minOccurrences', String(f.min));
+      const q = params.toString();
+      const r = await call('/api/profiles/suggest' + (q ? '?' + q : ''));
       out(r.body);
       return;
     }

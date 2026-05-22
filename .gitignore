@@ -6,3 +6,7 @@ daimon.config.json
 *.tsbuildinfo
 Microsoft/
 .claude/settings.local.json
+vscode-extension/out/
+vscode-extension/*.vsix
+dashboard/playwright-report/
+dashboard/test-results/

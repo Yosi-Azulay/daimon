@@ -614,6 +614,22 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'profiles' && parts[2] === 'suggest' && method === 'GET') {
+        const cfg = opts.getConfig?.();
+        const h = registry.getHistory();
+        if (!h) { sendJson(res, 200, { suggestions: [], reason: 'history disabled' }); return; }
+        const sinceMs = parseDuration(url.searchParams.get('since')) ?? 30 * 24 * 60 * 60_000;
+        const minOcc = Number(url.searchParams.get('minOccurrences') ?? 5) || 5;
+        const rows = h.queryEvents({ since: Date.now() - sinceMs, type: 'status', limit: 20_000 });
+        const { suggestProfiles } = await import('./profiles.js');
+        const suggestions = suggestProfiles(rows.map(r => ({ ts: r.ts, app: r.app, to_state: r.to_state, type: r.type })), {
+          minOccurrences: minOcc,
+          existingProfiles: cfg?.profiles ?? {},
+        });
+        sendJson(res, 200, { suggestions, windowDays: Math.round(sinceMs / (24 * 60 * 60_000)) });
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'orchestrate' && method === 'POST') {
         const cfg = opts.getConfig?.();
         if (!cfg) { sendJson(res, 500, { error: 'no config loaded' }); return; }

@@ -4,6 +4,7 @@ import type { AppmanConfig, DiscoveredApp } from './types.js';
 import { findCycle } from './depends.js';
 import { isPortFree } from './ports.js';
 import { History } from './history.js';
+import { analyseRestartCadence } from './profiles.js';
 
 export interface Check {
   name: string;
@@ -113,6 +114,27 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
       }
     } catch {
       checks.push({ name: 'history-db-healthy', ok: true });
+    }
+  }
+
+  // smart-restart-tune (M61): scan last 7d of status events for restart-storms.
+  // Surfaces apps whose restart cadence suggests a flaky restartPolicy.
+  if (config.history.enabled) {
+    try {
+      const h = new History(config.history);
+      const since = Date.now() - 7 * 24 * 60 * 60_000;
+      const events = h.queryEvents({ since, type: 'status', limit: 20_000 });
+      h.close();
+      const concerns = analyseRestartCadence(events.map(r => ({ ts: r.ts, app: r.app, type: r.type, to_state: r.to_state, from_state: r.from_state } as any)), 7, 5);
+      if (concerns.length === 0) {
+        checks.push({ name: 'smart-restart-tune', ok: true });
+      } else {
+        for (const c of concerns) {
+          checks.push({ name: `smart-restart-tune: ${c.app}`, ok: false, detail: c.reason });
+        }
+      }
+    } catch (err: any) {
+      checks.push({ name: 'smart-restart-tune', ok: true, detail: `skipped: ${err?.message || err}` });
     }
   }
 
