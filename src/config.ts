@@ -57,6 +57,7 @@ function defaultConfig(): AppmanConfig {
     dashboard: { theme: 'auto', density: 'comfortable' },
     errorRetention: { maxAgeMs: 86400000 },
     plugins: { dir: null },
+    webhooks: [],
   };
 }
 
@@ -210,6 +211,30 @@ function validate(raw: unknown, source: string): AppmanConfig {
     const pl = obj.plugins as Partial<AppmanConfig['plugins']>;
     if (typeof pl.dir === 'string' && pl.dir.trim()) cfg.plugins.dir = expandTilde(pl.dir);
     else if (pl.dir === null) cfg.plugins.dir = null;
+  }
+  if (Array.isArray(obj.webhooks)) {
+    const out: AppmanConfig['webhooks'] = [];
+    for (const entry of obj.webhooks) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as any;
+      if (typeof e.url !== 'string' || !e.url.trim()) continue;
+      const w: AppmanConfig['webhooks'][number] = { url: e.url };
+      if (Array.isArray(e.events)) w.events = e.events.filter((s: any) => typeof s === 'string');
+      if (e.headers && typeof e.headers === 'object') {
+        const h: Record<string, string> = {};
+        for (const [k, v] of Object.entries(e.headers)) if (typeof v === 'string') h[k] = v;
+        w.headers = h;
+      }
+      if (e.filter && typeof e.filter === 'object') {
+        const f: any = {};
+        for (const k of ['to', 'from', 'app']) {
+          if (Array.isArray(e.filter[k])) f[k] = e.filter[k].filter((s: any) => typeof s === 'string');
+        }
+        w.filter = f;
+      }
+      out.push(w);
+    }
+    cfg.webhooks = out;
   }
 
   return cfg;

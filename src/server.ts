@@ -16,6 +16,7 @@ import { writeHandoff } from './stateHandoff.js';
 import { DAIMON_VERSION } from './version.js';
 import type { SelfMetricsCollector } from './selfMetrics.js';
 import { isPathUnder } from './pathScope.js';
+import { AgentRegistry, LockManager } from './agents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -110,7 +111,7 @@ function compactSummary(s: AppSummary): Record<string, unknown> {
 }
 
 function compactStatus(s: AppSummary): Record<string, unknown> {
-  return {
+  const out: Record<string, unknown> = {
     name: s.name,
     status: s.status,
     port: s.port,
@@ -120,6 +121,8 @@ function compactStatus(s: AppSummary): Record<string, unknown> {
     lastChangeMs: s.lastChangeMs ?? null,
     uptime: s.uptimeMs,
   };
+  if (s.estimatedReadyAtMs != null) out.estimatedReadyAtMs = s.estimatedReadyAtMs;
+  return out;
 }
 
 function compactError(e: ErrorEntry): Record<string, unknown> {
@@ -182,12 +185,23 @@ function configEtag(configPath: string | undefined): string {
 
 export function startServer(registry: Registry, port: number, opts: ServerOpts = {}): http.Server {
   const cursors = new Cursors();
+  const agents = new AgentRegistry();
+  const locks = new LockManager();
 
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       const method = req.method || 'GET';
       const parts = url.pathname.replace(/\/$/, '').split('/').filter(Boolean);
+
+      // Identify the agent on every request so the in-memory registry, audit
+      // log, and per-app soft-lock all see the same id. CLI sends it as a
+      // header; MCP forwards from its own env. Missing header = anonymous
+      // legacy caller, recorded as 'unknown'.
+      const agentHdr = (req.headers['x-daimon-agent'] as string | undefined)?.trim();
+      const cwdHdr = (req.headers['x-daimon-cwd'] as string | undefined)?.trim() || null;
+      const agentId = agentHdr && agentHdr.length ? agentHdr : 'unknown';
+      agents.touch(agentId, cwdHdr);
 
       const requireAuth = (): boolean => {
         const cfg = opts.getConfig ? opts.getConfig() : null;
@@ -238,8 +252,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           const newEtag = configEtag(opts.configPath);
           try {
             const remote = (req.socket as any).remoteAddress || '127.0.0.1';
-            const cwdHdr = (req.headers['x-daimon-cwd'] as string | undefined) || null;
-            appendAuditEntry(remote, body, body, r.applied, cwdHdr);
+            appendAuditEntry(remote, body, body, r.applied, cwdHdr, agentId === 'unknown' ? null : agentId);
           } catch {}
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'etag': newEtag });
           res.end(JSON.stringify({ etag: newEtag, applied: r.applied, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired }));
@@ -277,6 +290,15 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         sendJson(res, 200, list);
         return;
       }
+      if (url.pathname === '/api/agents' && method === 'GET') {
+        const list = agents.list();
+        const lockList = locks.list();
+        const lockByApp: Record<string, { agent: string; lockedAt: number; expiresAt: number }> = {};
+        for (const l of lockList) lockByApp[l.app] = { agent: l.agent, lockedAt: l.lockedAt, expiresAt: l.expiresAt };
+        sendJson(res, 200, { agents: list, locks: lockByApp, self: agentId === 'unknown' ? null : agentId });
+        return;
+      }
+
       if (url.pathname === '/api/self/history' && method === 'GET') {
         const since = parseSinceParam(url.searchParams.get('since'));
         const sinceMs = since.sinceMs ?? 60 * 60 * 1000;
@@ -1170,7 +1192,55 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // Per-app soft lock: an agent that just called start/stop/restart owns
+      // the app for 30s. A different agent gets 409 locked-by-other-agent
+      // unless `?steal=1` is passed. The original agent can re-call freely.
+      const tryLock = (action: string): boolean => {
+        const stealQ = url.searchParams.get('steal');
+        const steal = stealQ === '1' || stealQ === 'true';
+        if (steal) { locks.steal(name, agentId, action); return true; }
+        const blocker = locks.acquire(name, agentId, action);
+        if (blocker) {
+          sendJson(res, 409, {
+            error: 'locked-by-other-agent',
+            agent: blocker.agent,
+            lockedAt: blocker.lockedAt,
+            expiresAt: blocker.expiresAt,
+            hint: 'pass ?steal=1 to override, or wait for the lock to expire',
+          });
+          return false;
+        }
+        return true;
+      };
+
+      if (sub === 'lock' && method === 'GET') {
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const current = locks.current(name);
+        const recent = locks.recentInteractions(name, 3);
+        sendJson(res, 200, { app: name, current, recent });
+        return;
+      }
+
+      if (sub === 'handoff' && method === 'POST') {
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        let body: any = {};
+        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
+          await new Promise<void>(resolve => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(c));
+            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
+          });
+        }
+        const toAgent = typeof body?.to === 'string' ? body.to.trim() : '';
+        if (!toAgent) { sendJson(res, 400, { error: 'body { to: <agentId> } required' }); return; }
+        const current = locks.current(name);
+        const next = locks.handoff(name, toAgent, agentId === 'unknown' ? null : agentId);
+        sendJson(res, 200, { handedOff: name, from: current?.agent ?? null, to: next.agent, lockedAt: next.lockedAt, expiresAt: next.expiresAt });
+        return;
+      }
+
       if (sub === 'start' && method === 'POST') {
+        if (!tryLock('start')) return;
         const withDeps = url.searchParams.get('withDeps') === '1';
         if (withDeps) {
           const r = await registry.startWithDeps(name);
@@ -1182,6 +1252,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
       if (sub === 'start-with-deps' && method === 'POST') {
+        if (!tryLock('start-with-deps')) return;
         const r = await registry.startWithDeps(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;
@@ -1276,11 +1347,13 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
       if (sub === 'stop' && method === 'POST') {
+        if (!tryLock('stop')) return;
         const r = await registry.stop(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;
       }
       if (sub === 'restart' && method === 'POST') {
+        if (!tryLock('restart')) return;
         const r = await registry.restart(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;

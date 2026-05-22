@@ -4,6 +4,12 @@ import { z } from 'zod';
 import { loadConfig } from './config.js';
 import { readLock, spawnDetached } from './daemon.js';
 import { DAIMON_VERSION } from './version.js';
+import { generateAgentId } from './agents.js';
+
+const AGENT_ID = generateAgentId();
+function headers(): Record<string, string> {
+  return { 'x-daimon-agent': AGENT_ID, 'x-daimon-cwd': process.cwd() };
+}
 
 function apiPort(): number {
   if (process.env.DAIMON_PORT) {
@@ -36,7 +42,7 @@ async function ensureDaemon(): Promise<void> {
 async function callJson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<any> {
   await ensureDaemon();
   try {
-    const res = await fetch(BASE() + pathname, { method });
+    const res = await fetch(BASE() + pathname, { method, headers: headers() });
     const text = await res.text();
     try { return { status: res.status, body: JSON.parse(text) }; } catch { return { status: res.status, body: text }; }
   } catch (err: any) {
@@ -223,7 +229,7 @@ async function main() {
     qs.set('timeoutMs', String(Math.min(timeoutMs ?? 180_000, 600_000)));
     await ensureDaemon();
     try {
-      const res = await fetch(BASE() + `/api/apps/${encodeURIComponent(name)}/focus?${qs.toString()}`, { method: 'POST' });
+      const res = await fetch(BASE() + `/api/apps/${encodeURIComponent(name)}/focus?${qs.toString()}`, { method: 'POST', headers: headers() });
       if (res.status === 404) return err('unknown app');
       if (!res.body) return err('no response body');
       const reader = res.body.getReader();
@@ -324,6 +330,73 @@ async function main() {
     if (r.status === 0) return err(r.body?.error || 'unknown');
     if (r.status === 404) return err('unknown app');
     return ok(r.body);
+  });
+
+  server.registerTool('daimon_who_owns', {
+    description: 'Return the current soft-lock holder for an app (if any) and the last 3 agents who interacted with it. Use before start/stop/restart to avoid stepping on another agent.',
+    inputSchema: { name: z.string(), cwd: cwdField },
+  }, async ({ name, cwd }) => {
+    const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}/lock?${qs.toString()}`);
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_subscribe_events', {
+    description: 'Long-poll for new daimon events. Returns events newer than `sinceMs` (default 60s) for `app` (or all apps), filtered by `kinds` (status, error, warning, lint, health, restart, bundle, task). Use to react to errors / status changes without sleeping.',
+    inputSchema: {
+      app: z.string().optional(),
+      kinds: z.array(z.string()).optional(),
+      sinceMs: z.number().int().positive().max(86_400_000).optional(),
+    },
+  }, async ({ app, kinds, sinceMs }) => {
+    const qs = new URLSearchParams();
+    qs.set('since', String(sinceMs ?? 60_000) + 'ms');
+    if (app) qs.set('app', app);
+    const r = await callJson(`/api/events?${qs.toString()}`);
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    let arr = Array.isArray(r.body) ? r.body : [];
+    if (kinds && kinds.length) {
+      const want = new Set(kinds);
+      arr = arr.filter((e: any) => {
+        const t: string = e.type ?? '';
+        if (t === 'status' && want.has('status')) return true;
+        if ((t === 'error-new' || t === 'error-recur') && want.has('error')) return true;
+        if ((t === 'warning-new' || t === 'warning-recur') && want.has('warning')) return true;
+        if ((t === 'lint-new' || t === 'lint-recur') && want.has('lint')) return true;
+        if (t === 'health' && want.has('health')) return true;
+        if ((t === 'restart-scheduled' || t === 'compile-regression' || t === 'bundle-regression') && want.has('restart')) return true;
+        if (t === 'bundle' && want.has('bundle')) return true;
+        if (t === 'task-run' && want.has('task')) return true;
+        if (t === 'regression-detected' && want.has('regression')) return true;
+        return false;
+      });
+    }
+    return ok(arr);
+  });
+
+  server.registerTool('daimon_notify_on_error', {
+    description: 'Block (up to `timeoutMs`) until the next error-new event for `app`. Convenience wrapper around daimon_subscribe_events for the common "tell me when this app errors" pattern. Returns { error, ts } on hit, { timedOut: true } on timeout.',
+    inputSchema: {
+      app: z.string(),
+      timeoutMs: z.number().int().positive().max(600_000).optional(),
+    },
+  }, async ({ app, timeoutMs }) => {
+    const budget = Math.min(timeoutMs ?? 60_000, 600_000);
+    const start = Date.now();
+    const pollMs = 1500;
+    while (Date.now() - start < budget) {
+      const since = Math.max(500, Date.now() - start);
+      const qs = new URLSearchParams({ since: since + 'ms', app });
+      const r = await callJson(`/api/events?${qs.toString()}`);
+      if (r.status === 0) return err(r.body?.error || 'unknown');
+      const arr = Array.isArray(r.body) ? r.body : [];
+      const hit = arr.find((e: any) => e.type === 'error-new');
+      if (hit) return ok({ error: hit, waitedMs: Date.now() - start });
+      await new Promise(res => setTimeout(res, pollMs));
+    }
+    return ok({ timedOut: true, waitedMs: Date.now() - start });
   });
 
   const transport = new StdioServerTransport();

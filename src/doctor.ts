@@ -86,12 +86,34 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
     try {
       const h = new History(config.history);
       ok = h.quickCheck();
+      const archived = h.archivedCorruptDbPath();
       h.close();
       if (!ok) detail = 'quick_check failed';
+      else if (archived) detail = `rebuilt fresh; previous db archived at ${archived}`;
     } catch (err: any) {
       detail = err?.message || String(err);
     }
     checks.push({ name: 'history db', ok, detail });
+
+    // Surface any archived corrupt-DB files left over from previous startups.
+    // Each archived file is informational (not a hard failure) — the db is
+    // healthy now but the user may want to inspect or delete the snapshot.
+    try {
+      const dir = path.dirname(config.history.path);
+      const base = path.basename(config.history.path);
+      const stale = fs.readdirSync(dir).filter(f => f.startsWith(base + '.corrupt-'));
+      if (stale.length > 0) {
+        checks.push({
+          name: 'history-db-healthy',
+          ok: true,
+          detail: `${stale.length} archived corrupt snapshot${stale.length === 1 ? '' : 's'} present (${stale.slice(0, 2).join(', ')}${stale.length > 2 ? ', …' : ''}). Safe to delete after review.`,
+        });
+      } else {
+        checks.push({ name: 'history-db-healthy', ok: true });
+      }
+    } catch {
+      checks.push({ name: 'history-db-healthy', ok: true });
+    }
   }
 
   checks.push({ name: 'agent token footprint', ok: true, detail: tokenFootprint(apps) });

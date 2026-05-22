@@ -20,6 +20,7 @@ import { describeHolder, findPortHolder } from './portDiag.js';
 import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.js';
 import { readSecrets, substituteSecrets } from './secrets.js';
 import { SessionRecorder } from './session.js';
+import { detectBundleRegression, detectCompileRegression, suspectCommitForDir } from './regressions.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -201,6 +202,15 @@ export class Registry extends EventEmitter {
       const ev = this.eventBuffer[i];
       if (ev.app === name && ev.type === 'status') { lastChangeMs = Date.now() - ev.ts; break; }
     }
+    // Ready-time estimate (M61): if the app is currently compiling and we have
+    // enough successful compile history, project compileStartedAt + p50 of
+    // last 10. The UI can render `~Xs to ready` and the CLI appends a hint.
+    let estimatedReadyAtMs: number | undefined;
+    if (s.status === 'compiling' && s.compileStartedAt && s.compileHistory.length >= 3) {
+      const recent = s.compileHistory.slice(-10).slice().sort((a, b) => a - b);
+      const p50 = recent[Math.floor((recent.length - 1) * 0.5)];
+      if (p50 > 0) estimatedReadyAtMs = s.compileStartedAt + p50;
+    }
     return {
       name: s.name,
       status: s.status,
@@ -233,6 +243,7 @@ export class Registry extends EventEmitter {
       workspaceRoot: s.workspaceRoot,
       baseName: s.baseName ?? s.name,
       lastChangeMs,
+      estimatedReadyAtMs,
     };
   }
 
@@ -444,8 +455,16 @@ export class Registry extends EventEmitter {
           if (prevInit && prevInit > 0) {
             const pct = ((state.bundle.initialKB - prevInit) / prevInit) * 100;
             state.bundleRegressionPct = Math.round(pct * 10) / 10;
-            if (pct > 10) {
+            const detected = detectBundleRegression(prevInit, state.bundle.initialKB, 1.1);
+            if (detected) {
+              // Legacy event + structured regression-detected.
               this.recordEvent({ app: name, type: 'bundle-regression', message: `initialKB +${state.bundleRegressionPct}% (${prevInit}->${state.bundle.initialKB})` });
+              const suspect = suspectCommitForDir(e.app.workspaceRoot);
+              this.recordEvent({
+                app: name,
+                type: 'regression-detected',
+                message: JSON.stringify({ ...detected, suspectCommit: suspect }),
+              });
             }
           } else {
             state.bundleRegressionPct = null;
@@ -599,14 +618,19 @@ export class Registry extends EventEmitter {
   private checkCompileRegression(name: string, ms: number): void {
     const h = this.history;
     if (!h) return;
-    const rows = h.queryCompiles({ app: name, limit: 31 });
-    const prior = rows.filter(r => r.ms !== ms).slice(0, 30).map(r => r.ms);
-    if (prior.length < 10) return;
-    const sorted = [...prior].sort((a, b) => a - b);
-    const p50 = sorted[Math.floor((sorted.length - 1) * 0.5)];
-    if (ms > 2 * p50) {
-      this.recordEvent({ app: name, type: 'compile-regression', message: `${(ms / 1000).toFixed(1)}s vs p50 ${(p50 / 1000).toFixed(1)}s` });
-    }
+    const rows = h.queryCompiles({ app: name, limit: 21 });
+    const prior = rows.filter(r => r.ms !== ms).slice(0, 20).map(r => r.ms);
+    const detected = detectCompileRegression(prior, ms, 2.0);
+    if (!detected) return;
+    // Legacy event (back-compat for v0.9 consumers) plus the new structured one.
+    this.recordEvent({ app: name, type: 'compile-regression', message: `${(ms / 1000).toFixed(1)}s vs baseline ${(detected.baseline / 1000).toFixed(1)}s (×${detected.factor})` });
+    const app = this.getApp(name);
+    const suspect = suspectCommitForDir(app?.workspaceRoot ?? null);
+    this.recordEvent({
+      app: name,
+      type: 'regression-detected',
+      message: JSON.stringify({ ...detected, suspectCommit: suspect }),
+    });
   }
 
   watchTaskLogs(name: string, task: string, tail?: number): string[] | null {

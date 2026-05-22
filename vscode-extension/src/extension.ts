@@ -1,0 +1,197 @@
+// daimon VS Code extension — MVP. Status bar reflects current cwd's daimon
+// health; errors panel lists cwd-filtered errors; command palette exposes
+// Start/Stop/Dashboard/Logs verbs against the local daemon at 127.0.0.1.
+// Never edits user source — every action is a loopback HTTP call.
+
+import * as vscode from 'vscode';
+import * as http from 'http';
+
+interface AppSummary {
+  name: string;
+  status: string;
+  port: number | null;
+  errCount?: number;
+  errorCount?: number;
+  health?: string;
+}
+
+interface ErrorRow {
+  file: string | null;
+  line: number | null;
+  col: number | null;
+  code: string | null;
+  message: string;
+}
+
+function cfg() {
+  const c = vscode.workspace.getConfiguration('daimon');
+  return {
+    port: c.get<number>('apiPort', 4999),
+    token: c.get<string>('apiToken', ''),
+  };
+}
+
+function baseUrl(): string {
+  return `http://127.0.0.1:${cfg().port}`;
+}
+
+function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'x-daimon-cwd': cwd() ?? '' };
+  if (cfg().token) h.authorization = `Bearer ${cfg().token}`;
+  return h;
+}
+
+function cwd(): string | null {
+  const f = vscode.workspace.workspaceFolders;
+  if (!f || !f.length) return null;
+  return f[0].uri.fsPath;
+}
+
+function httpJson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(baseUrl() + pathname);
+    const req = http.request({
+      method,
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname + url.search,
+      headers: authHeaders(),
+      timeout: 4000,
+    }, res => {
+      const chunks: Buffer[] = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let body: any = text;
+        try { body = JSON.parse(text); } catch {}
+        resolve({ status: res.statusCode || 0, body });
+      });
+    });
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+class DaimonErrorsProvider implements vscode.TreeDataProvider<ErrorRow> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private rows: ErrorRow[] = [];
+
+  refresh(rows: ErrorRow[]) { this.rows = rows; this._onDidChangeTreeData.fire(); }
+  getTreeItem(r: ErrorRow): vscode.TreeItem {
+    const label = r.file ? `${r.file}:${r.line ?? '?'}` : (r.message || '(no message)');
+    const it = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    it.description = r.code ? `[${r.code}] ${r.message}` : r.message;
+    if (r.file && r.line != null) {
+      it.command = {
+        title: 'Open',
+        command: 'vscode.open',
+        arguments: [vscode.Uri.file(r.file), { selection: new vscode.Range(r.line - 1, (r.col ?? 1) - 1, r.line - 1, (r.col ?? 1) - 1) }],
+      };
+    }
+    return it;
+  }
+  getChildren(): ErrorRow[] { return this.rows; }
+}
+
+export function activate(ctx: vscode.ExtensionContext): void {
+  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  status.command = 'daimon.openDashboard';
+  status.text = '$(sync~spin) daimon…';
+  status.tooltip = 'daimon — click to open the dashboard';
+  status.show();
+  ctx.subscriptions.push(status);
+
+  const errorsProvider = new DaimonErrorsProvider();
+  ctx.subscriptions.push(vscode.window.registerTreeDataProvider('daimonErrors', errorsProvider));
+
+  async function refresh(): Promise<void> {
+    const c = cwd();
+    if (!c) { status.text = '$(circle-slash) daimon: no workspace'; return; }
+    try {
+      const r = await httpJson(`/api/apps?cwd=${encodeURIComponent(c)}`);
+      if (r.status === 0) { status.text = '$(error) daimon: daemon down'; return; }
+      const apps: AppSummary[] = Array.isArray(r.body) ? r.body : [];
+      const total = apps.length;
+      const errCount = apps.reduce((acc, a) => acc + (a.errCount ?? a.errorCount ?? 0), 0);
+      const unhealthy = apps.filter(a => a.status === 'error' || a.health === 'unhealthy').length;
+      if (total === 0) status.text = '$(circle-slash) daimon: no apps under cwd';
+      else if (unhealthy > 0) status.text = `$(warning) daimon: ${unhealthy} unhealthy (${total})`;
+      else if (errCount > 0) status.text = `$(warning) daimon: ${errCount} errors (${total} apps)`;
+      else status.text = `$(check) daimon: ${total} apps healthy`;
+      await vscode.commands.executeCommand('setContext', 'daimonAttached', true);
+      // Errors panel: aggregate across all cwd apps.
+      const rows: ErrorRow[] = [];
+      for (const a of apps) {
+        if ((a.errCount ?? a.errorCount ?? 0) === 0) continue;
+        const er = await httpJson(`/api/apps/${encodeURIComponent(a.name)}/errors?cwd=${encodeURIComponent(c)}`);
+        if (Array.isArray(er.body)) {
+          for (const x of er.body) rows.push({
+            file: x.file ?? null,
+            line: x.line ?? null,
+            col: x.col ?? null,
+            code: x.code ?? null,
+            message: x.message ?? '',
+          });
+        }
+      }
+      errorsProvider.refresh(rows);
+    } catch (err: any) {
+      status.text = '$(error) daimon: ' + (err?.message || 'unreachable');
+    }
+  }
+
+  ctx.subscriptions.push(vscode.commands.registerCommand('daimon.openDashboard', async () => {
+    const c = cwd();
+    const url = baseUrl() + (c ? `/?cwd=${encodeURIComponent(c)}` : '/');
+    void vscode.env.openExternal(vscode.Uri.parse(url));
+  }));
+
+  async function pickApp(): Promise<string | undefined> {
+    const c = cwd();
+    const r = await httpJson(`/api/apps${c ? `?cwd=${encodeURIComponent(c)}` : ''}`);
+    const apps: AppSummary[] = Array.isArray(r.body) ? r.body : [];
+    if (!apps.length) { void vscode.window.showInformationMessage('daimon: no apps under cwd'); return undefined; }
+    return await vscode.window.showQuickPick(apps.map(a => a.name), { placeHolder: 'Pick a daimon app' });
+  }
+
+  ctx.subscriptions.push(vscode.commands.registerCommand('daimon.start', async () => {
+    const name = await pickApp();
+    if (!name) return;
+    const c = cwd();
+    const r = await httpJson(`/api/apps/${encodeURIComponent(name)}/start${c ? `?cwd=${encodeURIComponent(c)}` : ''}`, 'POST');
+    if (r.status === 409 && r.body?.error === 'locked-by-other-agent') {
+      const choice = await vscode.window.showWarningMessage(`'${name}' is locked by ${r.body.agent}. Steal?`, 'Steal', 'Cancel');
+      if (choice === 'Steal') {
+        await httpJson(`/api/apps/${encodeURIComponent(name)}/start?steal=1${c ? `&cwd=${encodeURIComponent(c)}` : ''}`, 'POST');
+      }
+    }
+    void refresh();
+  }));
+
+  ctx.subscriptions.push(vscode.commands.registerCommand('daimon.stop', async () => {
+    const name = await pickApp();
+    if (!name) return;
+    const c = cwd();
+    await httpJson(`/api/apps/${encodeURIComponent(name)}/stop${c ? `?cwd=${encodeURIComponent(c)}` : ''}`, 'POST');
+    void refresh();
+  }));
+
+  ctx.subscriptions.push(vscode.commands.registerCommand('daimon.showLogs', async () => {
+    const name = await pickApp();
+    if (!name) return;
+    const c = cwd();
+    const r = await httpJson(`/api/apps/${encodeURIComponent(name)}/logs?tail=200${c ? `&cwd=${encodeURIComponent(c)}` : ''}`);
+    const lines: string[] = Array.isArray(r.body?.lines) ? r.body.lines : [];
+    const doc = await vscode.workspace.openTextDocument({ language: 'log', content: lines.join('\n') });
+    void vscode.window.showTextDocument(doc);
+  }));
+
+  // Background refresh every 5s while VS Code is active.
+  void refresh();
+  const timer = setInterval(refresh, 5000);
+  ctx.subscriptions.push({ dispose: () => clearInterval(timer) });
+}
+
+export function deactivate(): void { /* nothing to clean up — http requests are short-lived */ }

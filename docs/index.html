@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>daimon v0.9.0 — docs</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
+<style>
+  :root { --fg: #0f172a; --muted: #475569; --accent: #2563eb; --code-bg: #f1f5f9; --hr: #e2e8f0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e2e8f0; --muted: #94a3b8; --accent: #60a5fa; --code-bg: #1e293b; --hr: #334155; }
+    body { background: #0f172a; }
+  }
+  html, body { color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; }
+  body { max-width: 920px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 2rem; margin: 0 0 0.25rem; }
+  h2 { margin-top: 2.5rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--hr); }
+  h3 { margin-top: 1.5rem; color: var(--accent); }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.92em; }
+  pre code { display: block; padding: 0.75rem 1rem; overflow-x: auto; }
+  .lede { color: var(--muted); font-size: 1.1rem; }
+  .cli-grid { display: grid; grid-template-columns: minmax(220px, max-content) 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 1.5rem; }
+  .cli-grid dt { font-weight: 400; }
+  .cli-grid dd { margin: 0; color: var(--muted); }
+  nav.toc { background: var(--code-bg); padding: 0.5rem 1.25rem; border-radius: 6px; margin: 1.5rem 0; }
+  nav.toc ul { padding-left: 1.25rem; margin: 0.25rem 0; }
+  hr { border: 0; border-top: 1px solid var(--hr); margin: 2rem 0; }
+  a { color: var(--accent); }
+  .badge { display: inline-block; background: var(--code-bg); padding: 2px 8px; border-radius: 10px; font-size: 0.8em; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>daimon <span class="badge">v0.9.0</span></h1>
+<p class="lede">Local dev-server manager for Angular / Nx / Vite / Storybook (+ polyglot) with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#install">Install</a></li>
+    <li><a href="#quickstart">Quickstart (3 min)</a></li>
+    <li><a href="#cli">CLI reference</a></li>
+    <li><a href="#mcp">MCP reference</a></li>
+    <li><a href="#config">Config reference</a></li>
+    <li><a href="#faq">FAQ</a></li>
+  </ul>
+</nav>
+
+<h2 id="install">Install</h2>
+<pre><code>npm install -g daimon
+# or
+npx daimon init --auto</code></pre>
+
+<h2 id="quickstart">Quickstart (3 min)</h2>
+<ol>
+  <li>Run <code>daimon init --auto</code> in a workspace that has <code>nx.json</code> / <code>angular.json</code> / <code>vite.config.*</code> / <code>.storybook</code> / <code>manage.py</code> / <code>Gemfile</code>.</li>
+  <li>Run <code>daimon list</code> to see discovered apps.</li>
+  <li>Run <code>daimon start &lt;app&gt;</code> (or <code>daimon up &lt;profile&gt;</code> for the whole stack).</li>
+  <li>Open the dashboard: <code>daimon dashboard</code>.</li>
+</ol>
+
+<h2 id="cli">CLI reference</h2>
+<h3>lifecycle</h3>
+<dl class="cli-grid">
+<dt><code>daimon start &lt;name&gt; [--with-deps] [--steal]</code></dt>
+<dd>Start an app. --steal overrides another agent's soft-lock.</dd>
+<dt><code>daimon stop &lt;name&gt; [--steal]</code></dt>
+<dd>Stop an app. --steal overrides another agent's soft-lock.</dd>
+<dt><code>daimon restart &lt;name&gt; [--steal]</code></dt>
+<dd>Restart an app. --steal overrides another agent's soft-lock.</dd>
+<dt><code>daimon up [&lt;profile&gt;]</code></dt>
+<dd>Start a profile (or autoStart). Waits for each to reach serving.</dd>
+<dt><code>daimon down [&lt;profile&gt;]</code></dt>
+<dd>Stop a profile (or all apps).</dd>
+<dt><code>daimon run &lt;name&gt; &lt;task&gt; [--watch] [-- args...]</code></dt>
+<dd>Run a discovered task.</dd>
+<dt><code>daimon clean &lt;name&gt; [--deep] [--yes]</code></dt>
+<dd>Remove build artifacts for an app.</dd>
+<dt><code>daimon daemon start|stop|status|restart|attach|install-service [--detach] [--headless]</code></dt>
+<dd>Manage the daimon daemon.</dd>
+</dl>
+<h3>queries</h3>
+<dl class="cli-grid">
+<dt><code>daimon list [--tag &lt;name&gt;] [--workspace &lt;label&gt;] [--full|--compact] [--stream] [--explain]</code></dt>
+<dd>List apps. Compact by default; --full for v0.4 shape; --stream for NDJSON; --explain wraps with _meta (searchRoots, scanned, rejected, suggestion).</dd>
+<dt><code>daimon status &lt;name&gt; [--full|--compact]</code></dt>
+<dd>Get the current status of one app. Compact by default.</dd>
+<dt><code>daimon errors &lt;name&gt; [--since 2m] [--since-last] [--client &lt;id&gt;] [--structured] [--full|--compact]</code></dt>
+<dd>Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}).</dd>
+<dt><code>daimon events [--since 1h] [--app &lt;name&gt;] [--stream]</code></dt>
+<dd>Get the event log. --stream emits NDJSON until SIGINT.</dd>
+<dt><code>daimon logs &lt;name&gt; [--tail N] [--since 30s]</code></dt>
+<dd>Recent log lines for an app.</dd>
+<dt><code>daimon history &lt;name&gt;</code></dt>
+<dd>Summary metrics (uptime%, restarts, compile p50/p95, top errors).</dd>
+</dl>
+<h3>agent verbs</h3>
+<dl class="cli-grid">
+<dt><code>daimon wait &lt;name&gt; [--until serving|healthy|stopped|error] [--timeout 60s]</code></dt>
+<dd>Block until app reaches the given state.</dd>
+<dt><code>daimon ensure &lt;name&gt; [--until serving|healthy] [--timeout 180s]</code></dt>
+<dd>One-call: start if needed, block to target state, return terminal state. Idempotent.</dd>
+<dt><code>daimon ensure-up &lt;profile&gt; [--until serving|healthy] [--timeout 300s]</code></dt>
+<dd>One-call: cascade-start every app in the profile and wait for each to reach target.</dd>
+<dt><code>daimon overview [--workspace &lt;label&gt;] [--profile &lt;name&gt;] [--budget &lt;tokens&gt;]</code></dt>
+<dd>Decision-ready snapshot: totals, byStatus, needsAttention (with first parsed error), recentlyChanged. First call in a session. --budget caps the response size for agents; overflow collapses to _meta.omitted.</dd>
+<dt><code>daimon focus &lt;name&gt; [--until serving|healthy|stable] [--timeout 180s]</code></dt>
+<dd>One round-trip subscribe-then-act: streams NDJSON of status/error/url events for one app until target state or timeout. Designed for agents.</dd>
+<dt><code>daimon try-fix &lt;name&gt; [--until serving|healthy] [--timeout 180s]</code></dt>
+<dd>Composite: run doctor --auto-fix on permitted rules, restart the app, wait for target, return {before,after,fixed,stillFailing}. Never edits user source.</dd>
+<dt><code>daimon orchestrate &lt;profile&gt; [--goal serving|healthy|stable] [--timeout 300s] [--dry-run] [--budget &lt;tokens&gt;]</code></dt>
+<dd>Bring up a whole profile in one call: cascade-start, wait for goal, run ONE try-fix round on stragglers. Returns {profile, goal, perApp, totalMs, allReached}. --dry-run reports planned order only. Designed for agents.</dd>
+<dt><code>daimon agents </code></dt>
+<dd>List active agents touching this daemon and any current per-app soft-locks.</dd>
+<dt><code>daimon handoff &lt;app&gt; &lt;agentId&gt;</code></dt>
+<dd>Transfer the soft-lock on &lt;app&gt; to another agent.</dd>
+<dt><code>daimon ci start &lt;profile&gt; [--until ready|healthy] [--timeout 5m] [--json]</code></dt>
+<dd>CI helper: start a profile and block until all apps are healthy. Designed for GitHub Actions / Jenkins steps.</dd>
+</dl>
+<h3>introspection</h3>
+<dl class="cli-grid">
+<dt><code>daimon why &lt;name&gt;</code></dt>
+<dd>Last status transition + 5 preceding events.</dd>
+<dt><code>daimon why-empty </code></dt>
+<dd>Explain why `daimon list` is empty: configured searchRoots, scanned/rejected counts, suggested next step.</dd>
+<dt><code>daimon discover [--dry-run]</code></dt>
+<dd>Run discovery without changing state. Prints _meta: searchRoots, scanned, rejected per folder, suggestion.</dd>
+<dt><code>daimon tasks &lt;name&gt;</code></dt>
+<dd>List discovered non-serve tasks.</dd>
+<dt><code>daimon snapshot &lt;name&gt;</code></dt>
+<dd>Write a snapshot of app state to ~/.daimon/snapshots.</dd>
+<dt><code>daimon record </code></dt>
+<dd>Toggle session recording.</dd>
+<dt><code>daimon replay &lt;session.jsonl&gt; [--speed N]</code></dt>
+<dd>Replay a recorded session.</dd>
+<dt><code>daimon doctor [--auto-fix] [--dry-run] [--self]</code></dt>
+<dd>Sanity-check config + env. --auto-fix repairs orphan daemon, stale lock, missing search root, corrupt history db. --self checks daimon's own metrics.</dd>
+<dt><code>daimon free-port &lt;port&gt; [--force]</code></dt>
+<dd>Diagnose / free a port.</dd>
+<dt><code>daimon self </code></dt>
+<dd>Print daimon's own runtime metrics (pid, version, uptime, rss, heap, event-loop lag, history-db p95).</dd>
+<dt><code>daimon dashboard </code></dt>
+<dd>Open the dashboard in your default browser, scoped to the current cwd.</dd>
+<dt><code>daimon timeline [--since 7d] [--app &lt;name&gt;] [--kinds status,error,warning,lint,bundle,task]</code></dt>
+<dd>Print a unified chronological event timeline.</dd>
+</dl>
+<h3>config</h3>
+<dl class="cli-grid">
+<dt><code>daimon pin-health &lt;name&gt; [--accept] [--path &lt;p&gt;]</code></dt>
+<dd>Show the auto-discovered health-probe path for an app; --accept persists it as overrides.&lt;name&gt;.healthProbePath in daimon.config.json and soft-reloads. Default behaviour is opt-in: nothing is written without --accept.</dd>
+<dt><code>daimon export-config [--redacted]</code></dt>
+<dd>Emit the active config to stdout. --redacted replaces apiToken with "&lt;redacted&gt;" and rewrites home paths to ~/...</dd>
+<dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;]</code></dt>
+<dd>List or set the active env file for an app.</dd>
+<dt><code>daimon init [--force] [--auto]</code></dt>
+<dd>Create a daimon config in cwd; --auto picks safe defaults (no prompts) for workspaces with nx/angular/vite markers.</dd>
+<dt><code>daimon completion &lt;bash|zsh|fish|powershell&gt;</code></dt>
+<dd>Emit a shell completion script for the given shell.</dd>
+<dt><code>daimon workspaces list|add [path] [--label &lt;name&gt;] | rm &lt;path&gt; | show [path]</code></dt>
+<dd>Manage the workspace registry (searchRoots).</dd>
+</dl>
+<h3>claude</h3>
+<dl class="cli-grid">
+<dt><code>daimon claude install|update|uninstall|status [--skill] [--commands] [--agent] [--all] [--dir &lt;path&gt;] [--yes]</code></dt>
+<dd>Install/update Claude Code integration artifacts.</dd>
+</dl>
+<h3>plugin</h3>
+<dl class="cli-grid">
+<dt><code>daimon plugin list|show &lt;name&gt;|validate &lt;path&gt;</code></dt>
+<dd>Manage doctor plug-ins.</dd>
+</dl>
+
+<h2 id="mcp">MCP reference</h2>
+<p>Daimon's MCP server is installed via <code>daimon claude install --all</code>. It exposes the verbs below over stdio so Claude Code can call them.</p>
+<dl class="cli-grid">
+<dt><code>list_apps</code></dt><dd>Compact list of apps (name/status/port/health/errCount/lastChangeMs).</dd>
+<dt><code>list_apps_full</code></dt><dd>Verbose v0.4-shape list.</dd>
+<dt><code>get_status</code></dt><dd>Compact status for one app.</dd>
+<dt><code>get_status_full</code></dt><dd>Verbose status for one app.</dd>
+<dt><code>get_errors</code></dt><dd>Errors for an app — supports --since, --since-last, --level.</dd>
+<dt><code>get_logs</code></dt><dd>Recent log lines for an app.</dd>
+<dt><code>start_app / stop_app / restart_app</code></dt><dd>Lifecycle verbs with cwd-scoped name resolution.</dd>
+<dt><code>overview</code></dt><dd>Decision-ready snapshot for first-call agent sessions.</dd>
+<dt><code>diff_errors</code></dt><dd>Errors since last call (per-client cursor).</dd>
+<dt><code>try_fix</code></dt><dd>Run permitted auto-fixes, restart, wait for target.</dd>
+<dt><code>focus</code></dt><dd>Subscribe-then-act stream of status/error events.</dd>
+<dt><code>ensure</code></dt><dd>One-call lifecycle: start if needed, wait for target.</dd>
+<dt><code>orchestrate</code></dt><dd>Bring up a whole profile; one round of try-fix on stragglers.</dd>
+<dt><code>ensure_up</code></dt><dd>Cascade-start a profile, wait until each app is healthy.</dd>
+<dt><code>wait_for_app</code></dt><dd>Block until app reaches a target state.</dd>
+<dt><code>daimon_who_owns</code></dt><dd>Lock holder + last 3 agent interactions for an app.</dd>
+<dt><code>daimon_subscribe_events</code></dt><dd>Long-poll new events filtered by kind.</dd>
+<dt><code>daimon_notify_on_error</code></dt><dd>Block until next error-new event (or timeout).</dd>
+</dl>
+
+<h2 id="config">Config reference</h2>
+<p>The full annotated schema lives in <code>daimon.config.example.json</code>. Highlights:</p>
+<ul>
+  <li><code>searchRoots</code> — array of paths (or <code>{path, label}</code>) to scan for projects.</li>
+  <li><code>autoStart</code> — apps to start when the daemon launches.</li>
+  <li><code>profiles</code> — named sets of apps for <code>daimon up &lt;profile&gt;</code> / <code>daimon ci start &lt;profile&gt;</code>.</li>
+  <li><code>healthProbe</code> — toggle and shape the per-app health probe.</li>
+  <li><code>webhooks</code> — outbound notifications for error / regression / status events.</li>
+  <li><code>history</code> — SQLite retention controls.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<dl>
+  <dt><strong>Does daimon edit my code?</strong></dt>
+  <dd>No. Daimon only touches <code>~/.daimon/*</code> and (if you opt in) the local <code>daimon.config.json</code>. <code>daimon doctor --auto-fix</code> repairs daemon state, never source.</dd>
+  <dt><strong>Is it safe to run two Claudes against one daemon?</strong></dt>
+  <dd>Yes — every CLI call sends an <code>X-Daimon-Agent</code> header and the daemon enforces a 30-second per-app soft-lock so two agents don't fight. Pass <code>--steal</code> to override.</dd>
+  <dt><strong>How do I get a notification when an app errors?</strong></dt>
+  <dd>Configure a <code>webhooks</code> entry pointing at Slack/Discord, or call <code>daimon_notify_on_error</code> from MCP.</dd>
+  <dt><strong>Can I use daimon in CI?</strong></dt>
+  <dd>Yes — <code>daimon ci start &lt;profile&gt; --until ready --timeout 5m --json</code> returns a structured report and exits 2 on timeout. See <code>docs/ci-integration.md</code>.</dd>
+</dl>
+
+<hr />
+<footer>
+  <p class="lede">© Yosi Azulay · <a href="https://flycotech.com">flycotech.com</a> · PolyForm Noncommercial 1.0.0</p>
+</footer>
+
+</body>
+</html>

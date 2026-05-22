@@ -1,0 +1,65 @@
+{
+  "name": "daimon",
+  "displayName": "daimon",
+  "description": "Local dev-server manager — status bar, errors panel, and one-click control of daimon-discovered apps.",
+  "version": "0.10.0",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "publisher": "flycotech",
+  "author": "Yosi Azulay (https://flycotech.com)",
+  "homepage": "https://github.com/Yosi-Azulay/daimon#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yosi-Azulay/daimon.git",
+    "directory": "vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/Yosi-Azulay/daimon/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "daimon.start", "title": "Daimon: Start app" },
+      { "command": "daimon.stop", "title": "Daimon: Stop app" },
+      { "command": "daimon.openDashboard", "title": "Daimon: Open dashboard" },
+      { "command": "daimon.showLogs", "title": "Daimon: Show logs for current cwd" }
+    ],
+    "views": {
+      "explorer": [
+        { "id": "daimonErrors", "name": "Daimon errors", "when": "daimonAttached" }
+      ]
+    },
+    "configuration": {
+      "title": "Daimon",
+      "properties": {
+        "daimon.apiPort": {
+          "type": "number",
+          "default": 4999,
+          "description": "HTTP port of the local daimon daemon."
+        },
+        "daimon.apiToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional bearer token if your daimon.config.json sets apiToken."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-yarn --no-dependencies -o daimon-vscode.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.5.4",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

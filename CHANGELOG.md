@@ -4,6 +4,83 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-05-22
+
+Strategic theme: **Mature & Aware.** The biggest release yet. 11 milestones (M54–M64) covering perf at scale, recovery hardening, agent identity, pattern detection, predictive UX, webhooks, a VS Code extension, and a generated docs site.
+
+### Added (M54) — Perf at scale (50 apps / 100K events)
+
+- `test/perf-50apps.test.mjs` bench: 50 synthetic apps, 100k events, 30-day retention. Asserts hot-path budgets: events query p95 < 250ms, timeline 24h < 300ms, 50× summary doctor pass < 500ms, SSE catchup < 1s, RSS < 150MB.
+- New `events_app_ts` SQLite index for the (app, ts) lookup pattern that powers `/api/apps?cwd=` + per-app timeline.
+
+### Added (M55) — Recovery hardening
+
+- History.db auto-rebuild on startup: `PRAGMA integrity_check` runs at open time; on failure the bad file is renamed `history.db.corrupt-<ts>` and a fresh db is created. Surface flows through to `daimon doctor` so the user can decide whether to delete the snapshot.
+- WAL checkpoint on close: `PRAGMA wal_checkpoint(TRUNCATE)` runs during shutdown to keep `-wal` sidecars from ballooning across SIGKILL cycles.
+- New doctor rule `history-db-healthy` — reports any archived `.corrupt-*` snapshots left behind by previous startups.
+
+### Added (M56) — Tests to 200+ under 30s
+
+- New test files: `agents.test.mjs`, `audit.test.mjs`, `regressions.test.mjs`, `webhooks.test.mjs`, `recovery.test.mjs`, `perf-50apps.test.mjs`, `history-property.test.mjs`, `scope-property.test.mjs`, `mcp-contract.test.mjs`.
+- Suite: **219 tests / 15.2s wall-clock** (up from 130 / 14s in v0.9).
+
+### Added (M57) — Docs site + branding
+
+- `scripts/build-docs.mjs` → generates `docs/index.html` from the live CLI surface + MCP tool list. Single self-contained HTML, no JS framework.
+- New `CLAUDE.md` — orientation for future agents (where files live, conventions, "things daimon never does").
+- New `npm run build:docs` script.
+
+### Added (M58) — Agent identity + handoff (locked decision)
+
+- `src/agents.ts`: `generateAgentId()` returns `<host>-<pid>-<rand4>`; `AgentRegistry` tracks who's calling (active = touched within 5 min); `LockManager` enforces 30-second per-app soft-locks.
+- Audit log gains a **6th column** (agent id). `parseAuditLine()` exposed for tooling; legacy 5-col rows still parse.
+- New endpoints: `GET /api/agents`, `GET /api/apps/<n>/lock`, `POST /api/apps/<n>/handoff`.
+- `start`/`stop`/`restart` now return HTTP 409 `locked-by-other-agent` when another agent holds the soft-lock. Pass `?steal=1` to override.
+- CLI: every call ships `X-Daimon-Agent`. New `daimon agents` and `daimon handoff <app> <agentId>` verbs. `--steal` on lifecycle verbs.
+- MCP forwards `X-Daimon-Agent` and `X-Daimon-Cwd` on every request.
+
+### Added (M59) — MCP expansion + who's watching
+
+- New MCP tools: `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`.
+- Per-app lock + recent-interaction list queryable via `/api/apps/<n>/lock`.
+
+### Added (M60) — Pattern detection
+
+- New event type `regression-detected` with structured payload `{ kind, factor, baseline, current, suspectCommit }`.
+- Compile-time: factor 2.0 vs rolling median of last 20 successful compiles.
+- Bundle: 10% initialKB growth vs the previous baseline.
+- Error-flap: ≥5 errors/hour AND ≥3× the 23h-prior baseline.
+- Suspect-commit hint pulled via `git log -1 --format=%h:%s` (best-effort; null on non-git workspaces).
+
+### Added (M61) — Predictive UX (ready-time)
+
+- `AppSummary.estimatedReadyAtMs` projected from p50 of last 10 compiles during `compiling` state. Surfaced in compact CLI status and MCP `get_status` payloads.
+- Stretch items (profile-suggestion + smart-restart-tune doctor rule) deferred to v0.11.
+
+### Added (M62) — VS Code extension
+
+- New `vscode-extension/` subpackage. Marketplace name `flycotech.daimon`.
+- Features: status bar (cwd app health), errors sidebar (cwd-filtered, click-to-open), commands `Daimon: Start / Stop / Open dashboard / Show logs`, soft-lock-aware Start (offers to steal on 409).
+- New root `npm run build:vscode` script (delegates to `vscode-extension` after `npm install`).
+
+### Added (M63) — Webhooks + CI verb
+
+- New top-level config key `webhooks: WebhookEntry[]`.
+- `WebhookDispatcher` subscribes to registry events, filters per-config, shapes payloads per host (Slack `attachments`, Discord `embeds`, generic envelope otherwise), and posts with up to 3 retries + exponential backoff. Global budget 1 req/sec, drop-oldest on overflow.
+- New CLI verb `daimon ci start <profile> --until ready|healthy --timeout <duration> [--json]`. Exit code 0 on full success, 2 on timeout, 1 on unknown profile.
+
+### Added (M64) — Polish + ship
+
+- Help dialog automatically picks up new chords (`agents`, `handoff`, `ci`, `--steal`) from `cliSurface.ts`.
+- Doctor 11-rule UI tightening carry-over from v0.9.
+- `RELEASE-v0.10.0.md` with migration steps for the audit-column add and webhooks config.
+
+### Migration
+
+- Audit log gains a 6th column (agent). 5-column rows still parse.
+- New `webhooks: []` config key. Default is the empty array — no outbound deliveries unless you opt in.
+- HTTP 409 `locked-by-other-agent` is a new response code for lifecycle endpoints. Old CLIs (no `X-Daimon-Agent` header) get `agentId = 'unknown'` and never collide with named agents.
+
 ## [0.9.0] — 2026-05-21
 
 Strategic theme: **Multi-agent observability.** v0.9 finishes the pivot to many agents on one machine, each in their own workspace, all sharing one daemon and one dashboard. On top of the architectural shift, deepen what daimon *sees* (lint findings as a third signal class beyond errors + warnings) and *shows* (a unified event timeline), and broaden what it *understands* (framework-aware health probes for the polyglot stack landed in v0.7).

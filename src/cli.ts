@@ -8,6 +8,12 @@ import { findPortHolder, killHolder } from './portDiag.js';
 import { readSession } from './session.js';
 import { readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
 import { DAIMON_VERSION } from './version.js';
+import { generateAgentId } from './agents.js';
+
+// Stable per-session agent id. Generated once per CLI process, exported through
+// the X-Daimon-Agent header so the daemon can tell two Claudes apart and
+// recorded in the audit log's 6th column.
+const AGENT_ID = generateAgentId();
 import { CLI_SUBCOMMANDS, CLI_ALIASES, findSubcommand, usageString } from './cliSurface.js';
 import {
   setColorOverride,
@@ -139,7 +145,7 @@ async function ensureCurrentWorkspace(): Promise<void> {
 
 function authHeaders(): Record<string, string> {
   const tok = process.env.DAIMON_TOKEN;
-  const h: Record<string, string> = { 'x-daimon-cwd': process.cwd() };
+  const h: Record<string, string> = { 'x-daimon-cwd': process.cwd(), 'x-daimon-agent': AGENT_ID };
   if (tok) h.authorization = `Bearer ${tok}`;
   return h;
 }
@@ -242,6 +248,8 @@ interface Flags {
   label?: string;
   kinds?: string;
   open?: boolean;
+  steal?: boolean;
+  json?: boolean;
   passthrough: string[];
 }
 
@@ -291,6 +299,8 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--label') f.label = args[++i];
     else if (a === '--kinds') f.kinds = args[++i];
     else if (a === '--open') f.open = true;
+    else if (a === '--steal') f.steal = true;
+    else if (a === '--json') f.json = true;
     else f.positional.push(a);
   }
   return f;
@@ -823,9 +833,15 @@ async function main() {
       const params = scopeQs(f);
       if (cmd === 'status' && f.full) params.set('format', 'full');
       else if (cmd === 'status' && f.compact) params.set('format', 'compact');
+      if (cmd !== 'status' && f.steal) params.set('steal', '1');
       const qs = params.toString();
       const r = await call(`/api/apps/${encodeURIComponent(name)}${suffix}${qs ? '?' + qs : ''}`, method);
       if (r.status === 412) reportCollisionAndExit(r.body);
+      if (r.status === 409 && r.body?.error === 'locked-by-other-agent') {
+        process.stderr.write(`error: app '${name}' is locked by agent ${r.body.agent} (expires ${new Date(r.body.expiresAt).toISOString()})\n`);
+        process.stderr.write(`hint: pass --steal to override, or wait\n`);
+        process.exit(5);
+      }
       if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
@@ -836,10 +852,30 @@ async function main() {
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
       if (f.withDeps) params.set('withDeps', '1');
+      if (f.steal) params.set('steal', '1');
       const qs = params.toString();
       const r = await call(`/api/apps/${encodeURIComponent(name)}/start${qs ? '?' + qs : ''}`, 'POST');
       if (r.status === 412) reportCollisionAndExit(r.body);
+      if (r.status === 409 && r.body?.error === 'locked-by-other-agent') {
+        process.stderr.write(`error: app '${name}' is locked by agent ${r.body.agent} (expires ${new Date(r.body.expiresAt).toISOString()})\n`);
+        process.stderr.write(`hint: pass --steal to override, or wait\n`);
+        process.exit(5);
+      }
       if (r.status === 404) await suggestUnknownApp(name);
+      out(r.body);
+      return;
+    }
+    case 'agents': {
+      const r = await call('/api/agents');
+      out(r.body);
+      return;
+    }
+    case 'handoff': {
+      const app = f.positional[0];
+      const to = f.positional[1];
+      if (!app || !to) failHint('missing args', 'usage: daimon handoff <app> <agentId>');
+      const r = await callJson(`/api/apps/${encodeURIComponent(app)}/handoff`, 'POST', { to });
+      if (r.status === 404) await suggestUnknownApp(app);
       out(r.body);
       return;
     }
@@ -1070,6 +1106,45 @@ async function main() {
       out(r.body);
       const anyTimeout = Array.isArray(r.body?.apps) && r.body.apps.some((a: any) => a.timedOut);
       if (anyTimeout) process.exit(2);
+      return;
+    }
+    case 'ci': {
+      const sub = f.positional[0];
+      if (sub !== 'start') failHint('usage: daimon ci start <profile> [--until ready|healthy] [--timeout 5m] [--json]');
+      const profile = f.positional[1];
+      if (!profile) failHint('usage: daimon ci start <profile> [--until ready|healthy] [--timeout 5m] [--json]');
+      const untilRaw = (f.until || 'healthy').toLowerCase();
+      const until = untilRaw === 'ready' ? 'healthy' : untilRaw;
+      if (until !== 'serving' && until !== 'healthy') failHint(`ci --until must be serving|healthy|ready (got: ${untilRaw})`);
+      let timeoutSec = 300;
+      if (f.timeout) {
+        const t = durationToSeconds(f.timeout);
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`);
+        timeoutSec = Math.min(t!, 1200);
+      }
+      const params = new URLSearchParams({ until, timeoutMs: String(Math.ceil(timeoutSec * 1000)) });
+      const r = await call(`/api/profiles/${encodeURIComponent(profile)}/ensure-up?${params.toString()}`, 'POST');
+      if (r.status === 404) {
+        process.stdout.write(JSON.stringify({ profile, error: 'unknown profile', allReached: false }) + '\n');
+        process.exit(1);
+      }
+      const body = r.body || {};
+      const apps: any[] = Array.isArray(body.apps) ? body.apps : [];
+      const allReached = apps.length > 0 && apps.every(a => !a.timedOut);
+      const report = {
+        profile,
+        until,
+        allReached,
+        perApp: apps.map(a => ({
+          name: a.name,
+          state: a.state,
+          reachedTargetMs: a.reachedTargetMs ?? null,
+          timedOut: !!a.timedOut,
+        })),
+        totalMs: body._meta?.totalMs ?? null,
+      };
+      process.stdout.write(JSON.stringify(report) + '\n');
+      if (!allReached) process.exit(2);
       return;
     }
     case 'overview': {

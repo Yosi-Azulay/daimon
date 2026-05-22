@@ -71,6 +71,13 @@ export interface PluginsConfig {
   dir: string | null;
 }
 
+export interface WebhookEntry {
+  url: string;
+  events?: string[];
+  headers?: Record<string, string>;
+  filter?: { to?: string[]; from?: string[]; app?: string[] };
+}
+
 export interface DashboardConfig {
   theme: 'auto' | 'light' | 'dark';
   density: 'comfortable' | 'compact';
@@ -110,6 +117,7 @@ export interface AppmanConfig {
   dashboard: DashboardConfig;
   errorRetention: ErrorRetentionConfig;
   plugins: PluginsConfig;
+  webhooks: WebhookEntry[];
 }
 
 export interface SearchRoot {
@@ -208,6 +216,7 @@ export type AppEventType =
   | 'stale'
   | 'bundle-regression'
   | 'compile-regression'
+  | 'regression-detected'
   | 'task-run'
   | 'self-warn';
 
@@ -294,4 +303,8 @@ export interface AppSummary {
   baseName: string;
   lastChangeMs?: number;
   lintCount?: number;
+  // ms-since-epoch when the app is *projected* to reach `serving`, computed
+  // from the p50 of the last 10 successful compile times. Only populated when
+  // status === 'compiling'. Use with `Date.now()` to render countdowns.
+  estimatedReadyAtMs?: number;
 }

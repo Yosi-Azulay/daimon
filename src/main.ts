@@ -22,6 +22,7 @@ import { installCrashHandlers } from './crashDump.js';
 import { consumeHandoff } from './stateHandoff.js';
 import { SelfMetricsCollector } from './selfMetrics.js';
 import { loadPlugins, pluginsDir, runPluginScans, buildContext, type LoadedPlugin } from './plugins.js';
+import { WebhookDispatcher } from './webhooks.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -126,6 +127,12 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     }
   } catch {}
 
+  const webhookDispatcher = (config.webhooks && config.webhooks.length)
+    ? new WebhookDispatcher(registry, config.webhooks, {
+        onLog: msg => process.stderr.write(`[daimon] ${msg}\n`),
+      })
+    : null;
+
   const selfMetrics = new SelfMetricsCollector(history);
   selfMetrics.setSelfWarnHandler(msg => {
     try { registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: msg }); } catch {}
@@ -149,6 +156,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { notifier.stop(); } catch {}
     try { staleDetector.stop(); } catch {}
     try { requestLog.stop(); } catch {}
+    try { webhookDispatcher?.stop(); } catch {}
     try { history.close(); } catch {}
     try {
       await registry.stopAll(3000);

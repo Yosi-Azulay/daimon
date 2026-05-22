@@ -55,13 +55,48 @@ export class History {
   private retentionStart: NodeJS.Timeout | null = null;
   private warned = false;
 
+  // Recorded when the constructor archives a corrupt DB and starts fresh.
+  // Surfaced by `daimon doctor`'s history-db-healthy rule.
+  private archivedCorruptPath: string | null = null;
+
   constructor(private readonly cfg: HistoryConfig) {
     if (!cfg.enabled) return;
     try {
       fs.mkdirSync(path.dirname(cfg.path), { recursive: true });
       const Better = requireCjs('better-sqlite3');
-      this.db = new Better(cfg.path);
-      this.db!.pragma('journal_mode = WAL');
+      // Open + integrity-check. If the existing DB is corrupt we rename it to
+      // history.db.corrupt-<ts> (keeping the data around for forensics) and
+      // create a fresh DB. Schema migrations on the fresh DB happen below.
+      let opened: Database.Database;
+      const archiveCorrupt = (reason: string) => {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const archived = `${cfg.path}.corrupt-${ts}`;
+        try {
+          if (fs.existsSync(cfg.path)) fs.renameSync(cfg.path, archived);
+          try { fs.unlinkSync(cfg.path + '-wal'); } catch {}
+          try { fs.unlinkSync(cfg.path + '-shm'); } catch {}
+          this.archivedCorruptPath = archived;
+          process.stderr.write(`[daimon] history: archived corrupt db (${reason}) -> ${archived}\n`);
+        } catch (renameErr: any) {
+          this.warnOnce(`failed to archive corrupt history db: ${renameErr?.message || renameErr}`);
+        }
+      };
+      try {
+        opened = new Better(cfg.path);
+        const r = opened.prepare('PRAGMA integrity_check').get() as any;
+        const ok = r && (r.integrity_check === 'ok' || r['integrity_check'] === 'ok');
+        if (!ok) {
+          try { opened.close(); } catch {}
+          archiveCorrupt('integrity_check failed');
+          opened = new Better(cfg.path);
+        }
+      } catch (openErr: any) {
+        // Open-time errors (file-format mismatch, truncation) — same archive path.
+        archiveCorrupt(`open failed: ${openErr?.message || openErr}`);
+        opened = new Better(cfg.path);
+      }
+      this.db = opened;
+      this.db.pragma('journal_mode = WAL');
       this.migrate();
       this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
       this.retentionStart = setTimeout(() => this.runRetention(), RETENTION_DEBOUNCE_MS);
@@ -70,6 +105,10 @@ export class History {
       this.warnOnce(`failed to open history db: ${err?.message || err}`);
       this.db = null;
     }
+  }
+
+  archivedCorruptDbPath(): string | null {
+    return this.archivedCorruptPath;
   }
 
   private warnOnce(msg: string): void {
@@ -91,6 +130,7 @@ export class History {
         message TEXT
       );
       CREATE INDEX IF NOT EXISTS events_ts_app ON events(ts, app);
+      CREATE INDEX IF NOT EXISTS events_app_ts ON events(app, ts);
       CREATE TABLE IF NOT EXISTS compile_times (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,
@@ -470,6 +510,10 @@ export class History {
     if (this.retentionStart) clearTimeout(this.retentionStart);
     this.flush();
     if (this.db) {
+      // Force a WAL checkpoint so a SIGKILL between flush and close doesn't
+      // leave the next startup with an oversized -wal sidecar. Best-effort —
+      // SQLite already journals safely, this just keeps disk tidy.
+      try { this.db.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
       try { this.db.close(); } catch {}
       this.db = null;
     }
