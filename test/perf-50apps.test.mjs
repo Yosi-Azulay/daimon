@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { History } from '../dist/history.js';
+import { Registry } from '../dist/registry.js';
 
 // M54 — perf at scale. Synthesises a power-user workspace (50 apps, 100k
 // events, 30d retention) and measures the hot paths the dashboard + agents
@@ -94,12 +95,15 @@ test('perf-50apps: history hot paths fit the v0.10 budgets', () => {
     const drMs = performance.now() - dr0;
     assert.ok(drMs < 500, `50× summary() doctor-ish pass ${drMs.toFixed(1)}ms should be <500ms`);
 
-    // SSE catch-up: simulate fetching the last 5s of events + serializing
-    // (what `?stream=ndjson` does on reconnect). Budget: 1s.
+    // SSE catch-up: simulate fetching a backlog of events + serializing
+    // (what `?stream=ndjson` does on reconnect). The window is 6h so the
+    // query returns a real backlog (~800 rows on this corpus) rather than a
+    // vacuous handful. Budget: 1s.
     const sse0 = performance.now();
-    const recent = h.queryEvents({ since: Date.now() - 5000, limit: 1000 });
+    const recent = h.queryEvents({ since: Date.now() - 6 * 3600_000, limit: 1000 });
     for (const r of recent) JSON.stringify(r);
     const sseMs = performance.now() - sse0;
+    assert.ok(recent.length >= 500, `SSE catchup backlog should be substantial (got ${recent.length} rows)`);
     assert.ok(sseMs < 1000, `SSE catchup ${sseMs.toFixed(1)}ms should be <1000ms`);
 
     // RSS budget: 150MB total after seeding the corpus and exercising the hot
@@ -109,4 +113,44 @@ test('perf-50apps: history hot paths fit the v0.10 budgets', () => {
   } finally {
     h.close();
   }
+});
+
+test('perf-50apps: registry.list() (GET /api/apps) fits the 200ms budget', () => {
+  const config = {
+    searchRoots: [], portRange: [4000, 4099], apiPort: 4999, overrides: {}, autoStart: [],
+    profiles: {}, tags: {}, autoRestart: { enabled: false, maxAttempts: 0, windowMs: 0 },
+    healthProbe: { enabled: false, intervalMs: 0, timeoutMs: 0, path: '/' },
+    logs: { enabled: false, dir: '', maxFiles: 0, maxBytesPerFile: 0 },
+    depends: {}, cascadeRestart: false,
+    history: { enabled: false, path: '', retentionDays: 0 },
+    notifications: { enabled: false, onError: false, onUnhealthy: false, tray: false },
+    staleDetect: { enabled: false, silentMs: 0 }, headless: true, envFiles: {},
+    requestLog: { enabled: false, portOffset: 0 }, metrics: { enabled: false },
+    editor: { scheme: '' }, apiToken: null, output: { format: 'compact', ndjson: false },
+    doctor: { autoFix: { onInit: false, permitted: [] } }, dashboard: { theme: 'auto', density: 'comfortable' },
+    errorRetention: { maxAgeMs: 86400000 }, plugins: { dir: null },
+  };
+  const apps = Array.from({ length: APPS_N }, (_, i) => ({
+    name: `app-${String(i).padStart(2, '0')}`,
+    workspaceRoot: path.join(os.tmpdir(), `ws-${i}`),
+    workspaceType: 'vite', command: 'echo', hidden: false, tags: [],
+  }));
+  const reg = new Registry(config, apps);
+  // Busy daemon: a full event buffer plus realistic per-app error maps.
+  for (let i = 0; i < 10_000; i++) {
+    reg.recordEvent({ app: apps[i % APPS_N].name, type: i % 3 ? 'status' : 'error-new', from: 'compiling', to: 'serving' });
+  }
+  for (const a of apps) {
+    const st = reg.getState(a.name);
+    const now = Date.now();
+    for (let j = 0; j < 20; j++) st.errors.set(`e${j}`, { message: `e${j}`, count: 3, firstSeen: now, lastSeen: now });
+  }
+  const PASSES = 20;
+  const t0 = performance.now();
+  for (let pass = 0; pass < PASSES; pass++) {
+    const out = reg.list();
+    assert.equal(out.length, APPS_N);
+  }
+  const avg = (performance.now() - t0) / PASSES;
+  assert.ok(avg < 200, `registry.list() avg ${avg.toFixed(1)}ms should be <200ms (plan budget for GET /api/apps)`);
 });

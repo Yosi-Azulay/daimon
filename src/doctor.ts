@@ -5,6 +5,7 @@ import { findCycle } from './depends.js';
 import { isPortFree } from './ports.js';
 import { History } from './history.js';
 import { analyseRestartCadence } from './profiles.js';
+import { configValidationWarnings } from './config.js';
 
 export interface Check {
   name: string;
@@ -15,6 +16,17 @@ export interface Check {
 export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Promise<{ ok: boolean; checks: Check[] }> {
   const checks: Check[] = [];
   const appNames = new Set(apps.map(a => a.name));
+
+  // Field-level validation problems collected when this process loaded the
+  // config (M55 malformed-config softening — broken fields ran on defaults).
+  const cfgWarnings = configValidationWarnings();
+  if (cfgWarnings.length === 0) {
+    checks.push({ name: 'config-valid', ok: true });
+  } else {
+    for (const w of cfgWarnings) {
+      checks.push({ name: 'config-valid', ok: false, detail: `${w} — field fell back to its default` });
+    }
+  }
 
   for (const sr of config.searchRoots) {
     const root = typeof sr === 'string' ? sr : sr.path;
@@ -119,12 +131,22 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
 
   // smart-restart-tune (M61): scan last 7d of status events for restart-storms.
   // Surfaces apps whose restart cadence suggests a flaky restartPolicy.
+  // Also reports orphaned-app cleanups (M55) from the last 24h.
   if (config.history.enabled) {
     try {
       const h = new History(config.history);
       const since = Date.now() - 7 * 24 * 60 * 60_000;
       const events = h.queryEvents({ since, type: 'status', limit: 20_000 });
+      const orphanCleanups = h.queryEvents({ app: '__daemon__', since: Date.now() - 24 * 60 * 60_000, limit: 500 })
+        .filter(e => (e.message || '').startsWith('orphaned app detached'));
       h.close();
+      checks.push({
+        name: 'orphaned-app-cleanup',
+        ok: true,
+        detail: orphanCleanups.length
+          ? `${orphanCleanups.length} app${orphanCleanups.length === 1 ? '' : 's'} detached after config reloads in the last 24h`
+          : undefined,
+      });
       const concerns = analyseRestartCadence(events.map(r => ({ ts: r.ts, app: r.app, type: r.type, to_state: r.to_state, from_state: r.from_state } as any)), 7, 5);
       if (concerns.length === 0) {
         checks.push({ name: 'smart-restart-tune', ok: true });

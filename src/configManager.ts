@@ -61,7 +61,9 @@ export function softReloadFromDisk(opts: { configPath: string; registry: Registr
 
 export function applyConfigToRegistry(registry: Registry, next: AppmanConfig): { addedApps: string[]; removedApps: string[]; restartRequired: string[]; config: AppmanConfig } {
   const current = registry.getConfig();
-  for (const k of Object.keys(current) as Array<keyof AppmanConfig>) (current as any)[k] = undefined;
+  // Delete (not set-to-undefined) so keys absent from the new config really
+  // disappear instead of lingering as `key: undefined`.
+  for (const k of Object.keys(current)) delete (current as any)[k];
   Object.assign(current, next);
 
   const prevApps = new Set(registry.names());
@@ -80,7 +82,12 @@ export function applyConfigToRegistry(registry: Registry, next: AppmanConfig): {
     }
   }
   for (const name of prevApps) {
-    if (!newNames.has(name)) removed.push(name);
+    if (!newNames.has(name)) {
+      removed.push(name);
+      // Orphaned-app cleanup (M55): kill the child and drop all state for
+      // apps that are no longer under any searchRoot.
+      void registry.detachApp(name);
+    }
   }
 
   const restartRequired: string[] = [];

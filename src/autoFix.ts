@@ -7,6 +7,16 @@ import { History } from './history.js';
 import { isPortFree } from './ports.js';
 import { discoverApps } from './discovery.js';
 import { profileProbePath } from './healthProfiles.js';
+import { generateAgentId } from './agents.js';
+
+// Doctor-initiated daemon calls must carry the agent id like every other
+// caller, so the audit trail shows who triggered restarts/reloads.
+function agentFetch(url: string): Promise<unknown> {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'x-daimon-agent': generateAgentId(), 'x-daimon-cwd': process.cwd() },
+  });
+}
 
 export type AutoFixName =
   | 'orphan-daemon'
@@ -70,8 +80,8 @@ function detectOrphan(): { detected: boolean; description: string; lockCwd?: str
 async function fixOrphan(): Promise<string> {
   const lock = readLock();
   if (!lock) return 'no daemon running; nothing to do';
-  try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/snapshot-state`, { method: 'POST' }); } catch {}
-  try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST' }); } catch {}
+  try { await agentFetch(`http://127.0.0.1:${lock.apiPort}/api/snapshot-state`); } catch {}
+  try { await agentFetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`); } catch {}
   await waitForExit(lock.pid, 5000);
   removeLock();
   const info = await spawnDetached({});
@@ -128,7 +138,7 @@ function fixMissingSearchRoot(): string {
   fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   const lock = readLock();
   if (lock) {
-    try { void fetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`, { method: 'POST' }); } catch {}
+    try { void agentFetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`); } catch {}
   }
   return `appended ${here} as a searchRoot in ${target}; triggered soft-reload of the running daemon.`;
 }
@@ -407,7 +417,7 @@ function fixDeadSearchRoot(): string {
   const removed = before - raw.searchRoots.length;
   fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   const lock = readLock();
-  if (lock) { try { void fetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`, { method: 'POST' }); } catch {} }
+  if (lock) { try { void agentFetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`); } catch {} }
   return `removed ${removed} dead searchRoot entr${removed === 1 ? 'y' : 'ies'} from ${target} (${[...dead].join(', ')}); triggered soft-reload. To undo: edit ${target} and re-add the path(s).`;
 }
 
@@ -453,7 +463,7 @@ function fixHealthProbeMissing(): string {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   const lock = readLock();
-  if (lock) { try { void fetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`, { method: 'POST' }); } catch {} }
+  if (lock) { try { void agentFetch(`http://127.0.0.1:${lock.apiPort}/api/config/reload`); } catch {} }
   return `wrote healthProbePath to overrides in ${target} for: ${wrote.join(', ')}; triggered soft-reload. To undo: edit ${target}.`;
 }
 

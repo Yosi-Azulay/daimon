@@ -1,8 +1,16 @@
+<p align="center">
+  <img src="assets/logo.svg" width="96" height="96" alt="daimon logo" />
+</p>
+
 # Daimon
 
-A local manager for dev servers: Angular / Nx / Vite / Storybook out of the box, plus Django / Rails / FastAPI / Go-air / Rust-trunk (v0.7). One daemon owns all your `serve` processes, auto-assigns ports, dedup'd error captures across every supported tool, exposes a loopback HTTP API + JSON CLI + MCP server. Built so you and Claude Code can both query app state without parsing thousands of log lines.
+A local manager for dev servers: Angular / Nx / Vite / Storybook out of the box, plus Django / Rails / FastAPI / Go-air / Rust-trunk. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server.
+
+Daimon is built for the **single machine with several agents on it**: you in one terminal, a Claude Code session in another repo, a second Claude in a third. All of them talk to the same daemon, see only their own workspace by default, carry distinct agent identities, and coordinate through per-app soft-locks instead of stepping on each other's dev servers.
 
 Loopback only. Single user. No cloud. No telemetry.
+
+**Docs site:** <https://yosi-azulay.github.io/daimon/> (generated from the live CLI surface — also in [`docs/`](docs/)).
 
 ## Install
 
@@ -20,7 +28,7 @@ daimon list             # auto-spawns the daemon on first call (defaults to cwd-
 daimon daemon status
 ```
 
-## Multi-agent / multi-workspace (v0.9)
+## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
 
@@ -47,6 +55,30 @@ daimon dashboard        # opens http://127.0.0.1:4999/?cwd=<cwd>
 
 When two workspaces register apps with the same name, daimon stores the second under `<name>@<workspaceLabel>` so both coexist. CLI commands resolve from `process.cwd()`; a 412 `name-collision` body with candidate workspaces is returned only when no cwd disambiguates.
 
+### Agent identity & soft-locks (v0.10)
+
+Every CLI call carries an `X-Daimon-Agent: <host>-<pid>-<hex>` header — a stable per-session identity, so two Claudes on the same daemon are distinct actors in the daemon's eyes (and in the audit log).
+
+Lifecycle verbs (`start` / `stop` / `restart`) take a **30-second per-app soft-lock**. If another agent holds the lock, the call is refused with exit code `5` instead of silently killing a server someone else is watching. You can override or cooperate:
+
+```bash
+daimon start editor --steal                 # override the lock (HTTP: POST …/start?steal=1)
+daimon agents                               # who's active on this daemon + current locks
+daimon handoff editor claude-host-1234-abcd # "I'm done — you take this app"
+```
+
+The agent id is also recorded as the 6th column of `~/.daimon/audit.log`, so you can reconstruct which agent restarted what, and when.
+
+### Profile suggestions
+
+Daimon notices which apps you repeatedly start together and proposes profiles:
+
+```bash
+daimon profiles suggest --since 30d --min 5
+```
+
+Clusters that already match an existing profile are skipped.
+
 ## Three signal classes: errors, warnings, lint
 
 Errors flip app status to `error`. Warnings (TS6133, NG8107, deprecation notes) are surfaced as a separate signal class — they do not flip status. **Lint findings** (eslint, biome, ruff, clippy) are a third channel: parsed from the dev-server log stream, never spawn a linter, never flip status, and live behind a dedicated severity chip on the Errors page.
@@ -67,12 +99,55 @@ daimon timeline --since 7d --kinds status,error,lint
 daimon timeline --app editor --since 24h
 ```
 
-Config lookup order:
+## Pattern detection (v0.10)
 
-1. `./daimon.config.json` (cwd)
-2. `~/.daimon/config.json`
+Daimon watches its own history for regressions and emits a `regression-detected` event when it spots one:
 
-If neither exists, the first call to `daimon` creates a stub and exits — edit `searchRoots` to point at your workspace and try again.
+- **Compile-time spikes** — recent compiles significantly slower than the app's baseline (tune per app with `overrides.<name>.compileRegressionFactor`).
+- **Bundle-size jumps** — initial bundle suddenly heavier than its trend.
+- **Error flapping** — the same error appearing/disappearing across restarts.
+
+Each detection includes a `git log -1` suspect-commit hint when the workspace is a git repo. In the dashboard, the **Regressions** tab collects them (keyboard chord: `g` then `r`). `regression-detected` is also a webhook-able event type — see below.
+
+## Webhooks (v0.10)
+
+Push events out instead of polling. Global `webhooks` config array; each entry is `{url, events?, headers?, filter?}`:
+
+```jsonc
+{
+  "webhooks": [
+    {
+      "url": "https://hooks.slack.com/services/T000/B000/XXXXXXXX",
+      "events": ["error", "regression-detected", "status"],
+      "headers": { "x-extra-header": "optional" },
+      "filter": { "app": ["web-admin"], "to": ["error", "unhealthy"] }
+    }
+  ]
+}
+```
+
+- `events` — event types to forward (`error` / `warning` / `lint` aliases cover the `-new`/`-recur` pairs). Omit for all events.
+- `headers` — extra HTTP headers (e.g. auth tokens).
+- `filter` — narrow by `app`, and/or status transition `from` / `to`.
+
+Slack and Discord URLs get native attachment/embed shaping automatically. Everything else receives a generic JSON envelope: `{ event, app, ts, payload }` where `payload` carries the event-specific fields (`from`, `to`, `message`); the same fields are also flattened at the top level for back-compat. Deliveries are queued, rate-limited to 1 req/sec, and retried with backoff — an event storm never hammers your endpoint or blocks the daemon.
+
+## CI integration (v0.10)
+
+`daimon ci start <profile>` is a one-shot CI step: start a profile, block until every app reaches the target state, print a structured JSON report, and exit with a meaningful code:
+
+```bash
+daimon ci start fullstack --until ready --timeout 5m --json
+# exit 0 = all apps reached target
+# exit 1 = error (e.g. unknown profile)
+# exit 2 = timeout — some app never got there
+```
+
+See [`docs/ci-integration.md`](docs/ci-integration.md) for a complete GitHub Actions workflow and a webhook-to-Slack failure alert.
+
+## VS Code extension (v0.10)
+
+`vscode-extension/` ships a companion extension (marketplace id: `flycotech.daimon`): a status-bar item with daemon/app state, an Errors tree view, and Start / Stop / Open-Dashboard commands. It talks to the same loopback API, so it composes with the TUI, CLI, and MCP server. It has its own `package.json` and is built independently of the npm package.
 
 ## Config (minimal)
 
@@ -88,17 +163,29 @@ If neither exists, the first call to `daimon` creates a stub and exits — edit 
 
   "healthProbe": { "enabled": true, "intervalMs": 30000, "path": "/" },
 
+  "webhooks": [
+    { "url": "https://hooks.slack.com/services/T000/B000/XXXXXXXX", "events": ["error", "regression-detected"] }
+  ],
+
   "overrides": {
     "web-admin": {
       "port": 4250,
       "command": "npx nx serve web-admin --configuration=dev",
-      "env": { "API_BASE": "http://localhost:3000" }
+      "env": { "API_BASE": "http://localhost:3000" },
+      "compileRegressionFactor": 2.0
     }
   }
 }
 ```
 
 All sections except `searchRoots` are optional with safe defaults. See `daimon.config.example.json` for every field.
+
+Config lookup order:
+
+1. `./daimon.config.json` (cwd)
+2. `~/.daimon/config.json`
+
+If neither exists, the first call to `daimon` creates a stub and exits — edit `searchRoots` to point at your workspace and try again.
 
 ## Daemon lifecycle
 
@@ -115,47 +202,71 @@ The daemon auto-spawns on the first `daimon` call that needs it. To suppress: `D
 
 ## CLI
 
+Generated from `src/cliSurface.ts` — the single source of truth that also renders `--help`, shell completion, and the docs site.
+
 ```bash
-daimon list [--tag <name>] [--workspace <label>] [--explain] [--full] [--stream]
-daimon status <name> [--full]
+# lifecycle
+daimon start <name> [--with-deps] [--steal]
+daimon stop <name> [--steal]
+daimon restart <name> [--steal]
+daimon up [<profile>]              # topological start; waits for each to reach serving
+daimon down [<profile>]
+daimon run <name> <task> [--watch] [-- args...]
+daimon clean <name> [--deep] [--yes]
+daimon daemon start|stop|status|restart|attach|install-service
+
+# queries
+daimon list [--tag <name>] [--workspace <label>] [--full|--compact] [--stream] [--explain]
+daimon status <name> [--full|--compact]
 daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]
 daimon events [--since 1h] [--app <name>] [--stream]
-daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]
 daimon logs <name> [--tail N] [--since 30s]
-daimon start <name> [--with-deps]
-daimon stop <name>
-daimon restart <name>
-daimon up [<profile>]              # topological start; waits for each level to reach healthy
-daimon down [<profile>]
-daimon overview [--workspace <label>] [--profile <name>] [--budget <tokens>]   # decision-ready snapshot
-daimon ensure <name> [--until serving|healthy] [--timeout 60s]
-daimon ensure-up <profile> [--until serving|healthy] [--timeout 60s]
-daimon focus <name> [--until serving|healthy|stable] [--timeout 180s]          # one-shot subscribe-then-act (v0.6)
-daimon try-fix <name> [--until healthy] [--timeout 60s]                        # doctor + restart + wait (v0.6)
-daimon orchestrate <profile> [--goal serving|healthy|stable] [--dry-run] [--budget <tokens>]   # whole-workspace bring-up (v0.7)
-daimon trends <name> --metric compile|bundle|errors|restarts [--since 24h|7d|30d]   # history time-series (v0.7)
-daimon discover [--explain] [--dry-run]   # what daimon would (or did) detect
-daimon why-empty                   # alias of `daimon list --explain`
 daimon history <name>              # uptime%, restart count, compile p50/p95, top errors
+
+# agent verbs
+daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]
+daimon ensure <name> [--until serving|healthy] [--timeout 180s]
+daimon ensure-up <profile> [--until serving|healthy] [--timeout 300s]
+daimon overview [--workspace <label>] [--profile <name>] [--budget <tokens>]   # decision-ready snapshot
+daimon focus <name> [--until serving|healthy|stable] [--timeout 180s]          # one-shot subscribe-then-act
+daimon try-fix <name> [--until serving|healthy] [--timeout 180s]               # doctor + restart + wait
+daimon orchestrate <profile> [--goal serving|healthy|stable] [--dry-run] [--budget <tokens>]
+daimon agents                      # active agents + per-app soft-locks (v0.10)
+daimon handoff <app> <agentId>     # transfer a soft-lock to another agent (v0.10)
+daimon profiles suggest [--since 30d] [--min 5]   # profile candidates from co-starts (v0.10)
+daimon ci start <profile> [--until ready|healthy] [--timeout 5m] [--json]      # CI helper (v0.10)
+
+# introspection
 daimon why <name>                  # last transition + 5 preceding events
+daimon why-empty                   # explain an empty `daimon list`
+daimon discover [--dry-run]        # what daimon would (or did) detect
+daimon timeline [--since 7d] [--app <name>] [--kinds status,error,warning,lint,bundle,task]
 daimon tasks <name>                # discovered non-serve tasks
-daimon run <name> <task> [--watch] [-- args...]
 daimon snapshot <name>             # bundle state for bug reports
-daimon env <name> [--use <file>]   # env-file switcher
-daimon clean <name> [--deep] [--yes]
-daimon record / replay
-daimon doctor [--auto-fix] [--dry-run]    # config sanity checks + rule-based self-repair (v0.5+)
-daimon pin-health <name> [--accept] [--path <p>]   # opt-in health-probe path discovery (v0.6)
-daimon export-config [--redacted]   # paste-ready config for bug reports
+daimon record / replay <session.jsonl> [--speed N]
+daimon doctor [--auto-fix] [--dry-run] [--self]
 daimon free-port <port> [--force]
-daimon init [--auto]               # interactive (or non-interactive) config scaffolder
+daimon self                        # daimon's own runtime metrics
+daimon dashboard                   # open the dashboard scoped to cwd
+
+# config
+daimon init [--force] [--auto]
+daimon env <name> [--use <file>]
+daimon pin-health <name> [--accept] [--path <p>]
+daimon export-config [--redacted]
+daimon workspaces list|add|rm|show
+daimon completion <bash|zsh|fish|powershell>
+
+# claude / plugins
+daimon claude install|update|uninstall|status
+daimon plugin list|show <name>|validate <path>
 ```
 
-All CLI commands print compact JSON on stdout by default (`--full` for the verbose v0.4 shape). Errors are compact JSON on stderr with non-zero exit. Exit codes: `0` success, `1` generic error, `2` timeout (used by `daimon wait`, `daimon focus`, `daimon ensure*`).
+All CLI commands print compact JSON on stdout by default (`--full` for the verbose v0.4 shape). Errors are compact JSON on stderr with non-zero exit. Exit codes: `0` success, `1` generic error, `2` timeout (used by `daimon wait`, `daimon focus`, `daimon ensure*`, `daimon ci`), `5` soft-lock held by another agent (pass `--steal` to override).
 
 ## HTTP API
 
-Bound to `127.0.0.1:<apiPort>` only. The dashboard at `/` is an Angular 20 SPA (Material 3, zoneless, signals) bundled into the published tarball — it shows apps, errors grouped by file/app/tool, live logs, doctor, trends (v0.7), settings editor, and one-click actions.
+Bound to `127.0.0.1:<apiPort>` only. The dashboard at `/` is an Angular 20 SPA (Material 3, zoneless, signals) bundled into the published tarball — it shows apps, errors grouped by file/app/tool, live logs, doctor, trends, regressions (chord `g r`), settings editor, and one-click actions.
 
 ```
 GET  /api/apps                                  # compact by default; ?format=full for v0.4 shape
@@ -166,24 +277,27 @@ GET  /api/apps/:name/logs?tail=N&since=30s
 GET  /api/apps/:name/logs/stream                # Server-Sent Events
 GET  /api/apps/:name/wait?until=serving&timeout=60
 GET  /api/events[?since=5m&app=<name>&stream=ndjson]
-GET  /api/overview[?budget=<tokens>&workspace=&profile=]      # v0.5
-GET  /api/discovery/explain                                    # v0.5
+GET  /api/agents                                # active agents + soft-locks (v0.10)
+GET  /api/profiles/suggest                      # profile candidates from co-starts (v0.10)
+GET  /api/overview[?budget=<tokens>&workspace=&profile=]
+GET  /api/discovery/explain
 GET  /api/history/{events,compile-times,tasks,summary/:name,why/:name}
-GET  /api/history/trends?app=&metric=&since=                  # v0.7
-GET  /api/history/bundles?app=                                # v0.7
+GET  /api/history/trends?app=&metric=&since=
+GET  /api/history/bundles?app=
 GET  /api/config                                # current config (env redacted)
-POST /api/apps/:name/(start|stop|restart|snapshot|clean|run/:task)
-POST /api/apps/:name/focus?until=…              # NDJSON event stream (v0.6)
-POST /api/apps/:name/try-fix?until=…            # v0.6
-POST /api/apps/:name/health/pin                 # v0.6 (with --accept)
-POST /api/orchestrate?profile=&goal=&timeoutMs=&dryRun=&budget=   # v0.7
+POST /api/apps/:name/(start|stop|restart|snapshot|clean|run/:task)[?steal=1]
+POST /api/apps/:name/handoff                    # transfer soft-lock (v0.10)
+POST /api/apps/:name/focus?until=…              # NDJSON event stream
+POST /api/apps/:name/try-fix?until=…
+POST /api/apps/:name/health/pin
+POST /api/orchestrate?profile=&goal=&timeoutMs=&dryRun=&budget=
 POST /api/doctor/auto-fix[?dryRun=true]
 PATCH /api/config                               # If-Match: <etag>; 412 on conflict
 POST /api/config/reload                         # soft reload — no running children killed
 POST /api/shutdown
 ```
 
-If `config.apiToken` is set, mutating endpoints require `Authorization: Bearer <token>`. Read endpoints stay open.
+Every request may carry `X-Daimon-Agent` (the CLI and MCP server always send it); lifecycle routes use it for soft-lock gating, and it lands in the audit log. If `config.apiToken` is set, mutating endpoints require `Authorization: Bearer <token>`. Read endpoints stay open.
 
 ## Claude Code integration
 
@@ -209,7 +323,7 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, plus the agent-first verbs added in v0.5–v0.7: `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`. The recommended session opener is `overview` (compact-by-default, token-budgetable); the recommended one-call workspace bring-up is `orchestrate <profile> goal=stable`.
+The MCP server exposes: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, plus the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, and `daimon_notify_on_error`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview` (compact-by-default, token-budgetable); the recommended one-call workspace bring-up is `orchestrate <profile> goal=stable`.
 
 ## State files (in `~/.daimon/`)
 
@@ -217,12 +331,12 @@ The MCP server exposes: `list_apps`, `get_status`, `get_errors`, `get_logs`, `st
 - `daemon.lock` — `{ pid, apiPort, version, startedAt, headless }`
 - `state.json` — sticky port assignments
 - `cursors.json` — per-client error cursors for `--since-last`
-- `history.db` — SQLite of events, compile times, task runs, and per-app bundle sizes (the last powers the v0.7 Trends dashboard)
+- `history.db` — SQLite of events, compile times, task runs, and per-app bundle sizes (powers the Trends dashboard). If it's corrupt at startup, daimon archives it as `history.db.corrupt-<ts>` and rebuilds automatically (v0.10).
 - `logs/<name>.log[.N]` — when `logs.enabled` is true
 - `snapshots/<name>-<ts>.json` — `daimon snapshot` output
 - `notifications.log` — desktop notification audit
 - `crashes/<ts>.txt` — daemon fatal dumps
-- `audit.log` — dashboard config edits
+- `audit.log` — config edits + lifecycle actions, tab-delimited, with the acting agent id in the 6th column (v0.10)
 - `secrets.json` — `${NAME}` substitutions for `overrides.env`
 - `sessions/<ts>.jsonl` — `daimon record` output
 
@@ -244,7 +358,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-60 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, compile-time regression, the parser fixture corpus (Vite/Storybook/Jest/Nx/Angular esbuild/webpack/Node/Django/Rails/FastAPI/Go-air/Rust-trunk — see `test/fixtures/parsers/`), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery (strict markers + JS precedence), and the TUI ribbon helper. No vitest dependency. The dashboard's Vitest + Playwright layer is deferred to v0.7.1.
+262 `node:test` cases across small focused files (~15s wall-clock): dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (Vite/Storybook/Jest/Nx/Angular esbuild/webpack/Node/Django/Rails/FastAPI/Go-air/Rust-trunk — see `test/fixtures/parsers/`), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery), corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 
@@ -254,4 +368,4 @@ npm test
 - Free for charities, schools, government, and other noncommercial organizations
 - **Not licensed for commercial use** (use by or for a for-profit business)
 
-For a commercial license, contact yosi@flycotech.com.
+For a commercial license, get in touch via <https://flycotech.com>.

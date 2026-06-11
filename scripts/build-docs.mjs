@@ -148,7 +148,8 @@ ${renderMcp()}
   <li><code>autoStart</code> — apps to start when the daemon launches.</li>
   <li><code>profiles</code> — named sets of apps for <code>daimon up &lt;profile&gt;</code> / <code>daimon ci start &lt;profile&gt;</code>.</li>
   <li><code>healthProbe</code> — toggle and shape the per-app health probe.</li>
-  <li><code>webhooks</code> — outbound notifications for error / regression / status events.</li>
+  <li><code>webhooks</code> — outbound notifications: <code>[{url, events?, headers?, filter?}]</code> with Slack/Discord shaping for error / regression / status events.</li>
+  <li><code>overrides.&lt;app&gt;</code> — per-app port / command / env, plus tuning knobs like <code>compileRegressionFactor</code> (multiplier over the compile-time baseline before a regression fires).</li>
   <li><code>history</code> — SQLite retention controls.</li>
 </ul>
 
@@ -161,7 +162,7 @@ ${renderMcp()}
   <dt><strong>How do I get a notification when an app errors?</strong></dt>
   <dd>Configure a <code>webhooks</code> entry pointing at Slack/Discord, or call <code>daimon_notify_on_error</code> from MCP.</dd>
   <dt><strong>Can I use daimon in CI?</strong></dt>
-  <dd>Yes — <code>daimon ci start &lt;profile&gt; --until ready --timeout 5m --json</code> returns a structured report and exits 2 on timeout. See <code>docs/ci-integration.md</code>.</dd>
+  <dd>Yes — <code>daimon ci start &lt;profile&gt; --until ready --timeout 5m --json</code> returns a structured report and exits 2 on timeout. See the <a href="ci-integration.md">CI integration guide</a>.</dd>
 </dl>
 
 <hr />

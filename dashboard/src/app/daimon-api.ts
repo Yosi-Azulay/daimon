@@ -22,6 +22,7 @@ export interface AppRow {
   cpu?: number | null;
   memMB?: number | null;
   tags?: string[];
+  estimatedReadyAtMs?: number;
 }
 
 export interface WorkspaceRow {
@@ -75,6 +76,8 @@ export interface DiscoveryMeta {
 
 const EVENT_BUFFER_MAX = 200;
 const POLL_MS = 5_000;
+// Matches the server's agent-inactive window (agents.ts AGENT_INACTIVE_MS).
+const AGENT_RECENT_MS = 5 * 60_000;
 
 @Injectable({ providedIn: 'root' })
 export class DaimonApi {
@@ -92,6 +95,11 @@ export class DaimonApi {
   cwdResolved = signal<{ path: string; label: string | null } | null>(null);
   cwdUnknown = signal<boolean>(false);
   workspaceRows = signal<WorkspaceRow[]>([]);
+  agentLocks = signal<Record<string, LockSnapshot>>({});
+  agentSelf = signal<string | null>(null);
+  // /api/agents only ties agents to apps through live locks, so lock sightings
+  // are accumulated across polls to build a per-app "recently interacted" list.
+  appAgents = signal<Record<string, { agent: string; at: number }[]>>({});
 
   workspaces = computed(() => {
     const seen = new Set<string>();
@@ -124,12 +132,16 @@ export class DaimonApi {
 
   async refresh(): Promise<void> {
     try {
-      const [apps, overview] = await Promise.all([
+      const [apps, overview, agentInfo] = await Promise.all([
         firstValueFrom(this.http.get<AppRow[]>('/api/apps?format=full')),
         firstValueFrom(this.http.get<Overview>('/api/overview')),
+        this.getAgents(),
       ]);
       this.apps.set(Array.isArray(apps) ? apps : []);
       this.overview.set(overview ?? null);
+      this.agentLocks.set(agentInfo.locks);
+      this.agentSelf.set(agentInfo.self);
+      this.noteAgentActivity(agentInfo.locks);
       this.connected.set(true);
       this.ready.set(true);
     } catch {
@@ -339,6 +351,23 @@ export class DaimonApi {
       } catch {}
     })();
     return () => ctl.abort();
+  }
+
+  private noteAgentActivity(locks: Record<string, LockSnapshot>): void {
+    const now = Date.now();
+    this.appAgents.update(map => {
+      const next: Record<string, { agent: string; at: number }[]> = {};
+      for (const [app, list] of Object.entries(map)) {
+        const kept = list.filter(e => now - e.at <= AGENT_RECENT_MS);
+        if (kept.length) next[app] = kept;
+      }
+      for (const [app, lk] of Object.entries(locks)) {
+        const list = (next[app] ?? []).filter(e => e.agent !== lk.agent);
+        list.unshift({ agent: lk.agent, at: Math.min(now, lk.lockedAt) });
+        next[app] = list.slice(0, 3);
+      }
+      return next;
+    });
   }
 
   private patch(name: string, p: Partial<AppRow>): void {

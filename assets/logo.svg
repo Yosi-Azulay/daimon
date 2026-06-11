@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="daimon">
+  <!-- daimon mark: a lowercase delta (δ) — the daemon's glyph.
+       Monochrome variant. Stroke-based so it stays crisp at 32px and 200px. -->
+  <g fill="none" stroke="#64748b" stroke-width="6" stroke-linecap="round">
+    <circle cx="32" cy="42" r="13"/>
+    <path d="M44 9c-13 2-19 10-15.5 22"/>
+  </g>
+</svg>

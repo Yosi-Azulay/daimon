@@ -265,7 +265,14 @@ function parseBundleLine(state: AppState, trimmed: string): boolean {
   return false;
 }
 
+// Hard cap on the slice the regexes see: dev-server lines that matter (status
+// banners, error heads, URLs) live in the first few hundred chars, and several
+// matchers backtrack quadratically on long unbroken tokens (base64 blobs or
+// minified-bundle dumps in stdout) — 2KB keeps the worst case under ~20ms.
+const MAX_PARSE_LINE_CHARS = 2048;
+
 export function parseLine(state: AppState, line: string): ParseResult | null {
+  if (line.length > MAX_PARSE_LINE_CHARS) line = line.slice(0, MAX_PARSE_LINE_CHARS);
   const bareLoc = line.match(BARE_LOCATION_LINE_RX);
   const parenLoc = !bareLoc ? line.match(PAREN_LOCATION_RX) : null;
   const rustLoc = !bareLoc && !parenLoc ? line.match(RUST_LOCATION_RX) : null;

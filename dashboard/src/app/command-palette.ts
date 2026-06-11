@@ -103,9 +103,10 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   private allItems = computed<PaletteItem[]>(() => {
     const items: PaletteItem[] = [];
     items.push({ kind: 'nav', icon: 'apps', label: 'Go to Apps', hint: 'g a', run: () => this.go('/') });
-    items.push({ kind: 'nav', icon: 'timeline', label: 'Go to Events', hint: 'g e', run: () => this.go('/events') });
+    items.push({ kind: 'nav', icon: 'timeline', label: 'Go to Events', hint: 'g v', run: () => this.go('/events') });
     items.push({ kind: 'nav', icon: 'terminal', label: 'Go to Logs', hint: 'g l', run: () => this.go('/logs') });
-    items.push({ kind: 'nav', icon: 'error', label: 'Go to Errors', hint: 'g r', run: () => this.go('/errors') });
+    items.push({ kind: 'nav', icon: 'error', label: 'Go to Errors', hint: 'g e', run: () => this.go('/errors') });
+    items.push({ kind: 'nav', icon: 'trending_down', label: 'Go to Regressions', hint: 'g r', run: () => this.go('/regressions') });
     items.push({ kind: 'nav', icon: 'medical_services', label: 'Go to Doctor', hint: 'g d', run: () => this.go('/doctor') });
     items.push({ kind: 'nav', icon: 'tune', label: 'Go to Config', hint: 'g c', run: () => this.go('/config') });
     items.push({ kind: 'nav', icon: 'query_stats', label: 'Go to History', hint: 'g h', run: () => this.go('/history') });

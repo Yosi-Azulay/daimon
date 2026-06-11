@@ -5,6 +5,7 @@ import os from 'node:os';
 import { Box, render, Text, useApp, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 import type { AppHealth, AppStatus, AppSummary } from '../types.js';
+import { generateAgentId } from '../agents.js';
 
 const STATUS_COLORS: Record<AppStatus, string> = {
   stopped: 'gray',
@@ -68,6 +69,8 @@ function AttachApp({ port, onExit }: AttachProps) {
     try {
       const headers: Record<string, string> = { ...(init.headers as any || {}) };
       if (token) headers['authorization'] = `Bearer ${token}`;
+      headers['x-daimon-agent'] = generateAgentId();
+      headers['x-daimon-cwd'] = process.cwd();
       const res = await fetch(base + p, { ...init, headers });
       const text = await res.text();
       let body: any = text;

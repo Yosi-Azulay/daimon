@@ -67,6 +67,15 @@ function expandTilde(p: string): string {
   return p;
 }
 
+// Field-level validation problems from the most recent validate() pass.
+// Malformed-config softening (M55): a broken field falls back to its default
+// with a warning instead of refusing to start; `daimon doctor` surfaces these.
+let lastValidationWarnings: string[] = [];
+
+export function configValidationWarnings(): string[] {
+  return [...lastValidationWarnings];
+}
+
 export function validateConfig(raw: unknown, source: string): AppmanConfig {
   return validate(raw, source);
 }
@@ -77,12 +86,19 @@ function validate(raw: unknown, source: string): AppmanConfig {
   }
   const obj = raw as Record<string, unknown>;
   const cfg = defaultConfig();
+  const warnings: string[] = [];
+  lastValidationWarnings = warnings;
+  const warn = (msg: string): void => {
+    warnings.push(msg);
+    process.stderr.write(`[daimon] config warning: ${msg} — using default\n`);
+  };
 
   if (obj.searchRoots !== undefined) {
     if (!Array.isArray(obj.searchRoots) || !obj.searchRoots.every(s => typeof s === 'string' || (s && typeof s === 'object' && typeof (s as any).path === 'string'))) {
-      throw new Error(`Config "searchRoots" must be an array of strings or { path, viteSubfolders? } objects (${source})`);
+      warn(`"searchRoots" must be an array of strings or { path, viteSubfolders? } objects (${source})`);
+    } else {
+      cfg.searchRoots = obj.searchRoots as any;
     }
-    cfg.searchRoots = obj.searchRoots as any;
   }
 
   if (obj.portRange !== undefined) {
@@ -93,49 +109,58 @@ function validate(raw: unknown, source: string): AppmanConfig {
       typeof obj.portRange[1] !== 'number' ||
       obj.portRange[0] > obj.portRange[1]
     ) {
-      throw new Error(`Config "portRange" must be [min, max] numbers (${source})`);
+      warn(`"portRange" must be [min, max] numbers (${source})`);
+    } else {
+      cfg.portRange = [obj.portRange[0] as number, obj.portRange[1] as number];
     }
-    cfg.portRange = [obj.portRange[0] as number, obj.portRange[1] as number];
   }
 
   if (obj.apiPort !== undefined) {
     if (typeof obj.apiPort !== 'number') {
-      throw new Error(`Config "apiPort" must be a number (${source})`);
+      warn(`"apiPort" must be a number (${source})`);
+    } else {
+      cfg.apiPort = obj.apiPort;
     }
-    cfg.apiPort = obj.apiPort;
   }
 
   if (obj.overrides !== undefined) {
     if (typeof obj.overrides !== 'object' || obj.overrides === null || Array.isArray(obj.overrides)) {
-      throw new Error(`Config "overrides" must be an object (${source})`);
+      warn(`"overrides" must be an object (${source})`);
+    } else {
+      cfg.overrides = obj.overrides as AppmanConfig['overrides'];
     }
-    cfg.overrides = obj.overrides as AppmanConfig['overrides'];
   }
 
   if (obj.autoStart !== undefined) {
     if (!Array.isArray(obj.autoStart) || !obj.autoStart.every(s => typeof s === 'string')) {
-      throw new Error(`Config "autoStart" must be an array of strings (${source})`);
+      warn(`"autoStart" must be an array of strings (${source})`);
+    } else {
+      cfg.autoStart = obj.autoStart as string[];
     }
-    cfg.autoStart = obj.autoStart as string[];
   }
 
   if (obj.profiles !== undefined) {
     if (typeof obj.profiles !== 'object' || obj.profiles === null || Array.isArray(obj.profiles)) {
-      throw new Error(`Config "profiles" must be an object (${source})`);
-    }
-    for (const [k, v] of Object.entries(obj.profiles as object)) {
-      if (!Array.isArray(v) || !v.every(s => typeof s === 'string')) {
-        throw new Error(`Config "profiles.${k}" must be an array of strings (${source})`);
+      warn(`"profiles" must be an object (${source})`);
+    } else {
+      const out: Record<string, string[]> = {};
+      for (const [k, v] of Object.entries(obj.profiles as object)) {
+        if (!Array.isArray(v) || !v.every(s => typeof s === 'string')) {
+          warn(`"profiles.${k}" must be an array of strings (${source})`);
+        } else {
+          out[k] = v;
+        }
       }
+      cfg.profiles = out;
     }
-    cfg.profiles = obj.profiles as Record<string, string[]>;
   }
 
   if (obj.tags !== undefined) {
     if (typeof obj.tags !== 'object' || obj.tags === null || Array.isArray(obj.tags)) {
-      throw new Error(`Config "tags" must be an object (${source})`);
+      warn(`"tags" must be an object (${source})`);
+    } else {
+      cfg.tags = obj.tags as Record<string, string[]>;
     }
-    cfg.tags = obj.tags as Record<string, string[]>;
   }
 
   if (obj.autoRestart && typeof obj.autoRestart === 'object') {
@@ -150,12 +175,15 @@ function validate(raw: unknown, source: string): AppmanConfig {
   }
 
   if (obj.depends && typeof obj.depends === 'object' && !Array.isArray(obj.depends)) {
+    const out: Record<string, string[]> = {};
     for (const [k, v] of Object.entries(obj.depends as Record<string, unknown>)) {
       if (!Array.isArray(v) || !v.every(x => typeof x === 'string')) {
-        throw new Error(`Config "depends.${k}" must be an array of strings (${source})`);
+        warn(`"depends.${k}" must be an array of strings (${source})`);
+      } else {
+        out[k] = v as string[];
       }
     }
-    cfg.depends = obj.depends as Record<string, string[]>;
+    cfg.depends = out;
   }
   if (typeof obj.cascadeRestart === 'boolean') cfg.cascadeRestart = obj.cascadeRestart;
 
@@ -247,15 +275,33 @@ export function configLookupPaths(): { local: string; user: string } {
   };
 }
 
+// Unparseable config refuses to start (M55) — but with the JSON line/column
+// rather than V8's bare byte offset.
+function parseJsonWithLocation(text: string, source: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (err: any) {
+    const m = /position (\d+)/.exec(err?.message || '');
+    if (m) {
+      const pos = Number(m[1]);
+      const upTo = text.slice(0, pos);
+      const line = upTo.split('\n').length;
+      const col = pos - upTo.lastIndexOf('\n');
+      throw new Error(`${source}: invalid JSON at line ${line}, column ${col} (${err.message})`);
+    }
+    throw new Error(`${source}: invalid JSON (${err?.message || err})`);
+  }
+}
+
 export function loadConfig(): ConfigResult {
   const { local, user } = configLookupPaths();
 
   if (fs.existsSync(local)) {
-    const raw = JSON.parse(fs.readFileSync(local, 'utf8'));
+    const raw = parseJsonWithLocation(fs.readFileSync(local, 'utf8'), local);
     return { kind: 'loaded', config: validate(raw, local), path: local };
   }
   if (fs.existsSync(user)) {
-    const raw = JSON.parse(fs.readFileSync(user, 'utf8'));
+    const raw = parseJsonWithLocation(fs.readFileSync(user, 'utf8'), user);
     return { kind: 'loaded', config: validate(raw, user), path: user };
   }
 

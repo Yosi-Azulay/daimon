@@ -66,6 +66,15 @@
     "tray": false
   },
 
+  "webhooks": [
+    {
+      "url": "https://hooks.slack.com/services/T000/B000/XXXXXXXX",
+      "events": ["error", "regression-detected", "status"],
+      "headers": { "x-extra-header": "optional-value" },
+      "filter": { "app": ["web-admin"], "to": ["error", "unhealthy"], "from": [] }
+    }
+  ],
+
   "staleDetect": {
     "enabled": true,
     "silentMs": 30000
@@ -89,7 +98,8 @@
       "port": 4250,
       "command": "npx nx serve web-admin --configuration=dev",
       "env": { "API_BASE": "http://localhost:3000" },
-      "url": null
+      "url": null,
+      "compileRegressionFactor": 2.0
     }
   }
 }

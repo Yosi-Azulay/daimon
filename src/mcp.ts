@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { loadConfig } from './config.js';
 import { readLock, spawnDetached } from './daemon.js';
@@ -57,7 +58,9 @@ function err(message: string): { content: { type: 'text'; text: string }[]; isEr
   return { content: [{ type: 'text', text: JSON.stringify({ error: message }) }], isError: true };
 }
 
-async function main() {
+// Exported so the contract test can connect over an in-memory transport and
+// validate the full tool surface without grabbing stdio or spawning a daemon.
+export function buildServer(): McpServer {
   const server = new McpServer({ name: 'daimon', version: DAIMON_VERSION });
 
   server.registerTool('list_apps', { description: 'List apps in compact form: name, status, port, health, errCount, lastChangeMs. Use list_apps_full for the verbose v0.4 shape.', inputSchema: {} }, async () => {
@@ -140,7 +143,7 @@ async function main() {
   });
 
   for (const action of ['start', 'stop', 'restart'] as const) {
-    server.registerTool(`${action}_app`, { description: `${action} an app.`, inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
+    server.registerTool(`${action}_app`, { description: `${action[0].toUpperCase()}${action.slice(1)} a dev-server app by name. Takes the per-app soft lock; another agent's concurrent call gets a structured locked-by-other-agent error.`, inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
       const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
       const r = await callJson(`/api/apps/${encodeURIComponent(name)}/${action}?${qs.toString()}`, 'POST');
       if (r.status === 0) return err(r.body?.error || 'unknown');
@@ -344,15 +347,17 @@ async function main() {
   });
 
   server.registerTool('daimon_subscribe_events', {
-    description: 'Long-poll for new daimon events. Returns events newer than `sinceMs` (default 60s) for `app` (or all apps), filtered by `kinds` (status, error, warning, lint, health, restart, bundle, task). Use to react to errors / status changes without sleeping.',
+    description: 'Long-poll for new daimon events. Returns events newer than `sinceMs` (default 60s) for `app` (or all apps), filtered by `kinds` (status, error, warning, lint, health, restart, bundle, task, regression). When nothing has happened yet the daemon holds the request open up to `waitMs` (default 25s) and returns the next event as it lands — no sleeping needed.',
     inputSchema: {
       app: z.string().optional(),
       kinds: z.array(z.string()).optional(),
       sinceMs: z.number().int().positive().max(86_400_000).optional(),
+      waitMs: z.number().int().min(0).max(55_000).optional(),
     },
-  }, async ({ app, kinds, sinceMs }) => {
+  }, async ({ app, kinds, sinceMs, waitMs }) => {
     const qs = new URLSearchParams();
     qs.set('since', String(sinceMs ?? 60_000) + 'ms');
+    qs.set('waitMs', String(waitMs ?? 25_000));
     if (app) qs.set('app', app);
     const r = await callJson(`/api/events?${qs.toString()}`);
     if (r.status === 0) return err(r.body?.error || 'unknown');
@@ -385,25 +390,37 @@ async function main() {
   }, async ({ app, timeoutMs }) => {
     const budget = Math.min(timeoutMs ?? 60_000, 600_000);
     const start = Date.now();
-    const pollMs = 1500;
     while (Date.now() - start < budget) {
       const since = Math.max(500, Date.now() - start);
-      const qs = new URLSearchParams({ since: since + 'ms', app });
+      const waitMs = Math.max(0, Math.min(55_000, budget - (Date.now() - start)));
+      const qs = new URLSearchParams({ since: since + 'ms', app, waitMs: String(waitMs) });
       const r = await callJson(`/api/events?${qs.toString()}`);
       if (r.status === 0) return err(r.body?.error || 'unknown');
       const arr = Array.isArray(r.body) ? r.body : [];
       const hit = arr.find((e: any) => e.type === 'error-new');
       if (hit) return ok({ error: hit, waitedMs: Date.now() - start });
-      await new Promise(res => setTimeout(res, pollMs));
+      // Non-error events came back — brief pause so a chatty app can't pin the loop.
+      if (arr.length) await new Promise(res => setTimeout(res, 500));
     }
     return ok({ timedOut: true, waitedMs: Date.now() - start });
   });
 
+  return server;
+}
+
+async function main() {
+  const server = buildServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-main().catch(err => {
-  process.stderr.write(`[daimon-mcp] fatal: ${err?.stack || err}\n`);
-  process.exit(1);
-});
+const invokedDirectly = (() => {
+  try { return import.meta.url === pathToFileURL(process.argv[1] || '').href; } catch { return false; }
+})();
+
+if (invokedDirectly) {
+  main().catch(err => {
+    process.stderr.write(`[daimon-mcp] fatal: ${err?.stack || err}\n`);
+    process.exit(1);
+  });
+}

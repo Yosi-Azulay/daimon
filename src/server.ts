@@ -187,6 +187,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
   const cursors = new Cursors();
   const agents = new AgentRegistry();
   const locks = new LockManager();
+  // Every CLI invocation mints a fresh id, so without pruning the registry
+  // grows one record per command for the daemon's lifetime.
+  const agentPrune = setInterval(() => agents.prune(), 60_000);
+  agentPrune.unref();
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -197,11 +201,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       // Identify the agent on every request so the in-memory registry, audit
       // log, and per-app soft-lock all see the same id. CLI sends it as a
       // header; MCP forwards from its own env. Missing header = anonymous
-      // legacy caller, recorded as 'unknown'.
+      // legacy caller (e.g. the dashboard's polling) — it still acts as
+      // 'unknown' for lock/audit purposes but is not recorded as an agent.
       const agentHdr = (req.headers['x-daimon-agent'] as string | undefined)?.trim();
       const cwdHdr = (req.headers['x-daimon-cwd'] as string | undefined)?.trim() || null;
       const agentId = agentHdr && agentHdr.length ? agentHdr : 'unknown';
-      agents.touch(agentId, cwdHdr);
+      if (agentId !== 'unknown') agents.touch(agentId, cwdHdr);
 
       const requireAuth = (): boolean => {
         const cfg = opts.getConfig ? opts.getConfig() : null;
@@ -445,12 +450,30 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
           const seed = registry.events({ sinceMs, app });
           for (const ev of seed) res.write(JSON.stringify(ev) + '\n');
+          // Ring-buffer against slow consumers (M54): cap pending lines at 500,
+          // drop oldest on overflow and report the drop count in-stream.
+          const buffer: string[] = [];
+          let dropped = 0;
+          let writable = true;
+          const flush = () => {
+            while (buffer.length && writable) {
+              writable = res.write(buffer.shift()!);
+            }
+            if (dropped > 0 && buffer.length === 0 && writable) {
+              res.write(JSON.stringify({ ts: Date.now(), type: 'stream-overflow', dropped }) + '\n');
+              process.stderr.write(`[daimon] event stream: slow client, dropped ${dropped} events\n`);
+              dropped = 0;
+            }
+          };
           const onEvent = (ev: any) => {
             if (app && ev.app !== app) return;
-            res.write(JSON.stringify(ev) + '\n');
+            if (buffer.length >= 500) { dropped++; buffer.shift(); }
+            buffer.push(JSON.stringify(ev) + '\n');
+            flush();
           };
           registry.on('event', onEvent);
-          const keepalive = setInterval(() => { try { res.write('\n'); } catch {} }, 30_000);
+          res.on('drain', () => { writable = true; flush(); });
+          const keepalive = setInterval(() => { try { if (writable) writable = res.write('\n'); } catch {} }, 30_000);
           req.on('close', () => { registry.off('event', onEvent); clearInterval(keepalive); try { res.end(); } catch {} });
           return;
         }
@@ -466,6 +489,25 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             memEvents.push({ ts: r.ts, app: r.app, type: r.type as any, from: r.from_state ?? undefined, to: r.to_state ?? undefined, message: r.message ?? undefined });
           }
           memEvents.sort((a, b) => a.ts - b.ts);
+        }
+        // Long-poll: nothing new yet + ?waitMs= → hold the request open until
+        // the next matching event or the deadline. Lets MCP subscribe_events
+        // block instead of busy-polling.
+        const waitMs = Math.min(Math.max(parseInt(url.searchParams.get('waitMs') || '0', 10) || 0, 0), 55_000);
+        if (memEvents.length === 0 && waitMs > 0) {
+          const ev = await new Promise<any | null>(resolve => {
+            const cleanup = (value: any | null) => {
+              registry.off('event', onEvent);
+              clearTimeout(timer);
+              resolve(value);
+            };
+            const onEvent = (e: any) => { if (!app || e.app === app) cleanup(e); };
+            const timer = setTimeout(() => cleanup(null), waitMs);
+            registry.on('event', onEvent);
+            req.on('close', () => cleanup(null));
+          });
+          sendJson(res, 200, ev ? [ev] : []);
+          return;
         }
         sendJson(res, 200, memEvents);
         return;
@@ -969,6 +1011,13 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             const ok = res.write(buffer.shift()!);
             if (!ok) break;
           }
+          if (dropped > 0 && buffer.length === 0) {
+            // Tell the consumer (and the daemon log) what overflowed instead
+            // of silently losing lines.
+            res.write(`data: ${JSON.stringify({ ts: Date.now(), dropped })}\n\n`);
+            process.stderr.write(`[daimon] log stream ${name}: slow client, dropped ${dropped} lines\n`);
+            dropped = 0;
+          }
         };
         const onLog = (ev: { name: string; ts: number; line: string }) => {
           if (ev.name !== name) return;
@@ -977,6 +1026,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           flush();
         };
         registry.on('log', onLog);
+        res.on('drain', flush);
         const keepalive = setInterval(() => res.write(': ping\n\n'), 30_000);
         req.on('close', () => { registry.off('log', onLog); clearInterval(keepalive); });
         return;
@@ -1212,6 +1262,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       // the app for 30s. A different agent gets 409 locked-by-other-agent
       // unless `?steal=1` is passed. The original agent can re-call freely.
       const tryLock = (action: string): boolean => {
+        // Validate the app before locking — otherwise 409s (and interaction
+        // history) can materialize for app names that don't exist.
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return false; }
         const stealQ = url.searchParams.get('steal');
         const steal = stealQ === '1' || stealQ === 'true';
         if (steal) { locks.steal(name, agentId, action); return true; }

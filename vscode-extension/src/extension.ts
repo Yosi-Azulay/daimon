@@ -95,6 +95,38 @@ class DaimonErrorsProvider implements vscode.TreeDataProvider<ErrorRow> {
   getChildren(): ErrorRow[] { return this.rows; }
 }
 
+class DaimonLogCodeActionProvider implements vscode.CodeActionProvider {
+  // 5s cache: provideCodeActions fires on every cursor move over a diagnostic.
+  private cache = new Map<string, { at: number; apps: AppSummary[] }>();
+
+  async provideCodeActions(doc: vscode.TextDocument, _range: vscode.Range, context: vscode.CodeActionContext): Promise<vscode.CodeAction[]> {
+    if (!context.diagnostics.length) return [];
+    const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    if (!folder) return [];
+    const apps = await this.appsFor(folder.uri.fsPath);
+    return apps.map(a => {
+      const title = apps.length > 1 ? `Open daimon log for ${a.name}` : 'Open daimon log for this app';
+      const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
+      action.command = { title, command: 'daimon.showLogs', arguments: [a.name] };
+      action.diagnostics = [...context.diagnostics];
+      return action;
+    });
+  }
+
+  private async appsFor(fsPath: string): Promise<AppSummary[]> {
+    const hit = this.cache.get(fsPath);
+    if (hit && Date.now() - hit.at < 5000) return hit.apps;
+    try {
+      const r = await httpJson(`/api/apps?cwd=${encodeURIComponent(fsPath)}`);
+      const apps: AppSummary[] = Array.isArray(r.body) ? r.body : [];
+      this.cache.set(fsPath, { at: Date.now(), apps });
+      return apps;
+    } catch {
+      return [];
+    }
+  }
+}
+
 export function activate(ctx: vscode.ExtensionContext): void {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.command = 'daimon.openDashboard';
@@ -106,12 +138,22 @@ export function activate(ctx: vscode.ExtensionContext): void {
   const errorsProvider = new DaimonErrorsProvider();
   ctx.subscriptions.push(vscode.window.registerTreeDataProvider('daimonErrors', errorsProvider));
 
+  ctx.subscriptions.push(vscode.languages.registerCodeActionsProvider(
+    [{ language: 'typescript' }, { language: 'typescriptreact' }],
+    new DaimonLogCodeActionProvider(),
+    { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+  ));
+
   async function refresh(): Promise<void> {
     const c = cwd();
     if (!c) { status.text = '$(circle-slash) daimon: no workspace'; return; }
     try {
       const r = await httpJson(`/api/apps?cwd=${encodeURIComponent(c)}`);
-      if (r.status === 0) { status.text = '$(error) daimon: daemon down'; return; }
+      if (r.status === 0) {
+        status.text = '$(error) daimon: daemon down';
+        await vscode.commands.executeCommand('setContext', 'daimonAttached', false);
+        return;
+      }
       const apps: AppSummary[] = Array.isArray(r.body) ? r.body : [];
       const total = apps.length;
       const errCount = apps.reduce((acc, a) => acc + (a.errCount ?? a.errorCount ?? 0), 0);
@@ -139,6 +181,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
       errorsProvider.refresh(rows);
     } catch (err: any) {
       status.text = '$(error) daimon: ' + (err?.message || 'unreachable');
+      await vscode.commands.executeCommand('setContext', 'daimonAttached', false);
     }
   }
 
@@ -178,8 +221,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
     void refresh();
   }));
 
-  ctx.subscriptions.push(vscode.commands.registerCommand('daimon.showLogs', async () => {
-    const name = await pickApp();
+  ctx.subscriptions.push(vscode.commands.registerCommand('daimon.showLogs', async (preset?: string) => {
+    const name = preset ?? await pickApp();
     if (!name) return;
     const c = cwd();
     const r = await httpJson(`/api/apps/${encodeURIComponent(name)}/logs?tail=200${c ? `&cwd=${encodeURIComponent(c)}` : ''}`);

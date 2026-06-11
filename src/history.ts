@@ -55,6 +55,20 @@ export class History {
   private retentionStart: NodeJS.Timeout | null = null;
   private warned = false;
 
+  // Query SQL varies only by which WHERE clauses are present, so a handful of
+  // shapes dominate — caching the prepared statements keeps the hot read
+  // paths (M54) from re-parsing SQL on every API call.
+  private readonly stmtCache = new Map<string, Database.Statement>();
+
+  private prepared(sql: string): Database.Statement {
+    let s = this.stmtCache.get(sql);
+    if (!s) {
+      s = this.db!.prepare(sql);
+      this.stmtCache.set(sql, s);
+    }
+    return s;
+  }
+
   // Recorded when the constructor archives a corrupt DB and starts fresh.
   // Surfaced by `daimon doctor`'s history-db-healthy rule.
   private archivedCorruptPath: string | null = null;
@@ -185,7 +199,7 @@ export class History {
     if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
     const sql = `SELECT ts, rssMB, heapUsedMB, eventLoopLagMs, historyQueryP95Ms FROM self_metrics ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
     args.push(opts.limit ?? 60);
-    return this.db.prepare(sql).all(...args) as any[];
+    return this.prepared(sql).all(...args) as any[];
   }
 
   recordEvent(ev: AppEvent): void {
@@ -268,7 +282,7 @@ export class History {
     if (opts.type) { wh.push('type = ?'); args.push(opts.type); }
     const sql = `SELECT * FROM events ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
     args.push(opts.limit ?? 500);
-    return this.db.prepare(sql).all(...args) as EventRow[];
+    return this.prepared(sql).all(...args) as EventRow[];
   }
 
   queryCompiles(opts: { app?: string; since?: number; until?: number; limit?: number }): CompileRow[] {
@@ -280,7 +294,7 @@ export class History {
     if (opts.until != null) { wh.push('ts <= ?'); args.push(opts.until); }
     const sql = `SELECT * FROM compile_times ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
     args.push(opts.limit ?? 1000);
-    return this.db.prepare(sql).all(...args) as CompileRow[];
+    return this.prepared(sql).all(...args) as CompileRow[];
   }
 
   queryBundles(opts: { app?: string; since?: number; until?: number; limit?: number }): BundleRow[] {
@@ -292,7 +306,7 @@ export class History {
     if (opts.until != null) { wh.push('ts <= ?'); args.push(opts.until); }
     const sql = `SELECT * FROM bundles ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
     args.push(opts.limit ?? 1000);
-    return this.db.prepare(sql).all(...args) as BundleRow[];
+    return this.prepared(sql).all(...args) as BundleRow[];
   }
 
   trends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts'; sinceMs: number; bucketMs: number }): { points: { t: number; v: number; v2?: number }[]; count: number } {
@@ -421,7 +435,7 @@ export class History {
     if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
     const sql = `SELECT * FROM task_runs ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
     args.push(opts.limit ?? 200);
-    return this.db.prepare(sql).all(...args) as TaskRunRow[];
+    return this.prepared(sql).all(...args) as TaskRunRow[];
   }
 
   summary(name: string): { uptimePct24h: number; restartCount24h: number; compileP50: number | null; compileP95: number | null; topErrors: { message: string; count: number }[] } {

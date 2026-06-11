@@ -136,10 +136,18 @@ function aliasKind(type: string): string {
 // shaping into their native attachment formats keeps notifications readable.
 // Anything else gets a generic envelope.
 export function shapePayload(url: string, event: AppEvent): unknown {
+  // Documented contract: { event, app, ts, payload } where `payload` carries
+  // the event-specific fields. The flattened from/to/message stay for
+  // back-compat with pre-v0.10 consumers.
+  const payload: Record<string, unknown> = {};
+  if (event.from !== undefined) payload.from = event.from;
+  if (event.to !== undefined) payload.to = event.to;
+  if (event.message !== undefined) payload.message = event.message;
   const generic = {
     event: event.type,
     app: event.app,
     ts: event.ts,
+    payload,
     from: event.from ?? null,
     to: event.to ?? null,
     message: event.message ?? null,

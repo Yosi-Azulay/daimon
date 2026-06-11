@@ -133,6 +133,8 @@ export interface AppOverride {
   env?: Record<string, string>;
   url?: string;
   healthProbePath?: string;
+  // Compile-regression threshold as a multiple of the rolling median; default 2.0.
+  compileRegressionFactor?: number;
 }
 
 export type ServerProfile =

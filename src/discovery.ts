@@ -164,7 +164,25 @@ function detectPolyglotApps(
   return matched;
 }
 
+// Warmup cache (M54): repeated scans with unchanged searchRoots (startup +
+// dashboard explain + doctor within a few seconds) reuse the last result.
+// The key embeds the full searchRoots config, so any root change invalidates;
+// the short TTL keeps newly created workspaces discoverable without a restart.
+const SCAN_CACHE_TTL_MS = 10_000;
+let scanCache: { key: string; at: number; apps: DiscoveredApp[]; warnings: string[]; stats: DiscoveryStats } | null = null;
+
 export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): DiscoveredApp[] {
+  const cacheKey = JSON.stringify(config.searchRoots);
+  if (scanCache && scanCache.key === cacheKey && Date.now() - scanCache.at < SCAN_CACHE_TTL_MS) {
+    if (opts.warnings) opts.warnings.push(...scanCache.warnings);
+    if (opts.stats) {
+      opts.stats.scanned = scanCache.stats.scanned;
+      opts.stats.rejected = { ...scanCache.stats.rejected };
+    }
+    return scanCache.apps.map(a => ({ ...a }));
+  }
+  const stats: DiscoveryStats = opts.stats ?? { scanned: 0, rejected: {} };
+  opts = { ...opts, stats };
   const found = new Map<string, DiscoveredApp>();
   const warnings: string[] = opts.warnings ?? [];
   const ownsWarnings = opts.warnings === undefined;
@@ -331,5 +349,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
     }
   }
 
-  return [...found.values()].filter(a => !a.hidden);
+  const result = [...found.values()].filter(a => !a.hidden);
+  scanCache = { key: cacheKey, at: Date.now(), apps: result.map(a => ({ ...a })), warnings: [...warnings], stats: { scanned: stats.scanned, rejected: { ...stats.rejected } } };
+  return result;
 }

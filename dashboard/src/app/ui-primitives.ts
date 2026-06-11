@@ -9,6 +9,7 @@ import { statusBadge, StatusKind, HealthKind } from './daimon-api';
     <span class="dm-pill" [attr.data-kind]="kind()">
       <span class="dm-dot" [style.background]="badge().color"></span>
       <span>{{ badge().label }}</span>
+      @if (eta) { <span class="dm-eta">{{ eta }}</span> }
     </span>
   `,
   styles: [`
@@ -27,11 +28,13 @@ import { statusBadge, StatusKind, HealthKind } from './daimon-api';
     .dm-pill[data-kind="starting"] { background: color-mix(in oklch, var(--mat-sys-secondary) 14%, transparent); border-color: color-mix(in oklch, var(--mat-sys-secondary) 28%, transparent); }
     .dm-pill[data-kind="error"] { background: color-mix(in oklch, var(--mat-sys-error) 14%, transparent); border-color: color-mix(in oklch, var(--mat-sys-error) 30%, transparent); color: var(--mat-sys-error); }
     .dm-dot { width: 8px; height: 8px; border-radius: 999px; box-shadow: 0 0 0 2px color-mix(in oklch, currentColor 18%, transparent); }
+    .dm-eta { font: 600 .6875rem/1rem 'Roboto Mono', ui-monospace, monospace; color: var(--mat-sys-on-surface-variant); }
   `],
 })
 export class StatusPillComponent {
   @Input() status: StatusKind = 'stopped';
   @Input() health: HealthKind = 'unknown';
+  @Input() eta = '';
   badge = () => statusBadge({ status: this.status, health: this.health });
   kind = () => this.badge().kind;
 }

@@ -5,9 +5,11 @@ import type {
   AppHealth,
   AppmanConfig,
   AppState,
+  AppStatus,
   AppSummary,
   DiscoveredApp,
   ErrorEntry,
+  LogEntry,
 } from './types.js';
 import { isPathUnder } from './pathScope.js';
 import { AppProcess } from './appProcess.js';
@@ -20,7 +22,7 @@ import { describeHolder, findPortHolder } from './portDiag.js';
 import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.js';
 import { readSecrets, substituteSecrets } from './secrets.js';
 import { SessionRecorder } from './session.js';
-import { detectBundleRegression, detectCompileRegression, suspectCommitForDir } from './regressions.js';
+import { detectBundleRegression, detectCompileRegression, detectErrorFlapRegression, suspectCommitForDir } from './regressions.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -40,6 +42,7 @@ export class Registry extends EventEmitter {
   private readonly portAlloc: PortAllocator;
   private readonly config: AppmanConfig;
   private readonly eventBuffer: AppEvent[] = [];
+  private readonly lastStatusEventTs = new Map<string, number>();
   private history: History | null = null;
   private readonly watchTasks = new Map<string, WatchTask>();
   readonly sessionRecorder = new SessionRecorder();
@@ -65,6 +68,62 @@ export class Registry extends EventEmitter {
     if (this.entries.has(app.name)) return;
     this.entries.set(app.name, { app, state: this.freshState(app.name, app.baseName ?? app.name, app.tags, app.workspaceLabel ?? null, app.workspaceRoot ?? null), proc: null });
     this.emit('change');
+  }
+
+  // Orphaned-app cleanup (M55): when a soft-reload drops an app from
+  // searchRoots, terminate its child process and remove all of its state so
+  // it can't keep running with config that no longer exists.
+  async detachApp(name: string): Promise<boolean> {
+    const e = this.entries.get(name);
+    if (!e) return false;
+    try { if (e.proc?.isRunning()) await e.proc.stop(); } catch {}
+    e.proc = null;
+    try { e.logger?.close(); } catch {}
+    this.entries.delete(name);
+    this.lastStatusEventTs.delete(name);
+    this.recordEvent({ app: '__daemon__', type: 'self-warn', message: `orphaned app detached after config reload: ${name}` });
+    this.emit('change');
+    return true;
+  }
+
+  // Session preservation (M55): export/restore the recoverable per-app state
+  // (errors, recent logs, compile stats) across daemon restarts and crashes.
+  exportSessionState(): { savedAt: number; apps: { name: string; status: AppStatus; port: number | null; errors: ErrorEntry[]; logTail: LogEntry[]; compileHistory: number[] }[] } {
+    return {
+      savedAt: Date.now(),
+      apps: this.names().map(n => {
+        const s = this.getState(n)!;
+        return {
+          name: n,
+          status: s.status,
+          port: s.port,
+          errors: [...s.errors.values()].slice(-50),
+          logTail: s.logBuffer.slice(-200),
+          compileHistory: s.compileHistory.slice(-10),
+        };
+      }),
+    };
+  }
+
+  restoreSessionState(snap: { apps?: { name: string; status?: AppStatus; errors?: ErrorEntry[]; logTail?: LogEntry[]; compileHistory?: number[] }[] } | null): number {
+    if (!snap?.apps) return 0;
+    let restored = 0;
+    for (const a of snap.apps) {
+      const s = this.getState(a.name);
+      // Only hydrate apps that haven't produced fresh state this session.
+      if (!s || s.status !== 'stopped' || s.logBuffer.length || s.errors.size) continue;
+      for (const e of a.errors ?? []) {
+        if (e && typeof e.message === 'string') s.errors.set(e.message, { ...e });
+      }
+      if (a.logTail?.length) s.logBuffer.push(...a.logTail);
+      if (a.compileHistory?.length && !s.compileHistory.length) s.compileHistory.push(...a.compileHistory);
+      if (a.status && a.status !== 'stopped') {
+        this.recordEvent({ app: a.name, type: 'status', from: a.status, to: 'stopped', message: 'state restored after daemon restart' });
+      }
+      restored++;
+    }
+    if (restored) this.emit('change');
+    return restored;
   }
 
   updateDiscoveredApp(app: DiscoveredApp): void {
@@ -197,31 +256,35 @@ export class Registry extends EventEmitter {
       || e.resolvedUrl
       || s.announcedUrl
       || (s.port ? `http://127.0.0.1:${s.port}` : null);
-    let lastChangeMs: number | undefined;
-    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
-      const ev = this.eventBuffer[i];
-      if (ev.app === name && ev.type === 'status') { lastChangeMs = Date.now() - ev.ts; break; }
-    }
+    // Maintained incrementally by recordEvent — summary() is on the
+    // /api/apps hot path and must not rescan the event buffer per app (M54).
+    const lastStatusTs = this.lastStatusEventTs.get(name);
+    const lastChangeMs = lastStatusTs != null ? Date.now() - lastStatusTs : undefined;
     // Ready-time estimate (M61): if the app is currently compiling and we have
     // enough successful compile history, project compileStartedAt + p50 of
     // last 10. The UI can render `~Xs to ready` and the CLI appends a hint.
     let estimatedReadyAtMs: number | undefined;
     if (s.status === 'compiling' && s.compileStartedAt && s.compileHistory.length >= 3) {
       const recent = s.compileHistory.slice(-10).slice().sort((a, b) => a - b);
-      const p50 = recent[Math.floor((recent.length - 1) * 0.5)];
-      if (p50 > 0) estimatedReadyAtMs = s.compileStartedAt + p50;
+      const mid = recent.length >> 1;
+      const p50 = recent.length % 2 ? recent[mid] : (recent[mid - 1] + recent[mid]) / 2;
+      if (p50 > 0) estimatedReadyAtMs = s.compileStartedAt + Math.round(p50);
+    }
+    let errorCount = 0, warningCount = 0, lintCount = 0;
+    for (const x of s.errors.values()) {
+      const lvl = x.level ?? 'error';
+      if (lvl === 'error') errorCount += x.count;
+      else if (lvl === 'warning') warningCount += x.count;
+      else if (lvl === 'lint') lintCount += x.count;
     }
     return {
       name: s.name,
       status: s.status,
       port: s.port,
       url: resolvedUrl,
-      errorCount: [...s.errors.values()].reduce((acc, x) => {
-        const lvl = x.level ?? 'error';
-        return acc + (lvl === 'error' ? x.count : 0);
-      }, 0),
-      warningCount: [...s.errors.values()].reduce((acc, x) => acc + (x.level === 'warning' ? x.count : 0), 0),
-      lintCount: [...s.errors.values()].reduce((acc, x) => acc + (x.level === 'lint' ? x.count : 0), 0),
+      errorCount,
+      warningCount,
+      lintCount,
       uptimeMs,
       lastCompileMs: s.lastCompileMs,
       health: s.health,
@@ -287,7 +350,7 @@ export class Registry extends EventEmitter {
   recordEvent(ev: Omit<AppEvent, 'ts'> & { ts?: number }): void {
     const full: AppEvent = { ts: ev.ts ?? Date.now(), ...ev } as AppEvent;
     this.eventBuffer.push(full);
-    this.emit('event', full);
+    if (full.type === 'status') this.lastStatusEventTs.set(full.app, full.ts);
     if (this.eventBuffer.length > EVENT_BUFFER_MAX) {
       this.eventBuffer.splice(0, this.eventBuffer.length - EVENT_BUFFER_MAX);
     }
@@ -444,26 +507,33 @@ export class Registry extends EventEmitter {
         else if (lvl === 'warning') type = isNew ? 'warning-new' : 'warning-recur';
         else type = isNew ? 'error-new' : 'error-recur';
         this.recordEvent({ app: name, type, message: entry.message });
+        if (lvl === 'error') this.checkErrorFlapRegression(name, entry.message);
       },
       onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),
       onLogLine: line => { e.logger?.write(line); this.emit('log', { name, ts: Date.now(), line }); },
       onCompile: ms => {
-        this.history?.recordCompile(name, ms);
+        const compileTs = Date.now();
+        this.history?.recordCompile(name, ms, compileTs);
         const state = this.getState(name)!;
         const prevInit = e.lastBundleInitialKB;
         if (state.bundle && state.bundle.initialKB > 0) {
           if (prevInit && prevInit > 0) {
             const pct = ((state.bundle.initialKB - prevInit) / prevInit) * 100;
             state.bundleRegressionPct = Math.round(pct * 10) / 10;
-            const detected = detectBundleRegression(prevInit, state.bundle.initialKB, 1.1);
+            // Rolling median of the prior builds (the current one isn't recorded
+            // until onBundleUpdate fires); fall back to the previous build when
+            // history is disabled or empty.
+            const priorKBs = this.history?.queryBundles({ app: name, limit: 10 }).map(b => b.initialKB) ?? [];
+            const detected = detectBundleRegression(priorKBs.length ? priorKBs : prevInit, state.bundle.initialKB, 1.1);
             if (detected) {
               // Legacy event + structured regression-detected.
               this.recordEvent({ app: name, type: 'bundle-regression', message: `initialKB +${state.bundleRegressionPct}% (${prevInit}->${state.bundle.initialKB})` });
-              const suspect = suspectCommitForDir(e.app.workspaceRoot);
-              this.recordEvent({
-                app: name,
-                type: 'regression-detected',
-                message: JSON.stringify({ ...detected, suspectCommit: suspect }),
+              void suspectCommitForDir(e.app.workspaceRoot).then(suspect => {
+                this.recordEvent({
+                  app: name,
+                  type: 'regression-detected',
+                  message: JSON.stringify({ ...detected, suspectCommit: suspect }),
+                });
               });
             }
           } else {
@@ -471,7 +541,7 @@ export class Registry extends EventEmitter {
           }
           e.lastBundleInitialKB = state.bundle.initialKB;
         }
-        this.checkCompileRegression(name, ms);
+        this.checkCompileRegression(name, ms, compileTs);
         this.emit('compile', { name, ms });
       },
       onBundleUpdate: () => {
@@ -615,21 +685,63 @@ export class Registry extends EventEmitter {
     return out;
   }
 
-  private checkCompileRegression(name: string, ms: number): void {
+  private checkCompileRegression(name: string, ms: number, compileTs: number): void {
     const h = this.history;
     if (!h) return;
     const rows = h.queryCompiles({ app: name, limit: 21 });
-    const prior = rows.filter(r => r.ms !== ms).slice(0, 20).map(r => r.ms);
-    const detected = detectCompileRegression(prior, ms, 2.0);
+    // The just-recorded compile may already be flushed to the DB — exclude
+    // exactly that row (by ts+ms), never priors that merely share the duration.
+    const prior = rows.filter(r => !(r.ts === compileTs && r.ms === ms)).slice(0, 20).map(r => r.ms);
+    const factor = this.config.overrides?.[name]?.compileRegressionFactor ?? 2.0;
+    const detected = detectCompileRegression(prior, ms, factor);
     if (!detected) return;
     // Legacy event (back-compat for v0.9 consumers) plus the new structured one.
     this.recordEvent({ app: name, type: 'compile-regression', message: `${(ms / 1000).toFixed(1)}s vs baseline ${(detected.baseline / 1000).toFixed(1)}s (×${detected.factor})` });
     const app = this.getApp(name);
-    const suspect = suspectCommitForDir(app?.workspaceRoot ?? null);
-    this.recordEvent({
-      app: name,
-      type: 'regression-detected',
-      message: JSON.stringify({ ...detected, suspectCommit: suspect }),
+    void suspectCommitForDir(app?.workspaceRoot ?? null).then(suspect => {
+      this.recordEvent({
+        app: name,
+        type: 'regression-detected',
+        message: JSON.stringify({ ...detected, suspectCommit: suspect }),
+      });
+    });
+  }
+
+  // In-memory per-fingerprint sliding window (24h) backing the error-flap
+  // detector. Keyed `${app}::${message}`; alerts throttled to one per hour
+  // per fingerprint so a sustained flap doesn't flood the events feed.
+  private readonly errorFlapWindows = new Map<string, number[]>();
+  private readonly errorFlapAlerted = new Map<string, number>();
+
+  private checkErrorFlapRegression(name: string, message: string): void {
+    const now = Date.now();
+    const key = `${name}::${message}`;
+    const window = this.errorFlapWindows.get(key) ?? [];
+    window.push(now);
+    const dayAgo = now - 24 * 3600_000;
+    while (window.length && window[0] < dayAgo) window.shift();
+    this.errorFlapWindows.set(key, window);
+    if (this.errorFlapWindows.size > 2000) {
+      for (const [k, w] of this.errorFlapWindows) {
+        if (!w.length || w[w.length - 1] < dayAgo) this.errorFlapWindows.delete(k);
+      }
+    }
+    const hourAgo = now - 3600_000;
+    const hourEvents = window.filter(ts => ts >= hourAgo).length;
+    const dayEvents = window.length - hourEvents;
+    const fingerprint = message.slice(0, 120);
+    const detected = detectErrorFlapRegression(hourEvents, dayEvents, fingerprint, 3.0);
+    if (!detected) return;
+    const lastAlert = this.errorFlapAlerted.get(key) ?? 0;
+    if (now - lastAlert < 3600_000) return;
+    this.errorFlapAlerted.set(key, now);
+    const app = this.getApp(name);
+    void suspectCommitForDir(app?.workspaceRoot ?? null).then(suspect => {
+      this.recordEvent({
+        app: name,
+        type: 'regression-detected',
+        message: JSON.stringify({ ...detected, suspectCommit: suspect }),
+      });
     });
   }
 

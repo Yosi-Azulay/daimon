@@ -20,6 +20,7 @@ import { buildLockInfo, removeLock, writeLock } from './daemon.js';
 import { patchConfigOnDisk, softReloadFromDisk } from './configManager.js';
 import { installCrashHandlers } from './crashDump.js';
 import { consumeHandoff } from './stateHandoff.js';
+import { loadSessionState, saveSessionState } from './sessionState.js';
 import { SelfMetricsCollector } from './selfMetrics.js';
 import { loadPlugins, pluginsDir, runPluginScans, buildContext, type LoadedPlugin } from './plugins.js';
 import { WebhookDispatcher } from './webhooks.js';
@@ -75,6 +76,21 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   crashConfig = config;
   const history = new History(config.history);
   registry.setHistory(history);
+  const archivedDb = history.archivedCorruptDbPath();
+  if (archivedDb) {
+    registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `history.db was corrupt and was rebuilt; previous db archived at ${archivedDb}` });
+  }
+
+  // Session preservation (M55): restore error history / log tails from the
+  // last snapshot (survives kill -9), then keep snapshotting every 30s.
+  const restoredApps = registry.restoreSessionState(loadSessionState());
+  if (restoredApps > 0) {
+    process.stdout.write(`[daimon] session-state: restored errors/logs for ${restoredApps} app${restoredApps === 1 ? '' : 's'} from the previous session\n`);
+  }
+  const sessionTick = setInterval(() => {
+    try { saveSessionState(registry.exportSessionState()); } catch {}
+  }, 30_000);
+  if (sessionTick.unref) sessionTick.unref();
   const health = new HealthMonitor(registry, config.healthProbe, config);
   const usage = new UsageMonitor(registry);
   const restarter = new Restarter(registry, config.autoRestart);
@@ -149,6 +165,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     shuttingDown = true;
     try { clearInterval(errorTtlTick); } catch {}
     try { clearInterval(selfMetricsTick); } catch {}
+    try { clearInterval(sessionTick); saveSessionState(registry.exportSessionState()); } catch {}
     try { selfMetrics.stop(); } catch {}
     try { health.stop(); } catch {}
     try { usage.stop(); } catch {}

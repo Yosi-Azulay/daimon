@@ -23,7 +23,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Chart, registerables, type ChartConfiguration } from 'chart.js';
-import { DaimonApi } from './daimon-api';
+import { DaimonApi, LockSnapshot } from './daimon-api';
 import { MetricsChartComponent } from './metrics-chart';
 import { StatusPillComponent, EmptyStateComponent, MonoComponent, SkeletonComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
@@ -80,12 +80,20 @@ interface EnvInfo {
         @if (summary(); as s) {
           <div class="dm-title-row">
             <h1 class="dm-title"><dm-mono>{{ s.name }}</dm-mono></h1>
-            <dm-status-pill [status]="s.status" [health]="s.health"></dm-status-pill>
+            <dm-status-pill [status]="s.status" [health]="s.health" [eta]="etaFor(s)"></dm-status-pill>
             @if (s.workspaceLabel) {
               <span class="dm-ws-chip" [style.--dm-tone]="tone(s.workspaceLabel)">
                 <span class="dm-ws-dot"></span>
                 <span>{{ s.workspaceLabel }}</span>
               </span>
+            }
+            @if (lock(); as lk) {
+              <span class="dm-lock-chip" [matTooltip]="'locked by ' + lk.agent + ' · expires in ' + lockTtl(lk)">
+                🔒 <dm-mono>{{ lk.agent }}</dm-mono><span class="dm-lock-ttl">{{ lockTtl(lk) }}</span>
+              </span>
+            }
+            @for (g of agentChips(); track g) {
+              <span class="dm-agent-chip" matTooltip="recently interacted"><dm-mono>{{ g }}</dm-mono></span>
             }
           </div>
           <div class="dm-action-bar">
@@ -392,6 +400,22 @@ interface EnvInfo {
     }
     .dm-ws-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--dm-tone, var(--mat-sys-primary)); }
 
+    .dm-lock-chip, .dm-agent-chip {
+      display: inline-flex; align-items: center; gap: .375rem;
+      padding: 2px 10px; border-radius: 999px;
+      background: var(--mat-sys-surface-container);
+      border: 1px solid var(--mat-sys-outline-variant);
+      font: 500 .75rem/1rem Roboto;
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .dm-lock-chip {
+      background: color-mix(in oklch, var(--mat-sys-tertiary) 12%, transparent);
+      border-color: color-mix(in oklch, var(--mat-sys-tertiary) 28%, transparent);
+      color: var(--mat-sys-on-surface);
+    }
+    .dm-lock-chip .dm-mono, .dm-agent-chip .dm-mono { font-size: .75rem; }
+    .dm-lock-ttl { font: 600 .6875rem/1rem 'Roboto Mono', ui-monospace, monospace; color: var(--mat-sys-on-surface-variant); }
+
     .dm-action-bar { display: flex; flex-wrap: wrap; gap: .375rem; }
     .dm-action-btn {
       display: inline-flex; align-items: center; gap: .375rem;
@@ -598,12 +622,26 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private logStop?: () => void;
   private pollTimer?: ReturnType<typeof setInterval>;
+  private tickTimer?: ReturnType<typeof setInterval>;
   private spark?: Chart;
 
   readonly tone = workspaceTone;
+  private readonly now = signal<number>(Date.now());
 
   readonly summary = computed(() => this.state());
   readonly errors = computed(() => this.errs());
+
+  readonly lock = computed<LockSnapshot | null>(() => {
+    const lk = this.api.agentLocks()[this.name];
+    return lk && lk.expiresAt > this.now() ? lk : null;
+  });
+
+  readonly agentChips = computed<string[]>(() => {
+    const lk = this.lock();
+    return (this.api.appAgents()[this.name] ?? [])
+      .filter(e => !lk || e.agent !== lk.agent)
+      .map(e => e.agent);
+  });
 
   readonly errorsByFile = computed<{ file: string; items: DetailError[] }[]>(() => {
     const groups = new Map<string, DetailError[]>();
@@ -669,6 +707,7 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   async ngOnInit(): Promise<void> {
     await this.refresh();
     this.pollTimer = setInterval(() => void this.refresh(), 4000);
+    this.tickTimer = setInterval(() => this.now.set(Date.now()), 1000);
     this.logStop = this.api.openLogStream(this.name, (e) => {
       const line = `${this.fmtTs(e.ts)}  ${e.line}`;
       this.logLines.update(arr => {
@@ -705,6 +744,7 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
 
   ngOnDestroy(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.tickTimer) clearInterval(this.tickTimer);
     this.logStop?.();
     this.spark?.destroy();
   }
@@ -729,6 +769,16 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     } catch {
       this.envInfo.set(null);
     }
+  }
+
+  lockTtl(lk: LockSnapshot): string {
+    const d = Math.max(0, Math.ceil((lk.expiresAt - this.now()) / 1000));
+    return d < 60 ? `${d}s` : `${Math.floor(d / 60)}m ${d % 60}s`;
+  }
+
+  etaFor(s: any): string {
+    if (s?.status !== 'compiling' || s?.estimatedReadyAtMs == null) return '';
+    return '~' + Math.max(0, Math.ceil((s.estimatedReadyAtMs - this.now()) / 1000)) + 's';
   }
 
   busy(kind: string): boolean { return !!this.busyMap()[kind]; }

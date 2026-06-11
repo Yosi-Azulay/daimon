@@ -6,7 +6,7 @@
 // Each carries a suspect-commit hint pulled from `git log -1 --format=%h %s`
 // when the app's workspaceRoot is inside a git checkout.
 
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 export interface RegressionPayload {
   kind: 'compile' | 'bundle' | 'error-flap';
@@ -17,29 +17,39 @@ export interface RegressionPayload {
   suspectCommit?: string | null;
 }
 
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 export function detectCompileRegression(prior: number[], current: number, factor = 2.0): RegressionPayload | null {
   if (prior.length < 10) return null;
-  const sorted = [...prior].sort((a, b) => a - b);
-  const median = sorted[Math.floor((sorted.length - 1) * 0.5)];
-  if (median <= 0) return null;
-  const observedFactor = current / median;
+  const baseline = median(prior);
+  if (baseline <= 0) return null;
+  const observedFactor = current / baseline;
   if (observedFactor < factor) return null;
   return {
     kind: 'compile',
     factor: Math.round(observedFactor * 100) / 100,
-    baseline: median,
+    baseline,
     current,
   };
 }
 
-export function detectBundleRegression(priorInitialKB: number | undefined, currentInitialKB: number, ratio = 1.1): RegressionPayload | null {
-  if (priorInitialKB == null || priorInitialKB <= 0) return null;
-  const observed = currentInitialKB / priorInitialKB;
+// Accepts the rolling window of prior initialKB values (newest-first or any
+// order); a single number is still accepted for back-compat with v0.10.0 callers.
+export function detectBundleRegression(priorInitialKB: number[] | number | undefined, currentInitialKB: number, ratio = 1.1): RegressionPayload | null {
+  const prior = (Array.isArray(priorInitialKB) ? priorInitialKB : [priorInitialKB ?? 0]).filter(v => v > 0);
+  if (prior.length === 0) return null;
+  const baseline = median(prior);
+  if (baseline <= 0) return null;
+  const observed = currentInitialKB / baseline;
   if (observed < ratio) return null;
   return {
     kind: 'bundle',
     factor: Math.round(observed * 100) / 100,
-    baseline: priorInitialKB,
+    baseline,
     current: currentInitialKB,
   };
 }
@@ -48,10 +58,11 @@ export function detectBundleRegression(priorInitialKB: number | undefined, curre
 // dayEvents  = error/recur count in the prior 24h (excluding the last hour)
 export function detectErrorFlapRegression(hourEvents: number, dayEvents: number, fingerprint: string, factor = 3.0): RegressionPayload | null {
   if (hourEvents < 5) return null; // need a meaningful spike
-  // Convert 24h-1h count to per-hour baseline.
+  // Convert 24h-1h count to per-hour baseline. A zero baseline (fingerprint
+  // never seen before this hour) is the sharpest spike of all — cap the
+  // factor rather than suppress it.
   const baseline = dayEvents / 23;
-  if (baseline <= 0) return null;
-  const observedFactor = hourEvents / baseline;
+  const observedFactor = baseline <= 0 ? 99 : hourEvents / baseline;
   if (observedFactor < factor) return null;
   return {
     kind: 'error-flap',
@@ -62,20 +73,21 @@ export function detectErrorFlapRegression(hourEvents: number, dayEvents: number,
   };
 }
 
-// Best-effort: returns "<sha>:<subject>" or null. Caps stdout to a tight
-// budget so a misbehaving git config can't stall the daemon.
-export function suspectCommitForDir(cwd: string | null | undefined): string | null {
-  if (!cwd) return null;
-  try {
-    const out = execFileSync('git', ['log', '-1', '--format=%h:%s'], {
+// Best-effort: resolves "<sha>:<subject>" or null. Async so the git spawn
+// never stalls the compile hot path; stdout capped so a misbehaving git
+// config can't balloon memory.
+export function suspectCommitForDir(cwd: string | null | undefined): Promise<string | null> {
+  if (!cwd) return Promise.resolve(null);
+  return new Promise(resolve => {
+    execFile('git', ['log', '-1', '--format=%h:%s'], {
       cwd,
-      stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 1500,
       maxBuffer: 4096,
-    }).toString('utf8').trim();
-    if (!out) return null;
-    return out.slice(0, 160);
-  } catch {
-    return null;
-  }
+      windowsHide: true,
+    }, (err, stdout) => {
+      if (err) return resolve(null);
+      const out = stdout.toString().trim();
+      resolve(out ? out.slice(0, 160) : null);
+    });
+  });
 }

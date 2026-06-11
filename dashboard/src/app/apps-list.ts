@@ -19,7 +19,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { AppRow, DaimonApi } from './daimon-api';
+import { AppRow, DaimonApi, LockSnapshot } from './daimon-api';
 import { SkeletonComponent, EmptyStateComponent, MonoComponent, StatusPillComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
 
@@ -54,7 +54,7 @@ const TAGS_KEY = 'daimon.apps.tags';
             }
           </div>
           <div class="h">
-            <dm-status-pill [status]="a.status" [health]="a.health"></dm-status-pill>
+            <dm-status-pill [status]="a.status" [health]="a.health" [eta]="eta(a)"></dm-status-pill>
             @if (a.errorCount > 0) {
               <span class="eb" [matTooltip]="a.errorCount + ' errors'">
                 <span class="material-symbols-outlined">error</span>{{ a.errorCount }}
@@ -74,6 +74,18 @@ const TAGS_KEY = 'daimon.apps.tags';
               </a>
             }
           </div>
+          @if (lockFor(a.name) || agentChips(a.name).length) {
+            <div class="agr">
+              @if (lockFor(a.name); as lk) {
+                <span class="lkc" [matTooltip]="'locked by ' + lk.agent + ' · expires in ' + lockTtl(lk)">
+                  🔒 <dm-mono>{{ lk.agent }}</dm-mono><span class="ttl">{{ lockTtl(lk) }}</span>
+                </span>
+              }
+              @for (g of agentChips(a.name); track g) {
+                <span class="agc" matTooltip="recently interacted"><dm-mono>{{ g }}</dm-mono></span>
+              }
+            </div>
+          }
           <div class="ft">
             <div class="tg">
               @if (a.workspaceLabel) {
@@ -124,6 +136,11 @@ const TAGS_KEY = 'daimon.apps.tags';
     .mi .material-symbols-outlined{font-size:14px}
     .ml{color:var(--mat-sys-primary);text-decoration:none}
     .ml:hover{text-decoration:underline}
+    .agr{padding:0 .875rem .5rem;display:flex;flex-wrap:wrap;align-items:center;gap:.25rem}
+    .agc,.lkc{display:inline-flex;align-items:center;gap:.25rem;padding:1px 8px;border-radius:999px;font:500 .6875rem/1rem Roboto;background:var(--mat-sys-surface-container);color:var(--mat-sys-on-surface-variant);border:1px solid var(--mat-sys-outline-variant)}
+    .agc .dm-mono,.lkc .dm-mono{font-size:.6875rem}
+    .lkc{background:color-mix(in oklch,var(--mat-sys-tertiary) 12%,transparent);border-color:color-mix(in oklch,var(--mat-sys-tertiary) 28%,transparent);color:var(--mat-sys-on-surface)}
+    .lkc .ttl{font:600 .625rem/1rem var(--dm-mono);color:var(--mat-sys-on-surface-variant)}
     .ft{margin-top:auto;padding:.5rem .75rem .5rem .875rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;border-top:1px solid var(--mat-sys-outline-variant)}
     .tg{display:inline-flex;align-items:center;gap:.5rem;flex-wrap:wrap;min-width:0}
     .ws{display:inline-flex;align-items:center;gap:.25rem;padding:2px 8px;border-radius:999px;font:500 .6875rem/1rem Roboto;background:var(--mat-sys-surface-container);color:var(--mat-sys-on-surface-variant);border:1px solid var(--mat-sys-outline-variant)}
@@ -147,6 +164,13 @@ export class AppsCardsViewComponent {
   @Output() act = new EventEmitter<{ name: string; kind: ActionKind }>();
   readonly tone = workspaceTone;
   private readonly api = inject(DaimonApi);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly now = signal<number>(Date.now());
+
+  constructor() {
+    const t = setInterval(() => this.now.set(Date.now()), 1000);
+    this.destroyRef.onDestroy(() => clearInterval(t));
+  }
 
   // 20 ticks across a 60-min rolling window. Empty buckets render as the
   // surface-container tone; status-bearing buckets win over earlier ones in
@@ -174,6 +198,24 @@ export class AppsCardsViewComponent {
   });
 
   isBusy(name: string, kind: string): boolean { return !!this.busy[name]?.[kind]; }
+  lockFor(name: string): LockSnapshot | null {
+    const lk = this.api.agentLocks()[name];
+    return lk && lk.expiresAt > this.now() ? lk : null;
+  }
+  lockTtl(lk: LockSnapshot): string {
+    const d = Math.max(0, Math.ceil((lk.expiresAt - this.now()) / 1000));
+    return d < 60 ? `${d}s` : `${Math.floor(d / 60)}m ${d % 60}s`;
+  }
+  agentChips(name: string): string[] {
+    const lk = this.lockFor(name);
+    return (this.api.appAgents()[name] ?? [])
+      .filter(e => !lk || e.agent !== lk.agent)
+      .map(e => e.agent);
+  }
+  eta(a: AppRow): string {
+    if (a.status !== 'compiling' || a.estimatedReadyAtMs == null) return '';
+    return '~' + Math.max(0, Math.ceil((a.estimatedReadyAtMs - this.now()) / 1000)) + 's';
+  }
   ribbonTicks(name: string): string[] {
     return this.perAppTicks().get(name) ?? new Array(this.RIBBON_BUCKETS).fill('');
   }

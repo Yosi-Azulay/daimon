@@ -32,15 +32,23 @@ const PIECES = [
   'TypeError: ', '/path/to/file.ts:42:10', 'src/app.rb:14:in ',
   'panic: nil pointer dereference', '   at handler (D:\\\\app\\\\index.ts:1:1)',
   'thread \'main\' panicked at', '🚀', '\u{1F4A5}', '\u{200D}', '\udc00',
-  ' ', '\r', '\n', '<<<<<<<< merge conflict', '====================',
+  ' ', '\r', '\n', '\r\n', '\x00', '<<<<<<<< merge conflict', '====================',
 ];
 
 function buildLine(rand) {
   const n = 1 + Math.floor(rand() * 8);
   let s = '';
   for (let i = 0; i < n; i++) s += PIECES[Math.floor(rand() * PIECES.length)];
-  // Cap line length to keep regex matching fast (the parser's hot regexes are not
-  // engineered for unbounded backtracking on multi-MB inputs).
+  // Byte-level corruption mid-line: flip a few code units to random bytes,
+  // like a child process dying mid-write or a codepage mismatch would produce.
+  if (s.length > 4 && rand() < 0.3) {
+    const chars = [...s];
+    const flips = 1 + Math.floor(rand() * 3);
+    for (let i = 0; i < flips; i++) {
+      chars[Math.floor(rand() * chars.length)] = String.fromCharCode(Math.floor(rand() * 256));
+    }
+    s = chars.join('');
+  }
   return s.length > 1024 ? s.slice(0, 1024) : s;
 }
 
@@ -88,5 +96,48 @@ test('parseLine — partial unicode and lone surrogate handled', () => {
   for (const line of ['\udc00 error TS9999: bad surrogate', 'prefix \ud800 trailing', '✘ \udc00 \udc00 oops']) {
     const r = parseLine(state, line);
     assert.ok(r === null || typeof r === 'object');
+  }
+});
+
+test('parseLine — NUL bytes anywhere in the line are tolerated', () => {
+  const state = freshState();
+  for (const line of ['\x00', '\x00error TS2322: nul prefix', 'error TS2322: mid\x00dle', 'trailing nul\x00', '\x00\x00\x00\x00']) {
+    const r = parseLine(state, line);
+    assert.ok(r === null || typeof r === 'object');
+  }
+});
+
+test('parseLine — mixed line endings embedded in a chunk are tolerated', () => {
+  const state = freshState();
+  for (const line of ['serving on http://localhost:4200\r', 'error TS2322: x\r\nerror TS2322: y', '\r\n\r\n', 'a\rb\nc\r\nd']) {
+    const r = parseLine(state, line);
+    assert.ok(r === null || typeof r === 'object');
+  }
+});
+
+test('parseLine — 100KB lines complete in bounded time without throwing', () => {
+  const state = freshState();
+  const rand = rng(0xfeedface);
+  // Warm the regex/JIT paths so the timing below measures the parser, not
+  // first-call compilation.
+  parseLine(state, 'warmup error TS2322: x'.repeat(10));
+  const blobs = [
+    'A'.repeat(100_000),
+    ('error TS2322: ' + 'x'.repeat(100_000)),
+    (PIECES.join('').repeat(Math.ceil(100_000 / PIECES.join('').length))).slice(0, 100_000),
+    Array.from({ length: 100_000 }, () => String.fromCharCode(32 + Math.floor(rand() * 90))).join(''),
+    ('   at handler (D:\\app\\index.ts:1:1)' + ' '.repeat(100_000)),
+  ];
+  for (const line of blobs) {
+    const t0 = performance.now();
+    let r;
+    try {
+      r = parseLine(state, line);
+    } catch (err) {
+      assert.fail(`parseLine threw on a 100KB line: ${err?.message ?? err}`);
+    }
+    const dt = performance.now() - t0;
+    assert.ok(r === null || typeof r === 'object');
+    assert.ok(dt < 250, `100KB line took ${dt.toFixed(1)}ms (>250ms — unbounded backtracking?)`);
   }
 });

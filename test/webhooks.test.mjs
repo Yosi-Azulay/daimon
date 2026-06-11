@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import http from 'node:http';
 
-const { WebhookDispatcher, shapePayload } = await import('../dist/webhooks.js');
+const { WebhookDispatcher, shapePayload, postJson } = await import('../dist/webhooks.js');
 
 function fakeRegistry() {
   const ev = new EventEmitter();
@@ -36,7 +37,56 @@ test('shapePayload falls back to generic envelope for unknown hosts', () => {
   const p = shapePayload('https://example.test/hook', { ts: 1, app: 'web', type: 'health', to: 'unhealthy' });
   assert.equal(p.event, 'health');
   assert.equal(p.app, 'web');
+  // Documented contract: event-specific fields live under `payload`.
+  assert.deepEqual(p.payload, { to: 'unhealthy' });
+  // Flattened fields are kept for back-compat with pre-v0.10 consumers.
   assert.equal(p.to, 'unhealthy');
+  assert.equal(p.from, null);
+  assert.equal(p.message, null);
+});
+
+test('generic envelope payload carries from/to/message when present', () => {
+  const p = shapePayload('https://example.test/hook', {
+    ts: 7, app: 'api', type: 'status', from: 'starting', to: 'serving', message: 'ok',
+  });
+  assert.equal(p.event, 'status');
+  assert.equal(p.ts, 7);
+  assert.deepEqual(p.payload, { from: 'starting', to: 'serving', message: 'ok' });
+  assert.equal(p.from, 'starting');
+  assert.equal(p.to, 'serving');
+  assert.equal(p.message, 'ok');
+});
+
+test('postJson posts the envelope over real HTTP to a local server', async () => {
+  let received = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      received = { method: req.method, url: req.url, headers: req.headers, body: JSON.parse(body) };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  try {
+    const url = `http://127.0.0.1:${port}/hook?x=1`;
+    const envelope = shapePayload(url, { ts: 3, app: 'web', type: 'error-new', message: 'boom' });
+    const r = await postJson(url, envelope, { 'x-daimon-test': 'yes' });
+    assert.equal(r.status, 200);
+    assert.ok(received, 'server should have received the request');
+    assert.equal(received.method, 'POST');
+    assert.equal(received.url, '/hook?x=1');
+    assert.equal(received.headers['content-type'], 'application/json');
+    assert.equal(received.headers['x-daimon-test'], 'yes');
+    assert.match(received.headers['user-agent'], /daimon-webhooks/);
+    assert.equal(received.body.event, 'error-new');
+    assert.equal(received.body.app, 'web');
+    assert.deepEqual(received.body.payload, { message: 'boom' });
+  } finally {
+    server.close();
+  }
 });
 
 test('WebhookDispatcher delivers a matching event to the configured URL', async () => {
