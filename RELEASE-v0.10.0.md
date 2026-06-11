@@ -1,4 +1,4 @@
-# daimon v0.10.0 — "Mature & Aware"
+﻿# daimon v0.10.0 — "Mature & Aware"
 
 The biggest release yet. v0.7 was reach, v0.8 was polish, v0.9 was multi-agent.
 **v0.10 is mature and aware**: daimon stops being something you fight to keep running and starts being something that tells you about itself.
@@ -20,8 +20,7 @@ The biggest release yet. v0.7 was reach, v0.8 was polish, v0.9 was multi-agent.
 - **Profile suggester + restart-tune** (M61 stretch). New `daimon profiles suggest` reads the last 30 days of status events, finds app sets repeatedly co-started within a 60s window, and surfaces clusters seen ≥5 times that don't already match an existing profile. New `smart-restart-tune` doctor rule flags apps restarting more than 5×/day so the user can review their restartPolicy.
 - **VS Code .vsix built** (M62). `vscode-extension/daimon-vscode.vsix` (7.85 KB) is produced by `cd vscode-extension && npm install && npm run package`. Ready to upload to the VS Code marketplace as `flycotech.daimon`.
 - **Playwright drive** (M64). `dashboard/e2e/dashboard.spec.ts` visits every route (13 in total, including the two new ones), asserts page-specific landmarks render, captures a console-error budget per route, and verifies the `g g` / `g r` chord routing. Run with `npm run e2e:install && npm run e2e:seed && npm run e2e` from `dashboard/`. Seeded fixture covers ≥1 error, ≥1 serving, ≥2 regressions.
-- **Tests** (M56). 262 test cases, up from 130 in v0.9. Full suite under 16s.
-- **Pre-publish review hardening.** A full milestone audit before tagging fixed an event double-emit (SSE + webhooks saw every event twice), a compile-regression baseline bug (equal-duration priors suppressed detection), made the suspect-commit git lookup async, wired error-flap detection end-to-end, added per-app `compileRegressionFactor`, gave the TUI/auto-fix paths agent identity, capped parser input at 2KB against regex backtracking, added SSE/ndjson backpressure with drop-count reporting, true long-poll `subscribe_events` (`/api/events?waitMs=`), per-app agent chips + lock TTL + compile countdown on the dashboard, config-field softening (warn + default instead of refusing to start), orphaned-app cleanup on soft-reload, and crash-surviving session state (`~/.daimon/session-state.json`). Full list in CHANGELOG under "pre-publish review hardening".
+- **Tests** (M56). 225 test cases, up from 130 in v0.9. Full suite under 17s.
 
 ## Migration
 
@@ -40,29 +39,22 @@ Two breaking-ish changes worth flagging:
 
 Lock behaviour is invisible by default. If a stale agent process is holding a lock, the second agent gets HTTP 409 `locked-by-other-agent`. Pass `--steal` (or send the `?steal=1` query) to override.
 
-Three smaller notes:
-
-3. **Webhook envelope** now nests the event-specific fields under `payload` (the documented contract); the flattened `from`/`to`/`message` fields are kept for back-compat.
-4. **Invalid config fields no longer abort startup** — they warn on stderr, run on defaults, and show up in `daimon doctor` under `config-valid`. Unparseable JSON still refuses to start (now with line/column).
-5. **New state file** `~/.daimon/session-state.json` — a 30s-cadence snapshot of per-app errors, log tails, and compile history so a crashed daemon comes back with its memory. Ignored when older than 24h; safe to delete.
-
 ## New surface
 
-- HTTP: `GET /api/agents`, `GET /api/apps/<n>/lock`, `POST /api/apps/<n>/handoff`, `GET /api/profiles/suggest`, `GET /api/events?waitMs=<ms>` (long-poll)
+- HTTP: `GET /api/agents`, `GET /api/apps/<n>/lock`, `POST /api/apps/<n>/handoff`, `GET /api/profiles/suggest`
 - CLI: `daimon agents`, `daimon handoff <app> <agentId>`, `daimon ci start <profile>`, `daimon profiles suggest`, plus `--steal` on start/stop/restart
-- MCP: `daimon_who_owns`, `daimon_subscribe_events` (long-poll, `waitMs`), `daimon_notify_on_error`
-- Doctor rules: `history-db-healthy`, `smart-restart-tune`, `config-valid`, `orphaned-app-cleanup`
-- Event types: `regression-detected` (compile / bundle / error-flap), `stream-overflow` (ndjson slow-client drops)
-- Config keys: `webhooks: WebhookEntry[]`, `overrides.<app>.compileRegressionFactor`
-- State file: `~/.daimon/session-state.json`
-- Dashboard routes: `/agents`, `/regressions` · chords `g g`, `g r` · per-app agent chips, lock TTL, compile countdown
+- MCP: `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`
+- Doctor rules: `history-db-healthy`, `smart-restart-tune`
+- Event type: `regression-detected`
+- Config key: `webhooks: WebhookEntry[]`
+- Dashboard routes: `/agents`, `/regressions` · chords `g g`, `g r`
 
 ## Gates (release readiness)
 
 | Gate | Status |
 | ---- | ------ |
 | `tsc --noEmit` clean (root + dashboard + vscode-extension) | ✅ all three projects green |
-| `npm test` ≥ 200 tests under 30s | ✅ 262 tests / ~15s |
+| `npm test` ≥ 200 tests under 30s | ✅ 225 tests / 17.0s |
 | Dashboard initial gzip < 135KB | ✅ 130.45 KB (after adding /agents + /regressions routes) |
 | `.vsix` builds | ✅ `vscode-extension/daimon-vscode.vsix` (7.85 KB) |
 | `daimon doctor` clean | ✅ |

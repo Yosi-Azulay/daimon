@@ -4,6 +4,44 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-06-11
+
+Review-hardening patch: a full milestone audit of v0.10.0 (run before realizing 0.10.0 had already shipped) found real bugs and quietly-weakened acceptance criteria. All of it lands here.
+
+### Fixed
+
+- **Event double-emit:** `Registry.recordEvent` emitted `'event'` twice, double-delivering every event to SSE/ndjson streams and webhooks. Now emits once.
+- **Compile-regression baseline:** the just-recorded compile is excluded from the baseline by row identity (ts) instead of by duration value — equal-duration priors no longer empty the baseline and suppress detection.
+- **Suspect-commit hint is async:** `git log -1` now runs via `execFile` off the hot path; a compile can no longer stall the daemon while git resolves.
+- **Error-flap detection wired:** the daemon now tracks per-fingerprint sliding windows (24h) and emits `regression-detected { kind: 'error-flap' }` — including spikes from a zero baseline (factor capped at 99). One alert per fingerprint per hour.
+- **Bundle regression uses a rolling median** of the last 10 recorded builds (falls back to the previous build when history is empty/disabled).
+- **Per-app threshold:** new optional `overrides.<app>.compileRegressionFactor` (default 2.0).
+- **Medians are true medians** (average of the two middles on even samples) in regression baselines and the ready-time p50.
+- **TUI attach + doctor auto-fix now send `X-Daimon-Agent`** — locks taken from the attach TUI no longer masquerade as `unknown`.
+- **Agent registry hygiene:** header-less callers (e.g. the dashboard's polling) are no longer recorded as an `unknown` agent, and stale agent records are pruned every 60s.
+- **Lock ordering:** lifecycle endpoints validate the app name (404) before acquiring the soft-lock — no more 409s for apps that don't exist.
+- **Parser line cap:** `parseLine` now slices input to 2KB before regex matching; 100KB stdout lines (base64 blobs, minified dumps) can no longer trigger quadratic backtracking.
+- **SSE/ndjson backpressure:** both the log stream and `/api/events?stream=ndjson` now ring-buffer against slow clients, drop oldest on overflow, and report the drop count in-stream (`stream-overflow`) and on stderr.
+- **README no longer ships a private email** — commercial-license contact points at https://flycotech.com.
+- Command palette chord hints matched to the actual chord map (`g v` Events, `g e` Errors, `g r` Regressions).
+- VS Code extension: `daimonAttached` context resets when the daemon goes down; new "Open daimon log for this app" code action on TypeScript diagnostics.
+
+### Changed
+
+- **M54 follow-through:** prepared-statement cache in History; `registry.list()` no longer rescans the event buffer per app (incremental last-status map, single-pass error counts); discovery results cached for 10s keyed on `searchRoots`; bench now asserts the `/api/apps` 200ms budget against `registry.list()` and uses a real SSE-catchup backlog.
+- **M55 follow-through:** corrupt-DB rebuild now records a `self-warn` event; invalid config fields warn + fall back to defaults instead of refusing to start (unparseable JSON still refuses, now with line/column); soft-reload detaches orphaned apps (children terminated, state removed, `self-warn` event) with a `daimon doctor` `orphaned-app-cleanup` count; new `config-valid` doctor rule; per-app session state (errors, last-200-line log tail, compile history) snapshots to `~/.daimon/session-state.json` every 30s and restores after a crash or restart.
+- **M56 follow-through:** parser fuzz covers NUL bytes, byte corruption, mixed line endings, and 100KB lines; lock torture is now 50 concurrent agents against a live in-process HTTP server (one winner, 49 structured 409s, <5s); the MCP contract test connects a real SDK client over an in-memory transport and validates every tool's schema + invocation shape.
+- **M59 follow-through:** `daimon_subscribe_events` is now a true long-poll (`GET /api/events?waitMs=` holds the request until the next matching event, max 55s); `daimon_notify_on_error` rides the same mechanism instead of busy-polling; dashboard app cards/detail show per-app agent chips + a lock indicator with live TTL; status pills count down `~Xs` while compiling.
+- **M63 follow-through:** the generic webhook envelope now includes the documented `payload` object (flattened `from`/`to`/`message` kept for back-compat); new `docs/ci-integration.md` with a GitHub Actions workflow.
+- **M57/M64 follow-through:** README rewritten for v0.10 (agent identity, webhooks, ci verb, VS Code extension, docs-site link); SVG logo (`assets/logo.svg` + accent variant); example config covers `webhooks` + `compileRegressionFactor`.
+- Suite: **262 tests / ~15s wall-clock** (up from 225 in 0.10.0).
+
+### Migration
+
+- Webhook consumers: the generic envelope gained a nested `payload` field; the flattened `from`/`to`/`message` fields remain.
+- Invalid config **fields** no longer abort startup — they warn and run on defaults (`daimon doctor` lists them under `config-valid`). Unparseable config still refuses to start.
+- New state file: `~/.daimon/session-state.json` (per-app error/log/compile snapshot, refreshed every 30s, ignored after 24h).
+
 ## [0.10.0] — 2026-05-22
 
 Strategic theme: **Mature & Aware.** The biggest release yet. 11 milestones (M54–M64) covering perf at scale, recovery hardening, agent identity, pattern detection, predictive UX, webhooks, a VS Code extension, and a generated docs site.
@@ -79,43 +117,13 @@ Strategic theme: **Mature & Aware.** The biggest release yet. 11 milestones (M54
 - Playwright drive landed at `dashboard/e2e/dashboard.spec.ts`. Visits 13 routes (all existing + new `/agents`, `/regressions`), asserts page-specific landmarks, enforces a console-error budget, and verifies the `g g` / `g r` chord routing. Seed helper at `dashboard/e2e/seed.ts` writes 6 fixture events (≥1 serving, ≥1 error, ≥2 regressions). Run with `npm run e2e:install && npm run e2e:seed && npm run e2e` from `dashboard/`.
 - Doctor 11-rule UI tightening carry-over from v0.9.
 - `RELEASE-v0.10.0.md` with migration steps for the audit-column add and webhooks config.
-- Test suite now at 262 / ~15s (profile-suggester, restart-cadence, and pre-publish review-hardening tests).
-
-### Fixed (pre-publish review hardening)
-
-- **Event double-emit:** `Registry.recordEvent` emitted `'event'` twice, double-delivering every event to SSE/ndjson streams and webhooks. Now emits once.
-- **Compile-regression baseline:** the just-recorded compile is excluded from the baseline by row identity (ts) instead of by duration value — equal-duration priors no longer empty the baseline and suppress detection.
-- **Suspect-commit hint is async:** `git log -1` now runs via `execFile` off the hot path; a compile can no longer stall the daemon while git resolves.
-- **Error-flap detection wired:** the daemon now tracks per-fingerprint sliding windows (24h) and emits `regression-detected { kind: 'error-flap' }` — including spikes from a zero baseline (factor capped at 99). One alert per fingerprint per hour.
-- **Bundle regression uses a rolling median** of the last 10 recorded builds (falls back to the previous build when history is empty/disabled).
-- **Per-app threshold:** new optional `overrides.<app>.compileRegressionFactor` (default 2.0).
-- **Medians are true medians** (average of the two middles on even samples) in regression baselines and the ready-time p50.
-- **TUI attach + doctor auto-fix now send `X-Daimon-Agent`** — locks taken from the attach TUI no longer masquerade as `unknown`.
-- **Agent registry hygiene:** header-less callers (e.g. the dashboard's polling) are no longer recorded as an `unknown` agent, and stale agent records are pruned every 60s.
-- **Lock ordering:** lifecycle endpoints validate the app name (404) before acquiring the soft-lock — no more 409s for apps that don't exist.
-- **Parser line cap:** `parseLine` now slices input to 2KB before regex matching; 100KB stdout lines (base64 blobs, minified dumps) can no longer trigger quadratic backtracking.
-- **SSE/ndjson backpressure:** both the log stream and `/api/events?stream=ndjson` now ring-buffer against slow clients, drop oldest on overflow, and report the drop count in-stream (`stream-overflow`) and on stderr.
-- Command palette chord hints matched to the actual chord map (`g v` Events, `g e` Errors, `g r` Regressions).
-- VS Code extension: `daimonAttached` context resets when the daemon goes down; new "Open daimon log for this app" code action on TypeScript diagnostics.
-
-### Changed (pre-publish review hardening)
-
-- **M54 follow-through:** prepared-statement cache in History; `registry.list()` no longer rescans the event buffer per app (incremental last-status map, single-pass error counts); discovery results cached for 10s keyed on `searchRoots`; bench now asserts the `/api/apps` 200ms budget against `registry.list()` and uses a real SSE-catchup backlog.
-- **M55 follow-through:** corrupt-DB rebuild now records a `self-warn` event; invalid config fields warn + fall back to defaults instead of refusing to start (unparseable JSON still refuses, now with line/column); soft-reload detaches orphaned apps (children terminated, state removed, `self-warn` event) with a `daimon doctor` `orphaned-app-cleanup` count; new `config-valid` doctor rule; per-app session state (errors, last-200-line log tail, compile history) snapshots to `~/.daimon/session-state.json` every 30s and restores after a crash or restart.
-- **M56 follow-through:** parser fuzz covers NUL bytes, byte corruption, mixed line endings, and 100KB lines; lock torture is now 50 concurrent agents against a live in-process HTTP server (one winner, 49 structured 409s, <5s); the MCP contract test connects a real SDK client over an in-memory transport and validates every tool's schema + invocation shape.
-- **M59 follow-through:** `daimon_subscribe_events` is now a true long-poll (`GET /api/events?waitMs=` holds the request until the next matching event, max 55s); `daimon_notify_on_error` rides the same mechanism instead of busy-polling; dashboard app cards/detail show per-app agent chips + a lock indicator with live TTL; status pills count down `~Xs` while compiling.
-- **M63 follow-through:** the generic webhook envelope now includes the documented `payload` object (flattened `from`/`to`/`message` kept for back-compat); new `docs/ci-integration.md` with a GitHub Actions workflow.
-- **M57/M64 follow-through:** README rewritten for v0.10 (agent identity, webhooks, ci verb, VS Code extension, docs-site link, 262 tests); SVG logo (`assets/logo.svg` + accent variant); commercial-license contact now points at https://flycotech.com (no email in published artifacts).
-- Suite: **262 tests / ~15s wall-clock.**
+- Test suite now at 225 / 17.0s (added 6 profile-suggester / restart-cadence tests).
 
 ### Migration
 
 - Audit log gains a 6th column (agent). 5-column rows still parse.
 - New `webhooks: []` config key. Default is the empty array — no outbound deliveries unless you opt in.
 - HTTP 409 `locked-by-other-agent` is a new response code for lifecycle endpoints. Old CLIs (no `X-Daimon-Agent` header) get `agentId = 'unknown'` and never collide with named agents.
-- Webhook consumers: the generic envelope gained a nested `payload` field; the flattened `from`/`to`/`message` fields remain.
-- Invalid config **fields** no longer abort startup — they warn and run on defaults (`daimon doctor` lists them under `config-valid`). Unparseable config still refuses to start.
-- New state file: `~/.daimon/session-state.json` (per-app error/log/compile snapshot, refreshed every 30s, ignored after 24h).
 
 ## [0.9.0] — 2026-05-21
 
