@@ -155,6 +155,49 @@ export interface ServerOpts {
   runPluginScans?: () => Promise<void>;
 }
 
+// A hostname is loopback if it's localhost, ::1, or in 127.0.0.0/8. Used to
+// gate mutating requests: a browser page on any other origin (or a DNS-rebind
+// domain resolving to 127.0.0.1) presents a non-loopback Host/Origin and is
+// rejected, so a visited web page can't drive start/stop/run/config on the
+// local daemon (CSRF / DNS-rebinding).
+function isLoopbackHostname(hostname: string): boolean {
+  if (!hostname) return false;
+  let h = hostname.trim().toLowerCase();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1); // [::1]
+  if (h === 'localhost' || h === '::1' || h === '::ffff:127.0.0.1') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+// Extract the hostname from a Host header value ("127.0.0.1:4999" -> "127.0.0.1",
+// "[::1]:4999" -> "[::1]"). Returns '' if it can't be parsed.
+function hostnameFromHostHeader(host: string | undefined): string {
+  if (!host) return '';
+  const h = host.trim();
+  if (h.startsWith('[')) return h.slice(0, h.indexOf(']') + 1); // keep [..] for isLoopbackHostname
+  const colon = h.indexOf(':');
+  return colon >= 0 ? h.slice(0, colon) : h;
+}
+
+// A request is allowed to mutate state only if both its Host and (when present)
+// its Origin/Referer are loopback. Non-browser clients (CLI, MCP) send no Origin
+// and a loopback Host, so they pass; a cross-origin browser fetch is blocked.
+function isSameOriginLoopback(req: http.IncomingMessage): boolean {
+  const host = req.headers['host'] as string | undefined;
+  // If a Host header is present it must be loopback (blocks DNS rebinding).
+  if (host && !isLoopbackHostname(hostnameFromHostHeader(host))) return false;
+  const originHdr = (req.headers['origin'] as string | undefined) || (req.headers['referer'] as string | undefined);
+  if (originHdr && originHdr !== 'null') {
+    try {
+      if (!isLoopbackHostname(new URL(originHdr).hostname)) return false;
+    } catch {
+      return false; // unparseable Origin/Referer — reject
+    }
+  } else if (originHdr === 'null') {
+    return false; // opaque origin (sandboxed iframe / file://) is never trusted
+  }
+  return true;
+}
+
 const REDACT_KEY = /key|secret|token|password|pass/i;
 
 function redactConfig(cfg: AppmanConfig): any {
@@ -171,6 +214,40 @@ function redactConfig(cfg: AppmanConfig): any {
     }
   }
   return clone;
+}
+
+// Read and JSON-parse a request body with a hard size cap, resolving on the
+// socket closing for any reason. The previous inline pattern (a) skipped bodies
+// sent with Transfer-Encoding: chunked because it keyed off content-length, and
+// (b) listened only for 'end', so an aborted upload left the await pending
+// forever. This handles both: it always drains the stream (chunked included),
+// bounds memory, and resolves on 'end'/'aborted'/'error'/'close'. Returns {} on
+// empty, malformed, or over-limit bodies (over-limit destroys the socket).
+const MAX_BODY_BYTES = 1_000_000;
+function readJsonBody(req: http.IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<any> {
+  return new Promise<any>(resolve => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    const finish = (val: any) => { if (!done) { done = true; resolve(val); } };
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > maxBytes) {
+        try { req.destroy(); } catch {}
+        finish({});
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (!chunks.length) { finish({}); return; }
+      try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+      catch { finish({}); }
+    });
+    req.on('aborted', () => finish({}));
+    req.on('error', () => finish({}));
+    req.on('close', () => finish({}));
+  });
 }
 
 function configEtag(configPath: string | undefined): string {
@@ -208,12 +285,29 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       const agentId = agentHdr && agentHdr.length ? agentHdr : 'unknown';
       if (agentId !== 'unknown') agents.touch(agentId, cwdHdr);
 
+      // CSRF / DNS-rebinding gate: any state-changing method must come from a
+      // loopback Host with a loopback (or absent) Origin. Read-only verbs
+      // (GET/HEAD/OPTIONS) are exempt — the SPA and streams need them and they
+      // can't change state. This runs before every route so no mutating handler
+      // can be reached cross-origin.
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && !isSameOriginLoopback(req)) {
+        sendJson(res, 403, { error: 'forbidden: cross-origin or non-loopback request rejected' });
+        return;
+      }
+
       const requireAuth = (): boolean => {
         const cfg = opts.getConfig ? opts.getConfig() : null;
         const token = cfg?.apiToken ?? null;
         if (!token) return true;
         const hdr = req.headers['authorization'];
-        if (typeof hdr === 'string' && hdr.toLowerCase().startsWith('bearer ') && hdr.slice(7).trim() === token) return true;
+        if (typeof hdr === 'string' && hdr.toLowerCase().startsWith('bearer ')) {
+          const supplied = Buffer.from(hdr.slice(7).trim());
+          const expected = Buffer.from(token);
+          // Constant-time compare so the token isn't leaked byte-by-byte via
+          // response timing. Length check first (timingSafeEqual throws on
+          // mismatched lengths).
+          if (supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected)) return true;
+        }
         sendJson(res, 401, { error: 'unauthorized' });
         return false;
       };
@@ -244,14 +338,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             sendJson(res, 412, { error: 'etag mismatch', current });
             return;
           }
-          let body: any = {};
-          if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-            await new Promise<void>(resolve => {
-              const chunks: Buffer[] = [];
-              req.on('data', (c: Buffer) => chunks.push(c));
-              req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-            });
-          }
+          const body: any = await readJsonBody(req);
           const r = opts.patchConfig(body);
           if (!r.ok) { sendJson(res, 400, { error: r.error }); return; }
           const newEtag = configEtag(opts.configPath);
@@ -368,14 +455,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (url.pathname === '/api/workspaces/remove' && method === 'POST' && opts.getConfig && opts.patchConfig) {
         if (!requireAuth()) return;
-        let body: any = {};
-        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-          await new Promise<void>(resolve => {
-            const chunks: Buffer[] = [];
-            req.on('data', (c: Buffer) => chunks.push(c));
-            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-          });
-        }
+        const body: any = await readJsonBody(req);
         const targetPath = typeof body?.path === 'string' ? body.path : '';
         if (!targetPath) { sendJson(res, 400, { error: 'path is required' }); return; }
         const cfg = opts.getConfig();
@@ -396,14 +476,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       // so a daemon spawned in folder A can also serve folder B's apps.
       if (url.pathname === '/api/workspaces/ensure' && method === 'POST' && opts.getConfig && opts.patchConfig) {
         if (!requireAuth()) return;
-        let body: any = {};
-        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-          await new Promise<void>(resolve => {
-            const chunks: Buffer[] = [];
-            req.on('data', (c: Buffer) => chunks.push(c));
-            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-          });
-        }
+        const body: any = await readJsonBody(req);
         const targetPath = typeof body?.path === 'string' ? body.path : '';
         const labelOpt = typeof body?.label === 'string' && body.label ? body.label : null;
         if (!targetPath) { sendJson(res, 400, { error: 'path is required' }); return; }
@@ -724,14 +797,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (parts[0] === 'api' && parts[1] === 'doctor' && parts[2] === 'auto-fix' && method === 'POST') {
         if (!requireAuth()) return;
-        let body: any = {};
-        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-          await new Promise<void>(resolve => {
-            const chunks: Buffer[] = [];
-            req.on('data', (c: Buffer) => chunks.push(c));
-            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-          });
-        }
+        const body: any = await readJsonBody(req);
         const { runAutoFix, ALL_AUTO_FIX } = await import('./autoFix.js');
         const cfg = opts.getConfig?.();
         const defaults = (cfg?.doctor?.autoFix?.permitted as any) ?? ALL_AUTO_FIX;
@@ -831,7 +897,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             const rel = url.pathname.replace(/^\/dashboard\//, '/').replace(/^\//, '');
             if (rel) {
               const abs = path.resolve(spaDir, rel);
-              if (abs.startsWith(spaDir) && serveStaticFile(res, abs)) return;
+              // Require a separator boundary so a sibling dir whose name merely
+              // starts with spaDir's basename can't be served.
+              if ((abs === spaDir || abs.startsWith(spaDir + path.sep)) && serveStaticFile(res, abs)) return;
             }
             if (!path.extname(rel || '')) {
               if (serveStaticFile(res, path.join(spaDir, 'index.html'))) return;
@@ -930,6 +998,33 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
       // resolved.kind === 'none' && !cwdQ falls through; subsequent handlers
       // 404 individually so legacy endpoints (no cwd) keep the same error shape.
+
+      // Per-app soft lock: an agent that just called start/stop/restart/ensure/
+      // try-fix owns the app for 30s. A different agent gets 409
+      // locked-by-other-agent unless `?steal=1` is passed. The original agent
+      // can re-call freely. Defined here (before the per-verb handlers) so every
+      // state-changing verb — including ensure and try-fix — serialises through
+      // the same gate.
+      const tryLock = (action: string): boolean => {
+        // Validate the app before locking — otherwise 409s (and interaction
+        // history) can materialize for app names that don't exist.
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return false; }
+        const stealQ = url.searchParams.get('steal');
+        const steal = stealQ === '1' || stealQ === 'true';
+        if (steal) { locks.steal(name, agentId, action); return true; }
+        const blocker = locks.acquire(name, agentId, action);
+        if (blocker) {
+          sendJson(res, 409, {
+            error: 'locked-by-other-agent',
+            agent: blocker.agent,
+            lockedAt: blocker.lockedAt,
+            expiresAt: blocker.expiresAt,
+            hint: 'pass ?steal=1 to override, or wait for the lock to expire',
+          });
+          return false;
+        }
+        return true;
+      };
 
       if (!sub) {
         if (method !== 'GET') {
@@ -1121,26 +1216,31 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       if (sub === 'health' && sub2 === 'pin' && method === 'POST') {
         const s = registry.getState(name);
         if (!s) { sendJson(res, 404, { error: 'unknown app' }); return; }
-        let body: any = {};
-        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-          await new Promise<void>(resolve => {
-            const chunks: Buffer[] = [];
-            req.on('data', (c: Buffer) => chunks.push(c));
-            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-          });
-        }
+        const body: any = await readJsonBody(req);
         const desired: string | null = (typeof body.path === 'string' && body.path) ? body.path : (s.discoveredHealthPath ?? null);
         if (!desired) { sendJson(res, 400, { error: 'no path supplied and no discoveredHealthPath on app' }); return; }
         const { configLookupPaths } = await import('./config.js');
         const { local, user } = configLookupPaths();
         const target = fs.existsSync(local) ? local : user;
         let raw: any = {};
-        try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+        // Refuse to clobber a config the user is mid-edit: if the file exists
+        // but doesn't parse, don't start from {} and overwrite it.
+        if (fs.existsSync(target)) {
+          try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); }
+          catch (err: any) { sendJson(res, 409, { error: `config at ${target} is not valid JSON; fix it before pinning`, detail: err?.message || String(err) }); return; }
+        }
         if (!raw.overrides || typeof raw.overrides !== 'object') raw.overrides = {};
         if (!raw.overrides[name] || typeof raw.overrides[name] !== 'object') raw.overrides[name] = {};
         const prev = raw.overrides[name].healthProbePath ?? null;
         raw.overrides[name].healthProbePath = desired;
+        fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+        // health/pin mutates on-disk config just like PATCH /api/config, so it
+        // must leave the same audit trail.
+        try {
+          const remote = (req.socket as any).remoteAddress || '127.0.0.1';
+          appendAuditEntry(remote, { healthProbePath: prev }, { healthProbePath: desired }, [`overrides.${name}.healthProbePath`], cwdHdr, agentId === 'unknown' ? null : agentId);
+        } catch {}
         if (opts.reloadConfig) {
           try { await opts.reloadConfig(); } catch {}
         }
@@ -1156,6 +1256,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           sendJson(res, 400, { error: 'until must be serving|healthy' });
           return;
         }
+        // try-fix restarts the app — serialise it through the soft lock like
+        // start/stop/restart so a second agent can't restart underneath the
+        // agent that holds the lock.
+        if (!tryLock('try-fix')) return;
         const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
         let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
         if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 180_000;
@@ -1245,6 +1349,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         const startFromState = s0.status;
         if (s0.status !== 'starting' && s0.status !== 'compiling') {
+          // Only contend the soft lock when ensure actually starts the app; an
+          // already-terminal app returned above without locking, so an idempotent
+          // ensure of a healthy app stays a lock-free read.
+          if (!tryLock('ensure')) return;
           await registry.start(name);
         }
         const r = await registry.waitFor(name, effectiveUntil, timeoutMs);
@@ -1258,30 +1366,6 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
-      // Per-app soft lock: an agent that just called start/stop/restart owns
-      // the app for 30s. A different agent gets 409 locked-by-other-agent
-      // unless `?steal=1` is passed. The original agent can re-call freely.
-      const tryLock = (action: string): boolean => {
-        // Validate the app before locking — otherwise 409s (and interaction
-        // history) can materialize for app names that don't exist.
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return false; }
-        const stealQ = url.searchParams.get('steal');
-        const steal = stealQ === '1' || stealQ === 'true';
-        if (steal) { locks.steal(name, agentId, action); return true; }
-        const blocker = locks.acquire(name, agentId, action);
-        if (blocker) {
-          sendJson(res, 409, {
-            error: 'locked-by-other-agent',
-            agent: blocker.agent,
-            lockedAt: blocker.lockedAt,
-            expiresAt: blocker.expiresAt,
-            hint: 'pass ?steal=1 to override, or wait for the lock to expire',
-          });
-          return false;
-        }
-        return true;
-      };
-
       if (sub === 'lock' && method === 'GET') {
         if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
         const current = locks.current(name);
@@ -1292,14 +1376,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (sub === 'handoff' && method === 'POST') {
         if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
-        let body: any = {};
-        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-          await new Promise<void>(resolve => {
-            const chunks: Buffer[] = [];
-            req.on('data', (c: Buffer) => chunks.push(c));
-            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-          });
-        }
+        const body: any = await readJsonBody(req);
         const toAgent = typeof body?.to === 'string' ? body.to.trim() : '';
         if (!toAgent) { sendJson(res, 400, { error: 'body { to: <agentId> } required' }); return; }
         const current = locks.current(name);
@@ -1335,14 +1412,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
 
       if (sub === 'run' && sub2 && method === 'POST') {
-        let body: any = {};
-        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-          await new Promise<void>(resolve => {
-            const chunks: Buffer[] = [];
-            req.on('data', (c: Buffer) => chunks.push(c));
-            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-          });
-        }
+        const body: any = await readJsonBody(req);
         const args: string[] = Array.isArray(body.args) ? body.args.map(String) : [];
         if (body.watch) {
           const r = registry.startWatchTask(name, sub2, args);
@@ -1369,14 +1439,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
       if (sub === 'env' && method === 'POST') {
-        let body: any = {};
-        if (req.headers['content-length'] && req.headers['content-length'] !== '0') {
-          await new Promise<void>(resolve => {
-            const chunks: Buffer[] = [];
-            req.on('data', (c: Buffer) => chunks.push(c));
-            req.on('end', () => { try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {} resolve(); });
-          });
-        }
+        const body: any = await readJsonBody(req);
         registry.setActiveEnvFile(name, body.use ?? null);
         const state = registry.getState(name);
         sendJson(res, 200, { active: state?.activeEnvFile ?? null });

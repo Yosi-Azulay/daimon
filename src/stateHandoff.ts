@@ -24,7 +24,12 @@ export function writeHandoff(registry: Registry): string {
   const data: Handoff = { ts: Date.now(), apps };
   const p = handoffPath();
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(data));
+  // Atomic temp+rename: the handoff is written by the outgoing daemon and read
+  // by the incoming one across a process boundary, so a plain in-place write can
+  // be observed half-complete (JSON.parse throws → apps aren't re-adopted).
+  const tmp = p + '.' + process.pid + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data));
+  fs.renameSync(tmp, p);
   return p;
 }
 

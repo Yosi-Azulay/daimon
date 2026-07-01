@@ -10,7 +10,7 @@ import { startServer } from './server.js';
 import { HealthMonitor } from './health.js';
 import { UsageMonitor } from './usage.js';
 import { Restarter } from './restarter.js';
-import { loadPersistedState, savePersistedState } from './stateFile.js';
+import { loadPersistedState, savePersistedState, flushPersistedState } from './stateFile.js';
 import { History } from './history.js';
 import { findCycle } from './depends.js';
 import { Notifier } from './notifier.js';
@@ -166,6 +166,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { clearInterval(errorTtlTick); } catch {}
     try { clearInterval(selfMetricsTick); } catch {}
     try { clearInterval(sessionTick); saveSessionState(registry.exportSessionState()); } catch {}
+    try { flushPersistedState(); } catch {}
     try { selfMetrics.stop(); } catch {}
     try { health.stop(); } catch {}
     try { usage.stop(); } catch {}

@@ -9,6 +9,21 @@ import { discoverApps } from './discovery.js';
 import { profileProbePath } from './healthProfiles.js';
 import { generateAgentId } from './agents.js';
 
+// Read a config file for in-place editing. If the file exists but doesn't parse
+// as JSON, throw ConfigParseError so the caller refuses to write — otherwise the
+// fix would start from `{}` and clobber a config the user was mid-way through
+// editing (turning a syntax error into total data loss). A missing file is fine
+// (start from an empty object).
+class ConfigParseError extends Error {}
+function readConfigForEdit(target: string): any {
+  let text: string;
+  try { text = fs.readFileSync(target, 'utf8'); }
+  catch { return {}; } // no file yet — safe to create fresh
+  if (!text.trim()) return {};
+  try { return JSON.parse(text); }
+  catch (err: any) { throw new ConfigParseError(err?.message || 'invalid JSON'); }
+}
+
 // Doctor-initiated daemon calls must carry the agent id like every other
 // caller, so the audit trail shows who triggered restarts/reloads.
 function agentFetch(url: string): Promise<unknown> {
@@ -45,6 +60,22 @@ export const ALL_AUTO_FIX: AutoFixName[] = [
   'orphan-cargo-target',
   'dead-search-root',
   'health-probe-missing',
+];
+
+// A conservative subset for callers that run auto-fix as a side effect (e.g.
+// `orchestrate`) rather than at explicit user request. It excludes fixes that
+// rewrite the user's daimon.config.json (missing-/dead-search-root,
+// health-probe-missing) or restart the daemon (orphan-daemon, stale-lock), so
+// an orchestration run never silently mutates config or bounces the daemon. The
+// remaining rules are report-only or repair the daemon's own history db.
+export const ORCHESTRATE_SAFE_AUTO_FIX: AutoFixName[] = [
+  'corrupt-history-db',
+  'port-conflict-pred',
+  'node-version-mismatch',
+  'orphan-node-modules',
+  'orphan-venv',
+  'orphan-bundler-cache',
+  'orphan-cargo-target',
 ];
 
 export interface RoutineResult {
@@ -126,8 +157,9 @@ function fixMissingSearchRoot(): string {
   const here = process.cwd();
   const { local, user } = configLookupPaths();
   const target = fs.existsSync(local) ? local : user;
-  let raw: any = {};
-  try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+  let raw: any;
+  try { raw = readConfigForEdit(target); }
+  catch (err: any) { return `refusing to edit ${target}: it is not valid JSON (${err.message}). Fix the syntax error first, then re-run.`; }
   raw.searchRoots = Array.isArray(raw.searchRoots) ? raw.searchRoots : [];
   if (!raw.searchRoots.some((sr: any) => (typeof sr === 'string' ? sr : sr?.path) === here)) {
     let label: string | undefined;
@@ -405,8 +437,9 @@ function fixDeadSearchRoot(): string {
   if (!det.detected || !det.dead || !det.dead.length) return 'nothing to remove';
   const { local, user } = configLookupPaths();
   const target = fs.existsSync(local) ? local : user;
-  let raw: any = {};
-  try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+  let raw: any;
+  try { raw = readConfigForEdit(target); }
+  catch (err: any) { return `refusing to edit ${target}: it is not valid JSON (${err.message}). Fix the syntax error first, then re-run.`; }
   if (!Array.isArray(raw.searchRoots)) return 'config has no searchRoots array; nothing removed';
   const dead = new Set(det.dead);
   const before = raw.searchRoots.length;
@@ -449,8 +482,9 @@ function fixHealthProbeMissing(): string {
   if (!det.detected || !det.entries) return 'nothing to set';
   const { local, user } = configLookupPaths();
   const target = fs.existsSync(local) ? local : user;
-  let raw: any = {};
-  try { raw = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+  let raw: any;
+  try { raw = readConfigForEdit(target); }
+  catch (err: any) { return `refusing to edit ${target}: it is not valid JSON (${err.message}). Fix the syntax error first, then re-run.`; }
   if (!raw.overrides || typeof raw.overrides !== 'object') raw.overrides = {};
   const wrote: string[] = [];
   for (const e of det.entries) {

@@ -150,7 +150,18 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
-async function streamNdjson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<void> {
+// Streams NDJSON to stdout and returns the terminal `{ kind: 'done', ... }`
+// object if the stream emitted one (focus/ensure-style streams do), so callers
+// can map its `reason` to an exit code. Returns null for streams with no
+// terminal event.
+async function streamNdjson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<any | null> {
+  let terminal: any = null;
+  const inspect = (line: string) => {
+    try {
+      const obj = JSON.parse(line);
+      if (obj && obj.kind === 'done') terminal = obj;
+    } catch {}
+  };
   try {
     const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders() });
     if (!res.ok || !res.body) fail(JSON.stringify({ error: `stream failed: HTTP ${res.status}` }));
@@ -166,35 +177,53 @@ async function streamNdjson(pathname: string, method: 'GET' | 'POST' = 'GET'): P
       for (const line of lines) {
         if (!line.trim()) continue;
         process.stdout.write(line + '\n');
+        inspect(line);
       }
     }
-    if (buf.trim()) process.stdout.write(buf + '\n');
+    if (buf.trim()) { process.stdout.write(buf + '\n'); inspect(buf); }
   } catch (err: any) {
     fail(JSON.stringify({ error: err?.message || String(err) }));
   }
+  return terminal;
 }
 
+// Ceiling on a single (non-streaming) daemon call so a stalled daemon can't hang
+// the CLI forever. Set above the daemon's own 600s max long-poll deadline
+// (wait/ensure/orchestrate) so a legitimate long wait completes but a truly hung
+// daemon still unblocks. Streaming verbs (streamNdjson) are long-lived and excluded.
+const CALL_TIMEOUT_MS = 660_000;
+
 async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{ status: number; body: any }> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), CALL_TIMEOUT_MS);
   try {
-    const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders() });
+    const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders(), signal: ac.signal });
     const text = await res.text();
     let body: any = text;
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
-  } catch {
+  } catch (err: any) {
+    if (err?.name === 'AbortError') fail(JSON.stringify({ error: `daimon call timed out after ${CALL_TIMEOUT_MS}ms` }));
     failHint('daimon is not running', 'start it with: daimon daemon start --detach');
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 async function callJson(pathname: string, method: 'GET' | 'POST', payload: unknown): Promise<{ status: number; body: any }> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), CALL_TIMEOUT_MS);
   try {
-    const res = await fetch(getBaseUrl() + pathname, { method, headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify(payload) });
+    const res = await fetch(getBaseUrl() + pathname, { method, headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify(payload), signal: ac.signal });
     const text = await res.text();
     let body: any = text;
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
-  } catch {
+  } catch (err: any) {
+    if (err?.name === 'AbortError') fail(JSON.stringify({ error: `daimon call timed out after ${CALL_TIMEOUT_MS}ms` }));
     failHint('daimon is not running', 'start it with: daimon daemon start --detach');
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -1143,7 +1172,13 @@ async function main() {
       }
       const body = r.body || {};
       const apps: any[] = Array.isArray(body.apps) ? body.apps : [];
-      const allReached = apps.length > 0 && apps.every(a => !a.timedOut);
+      // An empty profile is a config error, not a timeout — don't report it as
+      // exit 2 (which a CI harness reads as "apps didn't come up in time").
+      if (apps.length === 0) {
+        process.stdout.write(JSON.stringify({ profile, until, allReached: false, perApp: [], error: 'profile resolved to zero apps' }) + '\n');
+        process.exit(1);
+      }
+      const allReached = apps.every(a => !a.timedOut);
       const report = {
         profile,
         until,
@@ -1184,7 +1219,11 @@ async function main() {
         timeoutSec = Math.min(t, 600);
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
-      await streamNdjson(`/api/apps/${encodeURIComponent(name)}/focus?${params.toString()}`, 'POST');
+      const doneEv = await streamNdjson(`/api/apps/${encodeURIComponent(name)}/focus?${params.toString()}`, 'POST');
+      // Honour the documented exit-code contract: a timeout (target not reached
+      // before the deadline) must exit 2, not 0. The stream's terminal event
+      // carries reason: 'reached' | 'timeout' | 'closed'.
+      if (doneEv && doneEv.reason && doneEv.reason !== 'reached') process.exit(2);
       return;
     }
     case 'pin-health': {

@@ -21,13 +21,27 @@ function redactedConfig(cfg: AppmanConfig | null): any {
   return clone;
 }
 
+// Dev servers routinely echo connection strings, tokens, and env values to
+// stdout. Those lines land verbatim in the crash dump on disk, so mask the
+// common secret shapes before writing: credentials embedded in URLs, and
+// `secret-ish-key = value` assignments. Best-effort — it can't catch every
+// format, but it removes the obvious leaks.
+const URL_CREDS_RX = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi;
+const SECRET_ASSIGN_RX = /\b([A-Za-z0-9_.-]*(?:key|secret|token|password|passwd|pwd|auth)[A-Za-z0-9_.-]*)(\s*[=:]\s*)(["']?)([^\s"']+)\3/gi;
+
+export function redactLogLine(line: string): string {
+  return line
+    .replace(URL_CREDS_RX, '$1***:***@')
+    .replace(SECRET_ASSIGN_RX, (_m, k, sep, q) => `${k}${sep}${q}***${q}`);
+}
+
 function recentDaemonLogLines(registry: Registry | null, max = 200): string[] {
   if (!registry) return [];
   const lines: { ts: number; line: string }[] = [];
   for (const name of registry.names()) {
     const s = registry.getState(name);
     if (!s) continue;
-    for (const entry of s.logBuffer) lines.push({ ts: entry.ts, line: `[${name}] ${entry.line}` });
+    for (const entry of s.logBuffer) lines.push({ ts: entry.ts, line: `[${name}] ${redactLogLine(entry.line)}` });
   }
   lines.sort((a, b) => a.ts - b.ts);
   return lines.slice(-max).map(e => e.line);

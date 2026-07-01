@@ -3,6 +3,7 @@ import treeKill from 'tree-kill';
 import stripAnsi from 'strip-ansi';
 import type { AppState, AppStatus, DiscoveredApp, ErrorEntry } from './types.js';
 import { parseLine } from './parser.js';
+import { isSafeAppName } from './shellSafe.js';
 
 const LOG_BUFFER_MAX = 500;
 
@@ -39,6 +40,18 @@ export class AppProcess {
   start(): void {
     if (this.isRunning()) return;
     const { app, port, state } = this.deps;
+
+    // Defense-in-depth: discovery already rejects shell-unsafe names, but the
+    // discovered name is interpolated into the command run with `shell: true`,
+    // so refuse to spawn if anything constructed an app object with an unsafe
+    // name (a custom `commandOverride` from the user's own trusted config is
+    // exempt — the untrusted vector is the discovered name).
+    if (!this.deps.commandOverride && !isSafeAppName(app.name)) {
+      state.status = 'error';
+      state.lastStatusMessage = `refusing to start: unsafe app name ${JSON.stringify(app.name)}`;
+      this.deps.onStateChange();
+      return;
+    }
 
     const now = Date.now();
     state.status = 'starting';

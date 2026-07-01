@@ -72,6 +72,12 @@ const BUILT_IN_NAMES = new Set([
   'orphan-venv', 'orphan-bundler-cache', 'orphan-cargo-target', 'dead-search-root',
 ]);
 
+// SECURITY: plug-ins are NOT sandboxed. They load via dynamic import() and their
+// scan()/fix() run in-process with full Node privileges — validateShape only
+// checks the export shape, not behaviour. The safety property is opt-in by
+// placement: daimon only loads files the user manually dropped into their own
+// ~/.daimon/plugins directory. Treat a plug-in as trusted code you chose to run,
+// not as a confined extension. (Do not describe this as a "sandbox".)
 export async function loadPlugins(dir: string): Promise<LoadedPlugin[]> {
   const out: LoadedPlugin[] = [];
   let entries: string[];

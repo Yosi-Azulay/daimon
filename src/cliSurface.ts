@@ -47,6 +47,15 @@ const exitWithTimeout = [
   { code: 2, meaning: 'target state not reached within --timeout' },
 ];
 
+// Emitted by any command that resolves a bare `<name>` when that name matches
+// apps in more than one workspace (HTTP 412 name-collision). Callers pass --cwd
+// or --workspace to disambiguate. Documented on every name-taking command so an
+// agent scripting against exit codes recognises it.
+const collisionCode = { code: 4, meaning: 'app name matches multiple workspaces (pass --cwd or --workspace)' };
+const lockCode = { code: 5, meaning: 'soft-lock held by another agent (pass --steal to override)' };
+const perAppExit = [...stdExit, collisionCode];
+const perAppExitWithTimeout = [...exitWithTimeout, collisionCode];
+
 export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   {
     name: 'list',
@@ -81,7 +90,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     needsDaemon: true,
     group: 'queries',
     aliases: ['ps'],
-    exitCodes: stdExit,
+    exitCodes: perAppExit,
   },
   {
     name: 'errors',
@@ -99,7 +108,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
-    exitCodes: stdExit,
+    exitCodes: perAppExit,
   },
   {
     name: 'events',
@@ -118,17 +127,17 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'wait',
-    args: '<name> [--until serving|healthy|stopped|error] [--timeout 60s]',
+    args: '<name> [--until serving|healthy|stopped|error] [--timeout 120s]',
     summary: 'Block until app reaches the given state.',
     description: 'Block until an app reaches the given terminal state. Exits 2 on timeout.',
     example: 'daimon wait web-admin --until healthy',
     options: [
       { flag: '--until', arg: '<state>', description: 'Target state (serving|healthy|stopped|error). Default: serving.' },
-      { flag: '--timeout', arg: '<duration>', description: 'Max wait, parsed as 60s/5m (default 60s).' },
+      { flag: '--timeout', arg: '<duration>', description: 'Max wait, parsed as 120s/5m (default 120s).' },
     ],
     needsDaemon: true,
     group: 'agent',
-    exitCodes: exitWithTimeout,
+    exitCodes: perAppExitWithTimeout,
   },
   {
     name: 'ensure',
@@ -244,7 +253,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     needsDaemon: true,
     group: 'queries',
     aliases: ['log'],
-    exitCodes: stdExit,
+    exitCodes: perAppExit,
   },
   {
     name: 'start',
@@ -258,7 +267,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
-    exitCodes: [...stdExit, { code: 5, meaning: 'soft-lock held by another agent (pass --steal to override)' }],
+    exitCodes: [...perAppExit, lockCode],
   },
   {
     name: 'stop',
@@ -271,7 +280,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
-    exitCodes: [...stdExit, { code: 5, meaning: 'soft-lock held by another agent (pass --steal to override)' }],
+    exitCodes: [...perAppExit, lockCode],
   },
   {
     name: 'restart',
@@ -284,7 +293,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
-    exitCodes: [...stdExit, { code: 5, meaning: 'soft-lock held by another agent (pass --steal to override)' }],
+    exitCodes: [...perAppExit, lockCode],
   },
   {
     name: 'agents',
@@ -308,6 +317,10 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'profiles suggest',
+    // The CLI dispatches on the first token (`profiles`), so alias it to this
+    // entry — otherwise findSubcommand('profiles') misses and the verb neither
+    // auto-spawns the daemon nor resolves `daimon help profiles`.
+    aliases: ['profiles'],
     args: '[--since 30d] [--min 5]',
     summary: 'Suggest profile candidates from recurring co-starts.',
     description: 'Scan recent status events for app sets the user repeatedly starts together within a short window. Returns suggested profiles with name, apps, cooccurrence count, and last-seen time. Skips clusters that already match an existing profile.',
@@ -368,13 +381,10 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'discover',
-    args: '[--dry-run]',
-    summary: 'Run discovery without changing state. Prints _meta: searchRoots, scanned, rejected per folder, suggestion.',
-    description: 'Run discovery without changing state. Emits per-folder scanned/rejected and suggestion.',
-    example: 'daimon discover --dry-run',
-    options: [
-      { flag: '--dry-run', description: 'Report planned discovery without persisting.' },
-    ],
+    args: '',
+    summary: 'Run discovery read-only. Prints _meta: searchRoots, scanned, rejected per folder, suggestion.',
+    description: 'Run discovery read-only (it never persists). Emits per-folder scanned/rejected and suggestion.',
+    example: 'daimon discover',
     needsDaemon: true,
     group: 'introspection',
     exitCodes: stdExit,
@@ -413,7 +423,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
-    exitCodes: stdExit,
+    exitCodes: perAppExit,
   },
   {
     name: 'snapshot',

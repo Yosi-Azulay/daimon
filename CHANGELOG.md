@@ -4,6 +4,41 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-07-02
+
+Security & robustness hardening from a five-area code review (daemon core, persistence, CLI/MCP surface, process/ops, security posture). No new features; all fixes.
+
+### Security
+
+- **CSRF / DNS-rebinding gate on the HTTP API.** Every state-changing request (non-GET) must now come from a loopback `Host` with a loopback (or absent) `Origin`/`Referer`. A web page the developer merely visits can no longer drive `start`/`stop`/`run`/`config` on the local daemon via `fetch('http://127.0.0.1:…')`, and a rebinding domain resolving to 127.0.0.1 is rejected. Read-only GETs are exempt.
+- **Command-injection hardening.** Discovered project names, and task names/args from the CLI/API, are validated against an allow-list before being interpolated into `shell: true` commands (`src/shellSafe.ts`). A cloned repo with a `project.json` `name` like `app && calc.exe`, or a `run` request with `args: ["; calc.exe"]`, is refused instead of executed.
+- **Audit-log integrity.** Audit fields are stripped of tab/newline so a crafted `X-Daimon-Cwd` header (or a config key with a comma) can no longer forge columns / agent attribution.
+- **Constant-time API-token comparison** (`crypto.timingSafeEqual`).
+- **Secret redaction.** Webhook URLs (which embed Slack/Discord tokens) are reduced to origin in failure logs; crash dumps now redact URL credentials and `secret-ish-key = value` assignments from the app-log tail.
+- **Static-file guard** tightened to a path-separator boundary; discovery no longer follows symlinks out of a searchRoot; snapshot filenames sanitize the app name; `portDiag` validates the port before interpolating it into a PowerShell command.
+- **Plugin docs corrected:** plug-ins are opt-in but run in-process with full privileges — the inaccurate "sandboxed" wording was removed (they are trusted code the user places themselves).
+
+### Fixed
+
+- **`retentionDays: 0` wiped the entire history DB** instead of disabling pruning (the dashboard documents `0` as "disables pruning"). Now `<= 0` keeps everything.
+- **Corrupt-DB recovery** no longer reopens and migrates the still-corrupt file when the archive rename fails (e.g. a stale Windows handle); it disables history instead.
+- **`ensure` / `try-fix` now honour the per-app soft lock** like `start`/`stop`/`restart`, so a second agent can't act underneath the lock holder.
+- **Atomic writes + no-clobber:** `state.json` and the handoff file use temp+rename (a crash mid-write no longer resets ports / drops app re-adoption); `doctor --auto-fix` and `health/pin` refuse to write when the target config is malformed JSON instead of clobbering it; a debounced state write is flushed on clean shutdown.
+- **Request-body handling:** a shared reader caps body size, drains `Transfer-Encoding: chunked` requests, and resolves on socket abort/error (previously an aborted upload left the handler pending forever).
+- **Unbounded map leak:** `errorFlapAlerted` is now pruned alongside its sibling window map.
+- **CLI exit codes:** `focus` exits 2 on timeout (was always 0); `ci start` exits 1 (not 2) for an empty profile; the name-collision code (4) is documented on every name-taking command; `wait`'s documented default (120s) matches the code.
+- **`profiles suggest`** now auto-spawns the daemon and resolves `daimon help profiles` (the space-in-name verb was unreachable to `findSubcommand`).
+- **`health/pin`** writes an audit entry like other config mutations.
+- **Cascade restart** rejections are swallowed so they can't surface as an `unhandledRejection`.
+- Failed history flush batches are re-queued (bounded) instead of dropped; `diskLogger` no longer leaves an orphan `.1` when `maxFiles === 1`.
+
+### Changed
+
+- **`orchestrate`** defaults to a conservative auto-fix subset (`ORCHESTRATE_SAFE_AUTO_FIX`) — it no longer rewrites the user's config or restarts the daemon as a side effect — and now surfaces dependency cycles instead of silently dropping the apps in them.
+- **Client-side request timeout** on CLI and MCP daemon calls (above the 600s server deadline) so a stalled daemon can't hang a call forever.
+- **Registry `setMaxListeners(0)`** — many concurrent dashboard tabs / streams no longer trip a spurious `MaxListenersExceededWarning`.
+- Suite: **271 tests** (added `test/review-hardening.test.mjs` covering the shell-safety guards, audit escaping, and the CSRF/rebinding gate).
+
 ## [0.10.1] — 2026-06-11
 
 Review-hardening patch: a full milestone audit of v0.10.0 (run before realizing 0.10.0 had already shipped) found real bugs and quietly-weakened acceptance criteria. All of it lands here.

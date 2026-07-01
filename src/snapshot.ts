@@ -65,7 +65,10 @@ export function writeSnapshot(registry: Registry, name: string): { path: string;
   const dir = path.join(os.homedir(), '.daimon', 'snapshots');
   fs.mkdirSync(dir, { recursive: true });
   const ts = payload.takenAt.replace(/[:.]/g, '-');
-  const file = path.join(dir, `${name}-${ts}.json`);
+  // Sanitize the app name before using it as a filename component so a name
+  // with path separators or `..` can't write outside ~/.daimon/snapshots.
+  const safeName = name.replace(/[^A-Za-z0-9._-]/g, '_') || 'app';
+  const file = path.join(dir, `${safeName}-${ts}.json`);
   fs.writeFileSync(file, JSON.stringify(payload, null, 2));
   return { path: file, payload };
 }

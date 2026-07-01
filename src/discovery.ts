@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import fg from 'fast-glob';
 import type { AppmanConfig, DiscoveredApp } from './types.js';
+import { isSafeAppName } from './shellSafe.js';
 
 function readJson(p: string): any | null {
   try {
@@ -72,6 +73,11 @@ function addUnique(
   baseName: string,
   app: Omit<DiscoveredApp, 'name' | 'baseName'>,
 ): boolean {
+  // The name is interpolated into the app's shell command (`npx nx serve
+  // <name>` etc.). It comes from an untrusted repo (project.json / angular.json
+  // key, or a directory basename), so reject anything with shell metacharacters
+  // rather than register a project that would inject a command on `start`.
+  if (!isSafeAppName(baseName)) return false;
   const { key, collided } = uniqueKey(found, baseName, app.workspaceLabel, app.workspaceRoot);
   if (collided) return false;
   found.set(key, { name: key, baseName, ...app });
@@ -207,6 +213,10 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
         ignore: ['**/node_modules/**', '**/dist/**', '**/.nx/**', '**/.git/**'],
         absolute: true,
         dot: false,
+        // Don't follow symlinks out of the searchRoot — a symlink pointing
+        // outside the tree could otherwise pull in projects (and set a
+        // workspaceRoot) beyond the configured root.
+        followSymbolicLinks: false,
       });
 
       for (const pf of projectFiles) {
@@ -254,7 +264,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
       continue;
     }
 
-    const hasVite = fg.sync('vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true, deep: 1 });
+    const hasVite = fg.sync('vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true, deep: 1, followSymbolicLinks: false });
     const hasStorybook = fs.existsSync(path.join(root, '.storybook'));
     let matched = false;
 
@@ -271,7 +281,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
       });
       matched = true;
       if (viteSubfolders) {
-        const sub = fg.sync('*/vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true });
+        const sub = fg.sync('*/vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true, followSymbolicLinks: false });
         for (const f of sub) {
           const dir = path.dirname(f);
           const subBase = path.basename(dir);

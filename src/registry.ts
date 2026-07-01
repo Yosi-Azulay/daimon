@@ -18,6 +18,7 @@ import { DiskLogger } from './diskLogger.js';
 import type { History } from './history.js';
 import { dependants, topoLevels, transitiveClosure } from './depends.js';
 import { runOneShot, startWatch, type OneShotResult, type WatchTask } from './taskRunner.js';
+import { assertSafeCommandParts } from './shellSafe.js';
 import { describeHolder, findPortHolder } from './portDiag.js';
 import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.js';
 import { readSecrets, substituteSecrets } from './secrets.js';
@@ -49,6 +50,12 @@ export class Registry extends EventEmitter {
 
   constructor(config: AppmanConfig, apps: DiscoveredApp[], portAlloc?: PortAllocator) {
     super();
+    // Each dashboard tab, long-poll, focus stream, and MCP subscribe_events adds
+    // an 'event'/'log' listener (removed on close). More than the default 10
+    // concurrent subscribers is normal here, so lift the cap to avoid a spurious
+    // MaxListenersExceededWarning on stderr. 0 = unlimited; listeners are still
+    // cleaned up on every disconnect path.
+    this.setMaxListeners(0);
     this.config = config;
     this.portAlloc = portAlloc ?? new PortAllocator(config.portRange);
     for (const app of apps) {
@@ -621,7 +628,9 @@ export class Registry extends EventEmitter {
       const s = this.getState(d);
       if (!s) continue;
       if (s.status === 'serving' || s.status === 'compiling' || s.status === 'starting') {
-        void this.restart(d);
+        // Fire-and-forget, but swallow rejections so a failed cascade restart
+        // can't surface as an unhandledRejection that takes down the daemon.
+        void this.restart(d).catch(() => {});
       }
     }
   }
@@ -649,6 +658,8 @@ export class Registry extends EventEmitter {
     this.sessionRecorder.append({ kind: 'run', app: name, task, args });
     const app = this.getApp(name);
     if (!app) return { error: 'unknown app' };
+    try { assertSafeCommandParts(app.name, task, args); }
+    catch (err: any) { return { error: err?.message || 'unsafe task input' }; }
     const result = await runOneShot(app, task, args);
     this.history?.recordTaskRun(name, task, result.exitCode, result.durationMs, result.summary);
     this.recordEvent({ app: name, type: 'task-run', message: `${task} exit=${result.exitCode} duration=${result.durationMs}ms` });
@@ -659,6 +670,8 @@ export class Registry extends EventEmitter {
   startWatchTask(name: string, task: string, args: string[] = []): { ok: boolean; pid?: number | null; error?: string } {
     const app = this.getApp(name);
     if (!app) return { ok: false, error: 'unknown app' };
+    try { assertSafeCommandParts(app.name, task, args); }
+    catch (err: any) { return { ok: false, error: err?.message || 'unsafe task input' }; }
     const key = `${name}::${task}`;
     if (this.watchTasks.has(key)) return { ok: true, pid: this.watchTasks.get(key)!.pid };
     const wt = startWatch(app, task, args);
@@ -721,12 +734,23 @@ export class Registry extends EventEmitter {
     const dayAgo = now - 24 * 3600_000;
     while (window.length && window[0] < dayAgo) window.shift();
     this.errorFlapWindows.set(key, window);
+    const hourAgo = now - 3600_000;
     if (this.errorFlapWindows.size > 2000) {
       for (const [k, w] of this.errorFlapWindows) {
-        if (!w.length || w[w.length - 1] < dayAgo) this.errorFlapWindows.delete(k);
+        if (!w.length || w[w.length - 1] < dayAgo) {
+          this.errorFlapWindows.delete(k);
+          // Drop the paired throttle entry too — otherwise errorFlapAlerted
+          // (which was never pruned) grows one permanent record per unique
+          // `${app}::${message}` and leaks the heap on a long-running daemon.
+          this.errorFlapAlerted.delete(k);
+        }
+      }
+      // A throttle entry older than the 1h window no longer suppresses anything,
+      // so it's safe to evict even if its window is still live.
+      for (const [k, ts] of this.errorFlapAlerted) {
+        if (ts < hourAgo) this.errorFlapAlerted.delete(k);
       }
     }
-    const hourAgo = now - 3600_000;
     const hourEvents = window.filter(ts => ts >= hourAgo).length;
     const dayEvents = window.length - hourEvents;
     const fingerprint = message.slice(0, 120);

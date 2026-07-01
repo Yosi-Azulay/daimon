@@ -1,6 +1,6 @@
 import type { Registry } from './registry.js';
 import type { AppmanConfig } from './types.js';
-import { topoLevels, transitiveClosure } from './depends.js';
+import { findCycle, topoLevels, transitiveClosure } from './depends.js';
 
 export type OrchestrateGoal = 'serving' | 'healthy' | 'stable';
 
@@ -93,6 +93,19 @@ export async function orchestrateProfile(
   const closure = Array.from(new Set(known.flatMap(n => transitiveClosure(config.depends ?? {}, n)))).filter(n => registry.summary(n) != null);
   const levels = topoLevels(config.depends ?? {}, closure);
 
+  // topoLevels only emits nodes that reach in-degree 0, so any app inside a
+  // dependency cycle is silently omitted from the plan and never started.
+  // Detect that and surface it rather than letting the apps vanish.
+  const inSet = new Set(closure);
+  const scheduled = new Set(levels.flat());
+  const cyclicApps = closure.filter(n => !scheduled.has(n));
+  let cycleWarning: string | undefined;
+  if (cyclicApps.length) {
+    const cyc = findCycle(config.depends ?? {});
+    const cycStr = cyc ? cyc.filter(n => inSet.has(n)).join(' → ') : cyclicApps.join(', ');
+    cycleWarning = `dependency cycle detected (${cycStr}); ${cyclicApps.length} app(s) cannot be ordered and were skipped: ${cyclicApps.join(', ')}`;
+  }
+
   const alreadyHealthy: string[] = [];
   for (const n of closure) {
     const s = registry.summary(n);
@@ -106,12 +119,13 @@ export async function orchestrateProfile(
     return {
       profile: opts.profile,
       goal: opts.goal,
-      perApp: unhealthy.map(n => ({ name: n, reached: false, tries: 0 })),
+      perApp: unhealthy.map(n => ({ name: n, reached: false, tries: 0, ...(cyclicApps.includes(n) ? { error: 'in dependency cycle — cannot order' } : {}) })),
       totalMs: Date.now() - start,
       allReached: unhealthy.length === 0,
       dryRun: true,
       plannedOrder: levels,
       alreadyHealthy,
+      ...(cycleWarning ? { _meta: { warning: cycleWarning } } : {}),
     };
   }
 
@@ -119,6 +133,9 @@ export async function orchestrateProfile(
   const stableMs = opts.stableMs ?? 5000;
   const perApp = new Map<string, OrchestratePerApp>();
   for (const n of closure) perApp.set(n, { name: n, reached: false, tries: 0 });
+  // Cyclic apps aren't in any topo level, so the start/wait loops below skip
+  // them. Record why instead of returning them as an unexplained reached:false.
+  for (const n of cyclicApps) perApp.set(n, { name: n, reached: false, tries: 0, error: 'in dependency cycle — cannot order' });
 
   for (const level of levels) {
     await Promise.all(level.map(async n => {
@@ -140,10 +157,16 @@ export async function orchestrateProfile(
     }));
   }
 
-  const stragglers = [...perApp.values()].filter(p => !p.reached);
+  // Exclude cyclic apps from straggler recovery — they were never scheduled, so
+  // restarting them would ignore their (cyclic) dependencies.
+  const cyclicSet = new Set(cyclicApps);
+  const stragglers = [...perApp.values()].filter(p => !p.reached && !cyclicSet.has(p.name));
   if (stragglers.length > 0) {
-    const { runAutoFix, ALL_AUTO_FIX } = await import('./autoFix.js');
-    const permitted = (config.doctor?.autoFix?.permitted as any) ?? ALL_AUTO_FIX;
+    const { runAutoFix, ORCHESTRATE_SAFE_AUTO_FIX } = await import('./autoFix.js');
+    // Default to the safe subset: orchestrate should never rewrite the user's
+    // config or restart the daemon as a side effect. An explicit
+    // `doctor.autoFix.permitted` in config is still honoured (opt-in).
+    const permitted = (config.doctor?.autoFix?.permitted as any) ?? ORCHESTRATE_SAFE_AUTO_FIX;
     const remainingBudget = Math.max(5000, opts.timeoutMs - (Date.now() - start));
     const perStragglerTimeout = Math.max(5000, Math.floor(remainingBudget / Math.max(stragglers.length, 1)));
     let fixResult: any = { ran: [] };
@@ -185,6 +208,7 @@ export async function orchestrateProfile(
     totalMs: Date.now() - start,
     allReached,
   };
+  if (cycleWarning) result._meta = { ...(result._meta ?? {}), warning: cycleWarning };
 
   if (typeof opts.budgetTokens === 'number' && opts.budgetTokens > 0) {
     let budget = opts.budgetTokens;
@@ -208,7 +232,7 @@ export async function orchestrateProfile(
       omittedRows++;
     }
     if (omittedFailing || omittedRows) {
-      result._meta = { omitted: {} };
+      result._meta = { ...(result._meta ?? {}), omitted: {} };
       if (omittedFailing) result._meta.omitted!.stillFailing = omittedFailing;
       if (omittedRows) result._meta.omitted!.perApp = omittedRows;
     }

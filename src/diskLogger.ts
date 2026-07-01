@@ -47,6 +47,14 @@ export class DiskLogger {
   private rotate(): void {
     try {
       this.close();
+      // maxFiles <= 1 means "keep only the current file": truncate in place by
+      // removing the base and reopening, without creating an orphan `.1` that
+      // the pruning loop below would never reach.
+      if (this.cfg.maxFiles <= 1) {
+        try { fs.rmSync(this.filePath, { force: true }); } catch {}
+        this.open();
+        return;
+      }
       for (let i = this.cfg.maxFiles - 1; i >= 1; i--) {
         const from = `${this.filePath}.${i}`;
         const to = `${this.filePath}.${i + 1}`;

@@ -8,6 +8,11 @@ export interface PortHolder {
 }
 
 export function findPortHolder(port: number): PortHolder | null {
+  // `port` is interpolated into a PowerShell command string, so refuse anything
+  // that isn't a plain positive integer rather than trust the `number` type
+  // (a loosely-coerced request param could arrive as a non-numeric value).
+  port = Number(port);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
   if (process.platform === 'win32') {
     const ps = spawnSync('powershell', ['-NoProfile', '-Command', `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess`], { encoding: 'utf8', windowsHide: true });
     if (ps.status !== 0) return null;

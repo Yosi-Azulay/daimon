@@ -81,8 +81,12 @@ export class History {
       // Open + integrity-check. If the existing DB is corrupt we rename it to
       // history.db.corrupt-<ts> (keeping the data around for forensics) and
       // create a fresh DB. Schema migrations on the fresh DB happen below.
-      let opened: Database.Database;
-      const archiveCorrupt = (reason: string) => {
+      let opened: Database.Database | null = null;
+      // Returns true only if the corrupt file was successfully moved aside.
+      // If the rename fails (e.g. a stale handle still holds history.db on
+      // Windows), we must NOT reopen the same corrupt file and migrate against
+      // it — the caller disables history instead.
+      const archiveCorrupt = (reason: string): boolean => {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const archived = `${cfg.path}.corrupt-${ts}`;
         try {
@@ -91,25 +95,30 @@ export class History {
           try { fs.unlinkSync(cfg.path + '-shm'); } catch {}
           this.archivedCorruptPath = archived;
           process.stderr.write(`[daimon] history: archived corrupt db (${reason}) -> ${archived}\n`);
+          return true;
         } catch (renameErr: any) {
           this.warnOnce(`failed to archive corrupt history db: ${renameErr?.message || renameErr}`);
+          return false;
         }
       };
       try {
         opened = new Better(cfg.path);
-        const r = opened.prepare('PRAGMA integrity_check').get() as any;
+        const r = opened!.prepare('PRAGMA integrity_check').get() as any;
         const ok = r && (r.integrity_check === 'ok' || r['integrity_check'] === 'ok');
         if (!ok) {
-          try { opened.close(); } catch {}
-          archiveCorrupt('integrity_check failed');
+          try { opened!.close(); } catch {}
+          opened = null;
+          if (!archiveCorrupt('integrity_check failed')) { this.db = null; return; }
           opened = new Better(cfg.path);
         }
       } catch (openErr: any) {
         // Open-time errors (file-format mismatch, truncation) — same archive path.
-        archiveCorrupt(`open failed: ${openErr?.message || openErr}`);
+        if (opened) { try { opened.close(); } catch {} opened = null; }
+        if (!archiveCorrupt(`open failed: ${openErr?.message || openErr}`)) { this.db = null; return; }
         opened = new Better(cfg.path);
       }
       this.db = opened;
+      if (!this.db) return; // unreachable: we returned early on any archive failure
       this.db.pragma('journal_mode = WAL');
       this.migrate();
       this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
@@ -255,11 +264,19 @@ export class History {
       tx(batch);
     } catch (err: any) {
       this.warnOnce(`history write failed: ${err?.message || err}`);
+      // Re-queue on a failed transaction (disk full, locked DB) so a transient
+      // error doesn't silently drop the batch. Cap the backlog so a persistent
+      // failure can't grow the queue without bound.
+      if (this.queue.length < 10_000) this.queue = batch.concat(this.queue);
     }
   }
 
   private runRetention(): void {
     if (!this.db) return;
+    // retentionDays <= 0 means "keep everything" (the dashboard field documents
+    // 0 as "disables pruning"). Without this guard a cutoff of `now` would
+    // DELETE the entire history on the first pass — the opposite of intent.
+    if (!(this.cfg.retentionDays > 0)) return;
     try {
       const cutoff = Date.now() - this.cfg.retentionDays * 86400000;
       this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff);

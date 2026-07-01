@@ -9,6 +9,13 @@ function auditPath(): string {
   return path.join(daimonDir(), 'audit.log');
 }
 
+// Neutralise the column/row delimiters so a field value (raw header or config
+// key) can't inject extra tab-separated columns or forge a new row. Also drop
+// commas from within a single changedKeys entry so the ',' join stays lossless.
+function auditField(v: string): string {
+  return v.replace(/\t/g, ' ').replace(/[\r\n]/g, ' ').replace(/,/g, ' ');
+}
+
 function rotateIfNeeded(p: string): void {
   try {
     const st = fs.statSync(p);
@@ -37,7 +44,18 @@ export function appendAuditEntry(
   // Old (5-col) rows still parse — agent is just absent. The agent column is
   // the X-Daimon-Agent header the CLI sends (a per-session `<host>-<pid>-<hex>`
   // id), which is the only reliable signal when two Claudes share an IP+cwd.
-  const line = `${new Date().toISOString()}\t${remoteIp}\t${sha1}\t${changedKeys.join(',')}\t${cwd ?? ''}\t${agent ?? ''}\n`;
+  // cwd/agent come from raw HTTP headers and changedKeys from config keys, any
+  // of which could contain a TAB/newline and forge extra columns — strip the
+  // delimiters so a field can never break out of its own column.
+  const cols = [
+    new Date().toISOString(),
+    remoteIp,
+    sha1,
+    changedKeys.map(auditField).join(','),
+    auditField(cwd ?? ''),
+    auditField(agent ?? ''),
+  ];
+  const line = cols.join('\t') + '\n';
   try { fs.appendFileSync(p, line); } catch {}
 }
 

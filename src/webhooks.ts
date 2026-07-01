@@ -107,7 +107,7 @@ export class WebhookDispatcher {
       const r = await send(cfg.url, payload, cfg.headers ?? {});
       if (r.status >= 200 && r.status < 300) return true;
       if (attempt >= MAX_RETRIES) {
-        this.opts.onLog?.(`webhooks: ${cfg.url} -> HTTP ${r.status} (after ${attempt + 1} attempts)`);
+        this.opts.onLog?.(`webhooks: ${redactWebhookUrl(cfg.url)} -> HTTP ${r.status} (after ${attempt + 1} attempts)`);
         return false;
       }
       const backoff = 500 * Math.pow(2, attempt);
@@ -115,13 +115,25 @@ export class WebhookDispatcher {
       return this.attemptDelivery(send, cfg, payload, attempt + 1);
     } catch (err: any) {
       if (attempt >= MAX_RETRIES) {
-        this.opts.onLog?.(`webhooks: ${cfg.url} -> ${err?.message || err} (after ${attempt + 1} attempts)`);
+        this.opts.onLog?.(`webhooks: ${redactWebhookUrl(cfg.url)} -> ${err?.message || err} (after ${attempt + 1} attempts)`);
         return false;
       }
       const backoff = 500 * Math.pow(2, attempt);
       await new Promise(res => setTimeout(res, backoff));
       return this.attemptDelivery(send, cfg, payload, attempt + 1);
     }
+  }
+}
+
+// Slack/Discord webhook URLs carry the auth token in their path, so logging the
+// full URL on a delivery failure leaks a secret into daimon's logs. Reduce it to
+// origin + a redacted path so the log still identifies the endpoint.
+function redactWebhookUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}/…`;
+  } catch {
+    return '<webhook>';
   }
 }
 

@@ -40,14 +40,25 @@ async function ensureDaemon(): Promise<void> {
   } catch {}
 }
 
+// Ceiling on a single daemon call so a daemon that accepts the socket then
+// stalls can't hang an MCP tool invocation indefinitely. Set above the daemon's
+// own 600s max long-poll deadline (wait_for_app etc.) so legitimate long waits
+// complete while a truly hung daemon still unblocks.
+const CALL_TIMEOUT_MS = 660_000;
+
 async function callJson(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<any> {
   await ensureDaemon();
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), CALL_TIMEOUT_MS);
   try {
-    const res = await fetch(BASE() + pathname, { method, headers: headers() });
+    const res = await fetch(BASE() + pathname, { method, headers: headers(), signal: ac.signal });
     const text = await res.text();
     try { return { status: res.status, body: JSON.parse(text) }; } catch { return { status: res.status, body: text }; }
   } catch (err: any) {
+    if (err?.name === 'AbortError') return { status: 0, body: { error: `daimon call timed out after ${CALL_TIMEOUT_MS}ms` } };
     return { status: 0, body: { error: 'daimon is not running — start it with: daimon daemon start --detach' } };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

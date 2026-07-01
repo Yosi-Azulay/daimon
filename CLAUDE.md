@@ -48,7 +48,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - Never push to git or run `npm publish`. The human (Yosi) does that, with 2FA.
 - Never share `yosi@flycotech.com` in published artifacts. Public author is `Yosi Azulay (https://flycotech.com)`.
 - Never mutate global state outside `~/.daimon/*` and a local `daimon.config.json`.
-- Plug-ins are opt-in and sandboxed (see `src/plugins.ts`).
+- Plug-ins are opt-in but NOT sandboxed: they run in-process with full Node privileges, so daimon only loads files the user placed in `~/.daimon/plugins` themselves. Treat them as trusted code, not a confined extension (see `src/plugins.ts`).
 
 ## Conventions
 
