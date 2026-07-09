@@ -1,0 +1,99 @@
+/* daimon design tokens (M70).
+ *
+ * Single source of truth for themed values: color (light+dark via
+ * light-dark(), tracking the html color-scheme the theme toggle sets),
+ * spacing scale, type scale, radii, elevation and motion.
+ *
+ * Color tokens alias the Angular Material system palette so the whole app
+ * re-themes from one place; components consume --dm-* only — no raw hex/px
+ * for themed values outside this file.
+ */
+
+:root {
+  /* ---- color ------------------------------------------------------------ */
+  --dm-color-bg: var(--mat-sys-surface);
+  --dm-color-fg: var(--mat-sys-on-surface);
+  --dm-color-fg-muted: var(--mat-sys-on-surface-variant);
+  --dm-color-surface: var(--mat-sys-surface-container-low);
+  --dm-color-surface-2: var(--mat-sys-surface-container);
+  --dm-color-surface-3: var(--mat-sys-surface-container-high);
+  --dm-color-surface-4: var(--mat-sys-surface-container-highest);
+  --dm-color-border: var(--mat-sys-outline-variant);
+  --dm-color-border-strong: var(--mat-sys-outline);
+  --dm-color-primary: var(--mat-sys-primary);
+  --dm-color-on-primary: var(--mat-sys-on-primary);
+  --dm-color-accent: var(--mat-sys-tertiary);
+  --dm-color-danger: var(--mat-sys-error);
+  --dm-color-on-danger: var(--mat-sys-on-error);
+  /* status hues (used by pills, ribbons, sparklines) */
+  --dm-color-serving: var(--mat-sys-primary);
+  --dm-color-compiling: var(--mat-sys-tertiary);
+  --dm-color-starting: var(--mat-sys-secondary);
+  --dm-color-error: var(--mat-sys-error);
+  --dm-color-stopped: var(--mat-sys-outline-variant);
+  /* workspace/framework tone building blocks: components combine these with
+     a per-entity hue, e.g. oklch(var(--dm-tone-l) var(--dm-tone-c) <hue>) */
+  --dm-tone-l: 0.94;
+  --dm-tone-c: 0.05;
+  --dm-tone-badge-l: 0.62;
+  --dm-tone-badge-c: 0.14;
+
+  /* ---- spacing (4px base) ------------------------------------------------ */
+  --dm-space-1: 0.25rem;
+  --dm-space-2: 0.5rem;
+  --dm-space-3: 0.75rem;
+  --dm-space-4: 1rem;
+  --dm-space-5: 1.25rem;
+  --dm-space-6: 1.5rem;
+  --dm-space-8: 2rem;
+  --dm-space-12: 3rem;
+
+  /* ---- type -------------------------------------------------------------- */
+  --dm-font: Roboto, system-ui, -apple-system, sans-serif;
+  --dm-mono: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --dm-text-xs: 0.6875rem;   /* 11px — chips, table headers */
+  --dm-text-sm: 0.8125rem;   /* 13px — secondary text */
+  --dm-text-md: 0.875rem;    /* 14px — body */
+  --dm-text-lg: 1.05rem;     /* card titles */
+  --dm-text-xl: 1.5rem;      /* page h1 */
+  --dm-line-tight: 1rem;
+  --dm-line-normal: 1.25rem;
+  --dm-line-loose: 1.5rem;
+
+  /* ---- radii ------------------------------------------------------------- */
+  --dm-radius-xs: 4px;
+  --dm-radius-sm: 6px;
+  --dm-radius-md: 8px;
+  --dm-radius-lg: 10px;
+  --dm-radius-xl: 14px;
+  --dm-radius-full: 999px;
+
+  /* ---- elevation ----------------------------------------------------------- */
+  --dm-elev-1: var(--mat-sys-level1);
+  --dm-elev-2: var(--mat-sys-level2);
+  --dm-elev-3: var(--mat-sys-level3);
+
+  /* ---- motion -------------------------------------------------------------- */
+  --dm-motion-easing: cubic-bezier(0.2, 0, 0, 1);
+  --dm-motion-easing-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --dm-motion-short: 200ms;
+  --dm-motion-medium: 300ms;
+}
+
+/* Dark scheme: tone swatches need a darker lightness so workspace accents
+   and framework badges keep contrast against dark surfaces. Everything that
+   aliases --mat-sys-* re-themes automatically via color-scheme. */
+@media (prefers-color-scheme: dark) {
+  :root:not([style*='color-scheme: light']) {
+    --dm-tone-l: 0.30;
+    --dm-tone-c: 0.06;
+    --dm-tone-badge-l: 0.72;
+    --dm-tone-badge-c: 0.13;
+  }
+}
+:root[style*='color-scheme: dark'] {
+  --dm-tone-l: 0.30;
+  --dm-tone-c: 0.06;
+  --dm-tone-badge-l: 0.72;
+  --dm-tone-badge-c: 0.13;
+}

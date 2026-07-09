@@ -322,4 +322,7 @@ export interface AppSummary {
   // from the p50 of the last 10 successful compile times. Only populated when
   // status === 'compiling'. Use with `Date.now()` to render countdowns.
   estimatedReadyAtMs?: number;
+  // Framework registry profile id ('nextjs', 'django', custom id, ...) —
+  // drives the dashboard/TUI badge + tone (M70).
+  serverProfile?: string | null;
 }

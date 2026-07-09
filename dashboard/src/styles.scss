@@ -16,20 +16,15 @@ html {
 html, body { height: 100%; }
 body {
   margin: 0;
-  font-family: Roboto, system-ui, -apple-system, sans-serif;
-  background: var(--mat-sys-surface);
-  color: var(--mat-sys-on-surface);
+  font-family: var(--dm-font);
+  background: var(--dm-color-bg);
+  color: var(--dm-color-fg);
 }
 
-a { color: var(--mat-sys-primary); }
+a { color: var(--dm-color-primary); }
 
-:root {
-  --dm-motion-easing: cubic-bezier(0.2, 0, 0, 1);
-  --dm-motion-easing-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
-  --dm-motion-short: 200ms;
-  --dm-motion-medium: 300ms;
-  --dm-mono: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
+// Design tokens (motion/spacing/type/radii/color aliases) live in
+// src/styles/tokens.css (M70) — loaded ahead of this file via angular.json.
 
 // Fonts: load Roboto Mono for code-y content (ports, paths, logs).
 @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap');

@@ -316,6 +316,7 @@ export class Registry extends EventEmitter {
       baseName: s.baseName ?? s.name,
       lastChangeMs,
       estimatedReadyAtMs,
+      serverProfile: e.app.serverProfile ?? null,
     };
   }
 

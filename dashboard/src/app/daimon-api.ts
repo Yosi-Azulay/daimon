@@ -23,6 +23,18 @@ export interface AppRow {
   memMB?: number | null;
   tags?: string[];
   estimatedReadyAtMs?: number;
+  // Framework registry profile id — drives the badge + tone (M70).
+  serverProfile?: string | null;
+}
+
+export interface FrameworkMeta {
+  id: string;
+  family: string;
+  builtin: boolean;
+  badge: string;
+  tone: number;
+  matches: number;
+  apps: string[];
 }
 
 export interface WorkspaceRow {
@@ -100,6 +112,11 @@ export class DaimonApi {
   // /api/agents only ties agents to apps through live locks, so lock sightings
   // are accumulated across polls to build a per-app "recently interacted" list.
   appAgents = signal<Record<string, { agent: string; at: number }[]>>({});
+  // Framework registry metadata (badge/tone per profile id), fetched once —
+  // the registry only changes on daemon restart or config reload (M70).
+  frameworks = signal<Record<string, FrameworkMeta>>({});
+  // 24h status/error buckets per app for the mission-control sparkline (M70).
+  sparkBuckets = signal<Record<string, string[]>>({});
 
   workspaces = computed(() => {
     const seen = new Set<string>();
@@ -119,8 +136,55 @@ export class DaimonApi {
   start(): void {
     if (this.streamStop) return;
     void this.refresh();
+    void this.loadFrameworks();
+    void this.loadSparkline();
     this.streamStop = this.openEventStream();
     this.pollTimer = setInterval(() => void this.refresh(), POLL_MS);
+    this.sparkTimer = setInterval(() => void this.loadSparkline(), 60_000);
+  }
+
+  private sparkTimer?: ReturnType<typeof setInterval>;
+
+  async loadFrameworks(): Promise<void> {
+    try {
+      const r = await firstValueFrom(this.http.get<{ profiles: FrameworkMeta[] }>('/api/frameworks'));
+      const map: Record<string, FrameworkMeta> = {};
+      for (const p of r?.profiles ?? []) map[p.id] = p;
+      this.frameworks.set(map);
+    } catch { /* badge-less rendering is fine */ }
+  }
+
+  frameworkFor(profileId: string | null | undefined): FrameworkMeta | null {
+    if (!profileId) return null;
+    return this.frameworks()[profileId] ?? null;
+  }
+
+  // 24 hourly buckets per app from the history timeline. Bucket kind ranks
+  // error > compiling/starting > serving > stopped (an error mark must not
+  // be washed out by a later serving event in the same hour).
+  async loadSparkline(): Promise<void> {
+    try {
+      const rows = await firstValueFrom(this.http.get<any[]>('/api/history/timeline?since=24h&kinds=status,error&limit=5000'));
+      if (!Array.isArray(rows)) return;
+      const BUCKETS = 24;
+      const windowMs = 24 * 3600 * 1000;
+      const now = Date.now();
+      const cutoff = now - windowMs;
+      const bucketMs = windowMs / BUCKETS;
+      const ranks: Record<string, number> = { stopped: 1, serving: 2, compiling: 3, starting: 3, error: 4 };
+      const out: Record<string, string[]> = {};
+      for (const r of rows) {
+        if (!r?.app || typeof r.ts !== 'number' || r.ts < cutoff) continue;
+        const kind = r.kind === 'error' ? 'error' : (r.payload?.to_state ?? r.payload?.to);
+        if (!kind || !(kind in ranks)) continue;
+        const idx = Math.min(BUCKETS - 1, Math.floor((r.ts - cutoff) / bucketMs));
+        let arr = out[r.app];
+        if (!arr) { arr = new Array(BUCKETS).fill(''); out[r.app] = arr; }
+        const prev = arr[idx];
+        if (!prev || ranks[kind] > (ranks[prev] ?? 0)) arr[idx] = kind;
+      }
+      this.sparkBuckets.set(out);
+    } catch { /* sparkline is decorative — never block the page on it */ }
   }
 
   stop(): void {
@@ -128,6 +192,8 @@ export class DaimonApi {
     this.streamStop = undefined;
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = undefined;
+    if (this.sparkTimer) clearInterval(this.sparkTimer);
+    this.sparkTimer = undefined;
   }
 
   async refresh(): Promise<void> {

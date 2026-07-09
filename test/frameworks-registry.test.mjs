@@ -239,6 +239,11 @@ test('GET /api/frameworks lists built-ins + custom with match counts', async () 
     const phoenix = body.profiles.find(p => p.id === 'phoenix');
     assert.equal(phoenix.builtin, false);
     assert.equal(phoenix.matches, 0);
+    // M70: every profile ships a badge tag + tone hue for the dashboard/TUI.
+    for (const p of body.profiles) {
+      assert.ok(typeof p.badge === 'string' && p.badge.length > 0, `${p.id} missing badge`);
+      assert.ok(typeof p.tone === 'number' && p.tone >= 0 && p.tone < 360, `${p.id} missing tone`);
+    }
   } finally {
     await new Promise(r => server.close(r));
   }

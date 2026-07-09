@@ -797,7 +797,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (parts[0] === 'api' && parts[1] === 'frameworks' && method === 'GET') {
         const cfg = opts.getConfig?.();
-        const { allProfiles } = await import('./frameworks.js');
+        const { allProfiles, profileBadge, profileTone } = await import('./frameworks.js');
         const { discoverApps } = await import('./discovery.js');
         const stats = { scanned: 0, rejected: {} as Record<string, number>, profiles: {} as Record<string, number> };
         const apps = cfg ? discoverApps(cfg, { stats }) : [];
@@ -811,6 +811,8 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           healthProbe: p.healthProbe ?? null,
           readiness: p.readiness?.pattern ?? null,
           url: p.url?.pattern ?? null,
+          badge: profileBadge(p),
+          tone: profileTone(p),
           matches: stats.profiles[p.id] ?? 0,
           apps: apps.filter(a => (a.serverProfile ?? a.workspaceType) === p.id).map(a => a.name),
         }));

@@ -20,7 +20,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { AppRow, DaimonApi, LockSnapshot } from './daimon-api';
-import { SkeletonComponent, EmptyStateComponent, MonoComponent, StatusPillComponent } from './ui-primitives';
+import { SkeletonComponent, EmptyStateComponent, MonoComponent, StatusPillComponent, FrameworkBadgeComponent, SparklineComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
 
 type ViewMode = 'cards' | 'list';
@@ -35,7 +35,7 @@ const TAGS_KEY = 'daimon.apps.tags';
   selector: 'dm-apps-cards',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MatTooltipModule, MatProgressSpinnerModule, StatusPillComponent, MonoComponent],
+  imports: [MatTooltipModule, MatProgressSpinnerModule, StatusPillComponent, MonoComponent, FrameworkBadgeComponent, SparklineComponent],
   template: `
     <div class="g">
       @for (a of items; track a.name; let i = $index) {
@@ -48,10 +48,8 @@ const TAGS_KEY = 'daimon.apps.tags';
           role="button" tabindex="0"
           (keydown.enter)="open.emit(a.name)">
           <div class="ac"></div>
-          <div class="rb" [matTooltip]="ribbonTooltip(a.name)" aria-hidden="true">
-            @for (t of ribbonTicks(a.name); track $index) {
-              <span class="tk" [attr.data-k]="t"></span>
-            }
+          <div class="sp" [matTooltip]="sparkTooltip(a.name)" aria-hidden="true">
+            <dm-sparkline [buckets]="spark(a.name)"></dm-sparkline>
           </div>
           <div class="h">
             <dm-status-pill [status]="a.status" [health]="a.health" [eta]="eta(a)"></dm-status-pill>
@@ -61,7 +59,12 @@ const TAGS_KEY = 'daimon.apps.tags';
               </span>
             }
           </div>
-          <div class="n"><dm-mono>{{ a.name }}</dm-mono></div>
+          <div class="n">
+            <dm-mono>{{ a.name }}</dm-mono>
+            @if (fw(a); as f) {
+              <dm-framework-badge [badge]="f.badge" [tone]="f.tone" [profileId]="f.id"></dm-framework-badge>
+            }
+          </div>
           <div class="m">
             @if (a.port != null) {
               <span class="mi" matTooltip="Port">
@@ -121,16 +124,11 @@ const TAGS_KEY = 'daimon.apps.tags';
     .c{position:relative;display:flex;flex-direction:column;background:var(--mat-sys-surface-container-low);border:1px solid var(--mat-sys-outline-variant);border-radius:14px;overflow:hidden;cursor:pointer;transition:box-shadow var(--dm-motion-short) var(--dm-motion-easing),transform var(--dm-motion-short) var(--dm-motion-easing),border-color var(--dm-motion-short) var(--dm-motion-easing)}
     .c:hover{box-shadow:var(--mat-sys-level2);transform:translateY(-1px)}
     .c.f{border-color:var(--mat-sys-primary);box-shadow:0 0 0 2px color-mix(in oklch,var(--mat-sys-primary) 25%,transparent)}
-    .ac{height:4px;background:var(--dm-tone,var(--mat-sys-surface-container))}
-    .rb{display:flex;gap:1px;height:6px;padding:0 .75rem;align-items:center;background:var(--mat-sys-surface-container-lowest)}
-    .rb .tk{flex:1;height:6px;border-radius:1px;background:var(--mat-sys-surface-container)}
-    .rb .tk[data-k="serving"]{background:color-mix(in oklch,var(--mat-sys-primary) 60%,transparent)}
-    .rb .tk[data-k="error"]{background:var(--mat-sys-error)}
-    .rb .tk[data-k="starting"],.rb .tk[data-k="compiling"]{background:color-mix(in oklch,var(--mat-sys-tertiary) 70%,transparent)}
-    .rb .tk[data-k="stopped"]{background:var(--mat-sys-outline-variant)}
+    .ac{height:4px;background:var(--dm-tone,var(--dm-color-surface-2))}
+    .sp{padding:2px var(--dm-space-3) 0;background:var(--mat-sys-surface-container-lowest)}
     .h{display:flex;align-items:center;justify-content:space-between;padding:.75rem .875rem 0}
-    .n{padding:.375rem .875rem 0;font:500 1.05rem/1.5rem Roboto}
-    .n .dm-mono{font-size:1.05rem;font-weight:500}
+    .n{padding:.375rem .875rem 0;font:500 var(--dm-text-lg)/var(--dm-line-loose) var(--dm-font);display:flex;align-items:center;gap:var(--dm-space-2);flex-wrap:wrap}
+    .n .dm-mono{font-size:var(--dm-text-lg);font-weight:500}
     .m{padding:.25rem .875rem .5rem;display:flex;flex-wrap:wrap;gap:.75rem;color:var(--mat-sys-on-surface-variant)}
     .mi{display:inline-flex;align-items:center;gap:.25rem;font-size:.8125rem}
     .mi .material-symbols-outlined{font-size:14px}
@@ -172,32 +170,8 @@ export class AppsCardsViewComponent {
     this.destroyRef.onDestroy(() => clearInterval(t));
   }
 
-  // 20 ticks across a 60-min rolling window. Empty buckets render as the
-  // surface-container tone; status-bearing buckets win over earlier ones in
-  // the order error > compiling > serving > stopped.
-  private readonly RIBBON_BUCKETS = 20;
-  private readonly RIBBON_WINDOW_MS = 60 * 60 * 1000;
-
-  private readonly perAppTicks = computed<Map<string, string[]>>(() => {
-    const evs = this.api.events();
-    const now = Date.now();
-    const cutoff = now - this.RIBBON_WINDOW_MS;
-    const bucketMs = this.RIBBON_WINDOW_MS / this.RIBBON_BUCKETS;
-    const out = new Map<string, string[]>();
-    const ranks: Record<string, number> = { stopped: 1, serving: 2, compiling: 3, starting: 3, error: 4 };
-    for (const ev of evs) {
-      if (ev.type !== 'status' || !ev.app || !ev.to) continue;
-      if (ev.ts < cutoff) continue;
-      const idx = Math.min(this.RIBBON_BUCKETS - 1, Math.floor((ev.ts - cutoff) / bucketMs));
-      let arr = out.get(ev.app);
-      if (!arr) { arr = new Array(this.RIBBON_BUCKETS).fill(''); out.set(ev.app, arr); }
-      const prev = arr[idx];
-      if (!prev || (ranks[ev.to] ?? 0) > (ranks[prev] ?? 0)) arr[idx] = ev.to;
-    }
-    return out;
-  });
-
   isBusy(name: string, kind: string): boolean { return !!this.busy[name]?.[kind]; }
+  fw(a: AppRow) { return this.api.frameworkFor(a.serverProfile); }
   lockFor(name: string): LockSnapshot | null {
     const lk = this.api.agentLocks()[name];
     return lk && lk.expiresAt > this.now() ? lk : null;
@@ -216,16 +190,17 @@ export class AppsCardsViewComponent {
     if (a.status !== 'compiling' || a.estimatedReadyAtMs == null) return '';
     return '~' + Math.max(0, Math.ceil((a.estimatedReadyAtMs - this.now()) / 1000)) + 's';
   }
-  ribbonTicks(name: string): string[] {
-    return this.perAppTicks().get(name) ?? new Array(this.RIBBON_BUCKETS).fill('');
+  // 24h uptime/error sparkline (M70), fed from the history timeline.
+  spark(name: string): string[] {
+    return this.api.sparkBuckets()[name] ?? new Array(24).fill('');
   }
-  ribbonTooltip(name: string): string {
-    const ticks = this.perAppTicks().get(name);
-    if (!ticks) return 'no status events in the last 60 min';
+  sparkTooltip(name: string): string {
+    const ticks = this.api.sparkBuckets()[name];
+    if (!ticks) return 'no activity in the last 24h';
     const counts: Record<string, number> = {};
     for (const t of ticks) if (t) counts[t] = (counts[t] ?? 0) + 1;
-    const parts = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(' · ');
-    return parts ? `last 60 min: ${parts}` : 'no status events in the last 60 min';
+    const parts = Object.entries(counts).map(([k, v]) => `${v}h ${k}`).join(' · ');
+    return parts ? `last 24h: ${parts}` : 'no activity in the last 24h';
   }
   fmtSince(ms: number | null | undefined): string {
     if (!ms || ms <= 0) return '';

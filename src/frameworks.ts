@@ -66,7 +66,26 @@ export interface FrameworkProfile {
   commandCandidates?: { ifFile: string; command: string; win32?: string }[];
   // Windows replacement for `command` (bin/rails needs the ruby shim).
   win32Command?: string;
+  // Short badge tag for the dashboard/TUI/VS Code ('next', 'dj', 'rs'…) and
+  // a deterministic accent hue (0–360) for the framework tone (M70).
+  badge?: string;
+  tone?: number;
   builtin: boolean;
+}
+
+// Deterministic FNV-1a hue for profiles without an explicit tone (customs).
+export function profileTone(profile: Pick<FrameworkProfile, 'id' | 'tone'>): number {
+  if (typeof profile.tone === 'number') return ((profile.tone % 360) + 360) % 360;
+  let h = 2166136261;
+  for (let i = 0; i < profile.id.length; i++) {
+    h ^= profile.id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 360;
+}
+
+export function profileBadge(profile: Pick<FrameworkProfile, 'id' | 'badge'>): string {
+  return profile.badge ?? profile.id.slice(0, 5);
 }
 
 // Command placeholders, resolved per directory at discovery time:
@@ -443,6 +462,41 @@ const BUILTINS: FrameworkProfile[] = [
     builtin: true,
   },
 ];
+
+// Badge tag + accent hue per built-in (M70). Hues loosely track each
+// framework's brand color; the dashboard renders them as monochrome glyphs
+// tinted by tone, the TUI/VS Code as short [tags].
+const BADGES: Record<string, { badge: string; tone: number }> = {
+  nx: { badge: 'nx', tone: 217 },
+  angular: { badge: 'ng', tone: 348 },
+  tauri: { badge: 'tauri', tone: 45 },
+  nextjs: { badge: 'next', tone: 240 },
+  nuxt: { badge: 'nuxt', tone: 152 },
+  sveltekit: { badge: 'kit', tone: 15 },
+  astro: { badge: 'astro', tone: 275 },
+  remix: { badge: 'rr', tone: 200 },
+  vite: { badge: 'vite', tone: 265 },
+  storybook: { badge: 'sb', tone: 330 },
+  django: { badge: 'dj', tone: 150 },
+  rails: { badge: 'rails', tone: 5 },
+  fastapi: { badge: 'fast', tone: 175 },
+  'go-air': { badge: 'go', tone: 190 },
+  'rust-trunk': { badge: 'rs', tone: 25 },
+  dotnet: { badge: '.net', tone: 262 },
+  'spring-boot': { badge: 'spr', tone: 130 },
+  laravel: { badge: 'lara', tone: 10 },
+  flask: { badge: 'flask', tone: 210 },
+  'express-nest': { badge: 'node', tone: 340 },
+  expo: { badge: 'expo', tone: 250 },
+  flutter: { badge: 'flut', tone: 205 },
+  'pnpm-workspace': { badge: 'pnpm', tone: 35 },
+  turbo: { badge: 'turbo', tone: 315 },
+  'package-json': { badge: 'npm', tone: 355 },
+};
+for (const p of BUILTINS) {
+  const b = BADGES[p.id];
+  if (b) { p.badge = b.badge; p.tone = b.tone; }
+}
 
 export function builtinProfiles(): FrameworkProfile[] {
   return BUILTINS;
