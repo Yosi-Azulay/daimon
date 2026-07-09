@@ -390,6 +390,16 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     exitCodes: stdExit,
   },
   {
+    name: 'frameworks',
+    args: '',
+    summary: 'List framework profiles (built-in + custom): detection markers, command, which apps matched, rejection stats.',
+    description: 'List the framework adapter registry — built-in profiles plus custom profiles from daimon.config.json `frameworks: []`. Shows per-profile match counts, the apps each profile discovered, and discovery rejection stats.',
+    example: 'daimon frameworks',
+    needsDaemon: true,
+    group: 'introspection',
+    exitCodes: stdExit,
+  },
+  {
     name: 'export-config',
     args: '[--redacted]',
     summary: 'Emit the active config to stdout. --redacted replaces apiToken with "<redacted>" and rewrites home paths to ~/...',

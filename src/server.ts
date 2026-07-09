@@ -795,6 +795,34 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      if (parts[0] === 'api' && parts[1] === 'frameworks' && method === 'GET') {
+        const cfg = opts.getConfig?.();
+        const { allProfiles } = await import('./frameworks.js');
+        const { discoverApps } = await import('./discovery.js');
+        const stats = { scanned: 0, rejected: {} as Record<string, number>, profiles: {} as Record<string, number> };
+        const apps = cfg ? discoverApps(cfg, { stats }) : [];
+        const profiles = allProfiles(cfg?.frameworks).map(p => ({
+          id: p.id,
+          family: p.family,
+          builtin: p.builtin,
+          command: p.command,
+          workspace: p.workspace ?? null,
+          errorParser: p.errorParser ?? null,
+          healthProbe: p.healthProbe ?? null,
+          readiness: p.readiness?.pattern ?? null,
+          url: p.url?.pattern ?? null,
+          matches: stats.profiles[p.id] ?? 0,
+          apps: apps.filter(a => (a.serverProfile ?? a.workspaceType) === p.id).map(a => a.name),
+        }));
+        sendJson(res, 200, {
+          profiles,
+          builtinCount: profiles.filter(p => p.builtin).length,
+          customCount: profiles.filter(p => !p.builtin).length,
+          stats: { scanned: stats.scanned, rejected: stats.rejected },
+        });
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'doctor' && parts[2] === 'auto-fix' && method === 'POST') {
         if (!requireAuth()) return;
         const body: any = await readJsonBody(req);

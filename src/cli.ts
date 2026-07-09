@@ -901,6 +901,11 @@ async function main() {
       out(r.body);
       return;
     }
+    case 'frameworks': {
+      const r = await call('/api/frameworks');
+      out(r.body);
+      return;
+    }
     case 'profiles': {
       const sub = f.positional[0];
       if (sub !== 'suggest') failHint('usage: daimon profiles suggest [--since 30d] [--min 5]');

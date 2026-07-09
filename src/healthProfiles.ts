@@ -1,5 +1,3 @@
-import type { ServerProfile } from './types.js';
-
 // Default health-probe path per server framework. When an app's serverProfile
 // is known and the user hasn't pinned a healthProbePath override, daimon
 // probes the profile's recommended path — typically a cheap framework page
@@ -7,7 +5,7 @@ import type { ServerProfile } from './types.js';
 //
 // For profiles with no obvious sentinel, fall back to "/" and rely on the
 // smart-status interpretation (200/302/401 = alive).
-export const HEALTH_PROBE_DEFAULTS: Partial<Record<ServerProfile, string>> = {
+export const HEALTH_PROBE_DEFAULTS: Partial<Record<string, string>> = {
   django: '/admin/login/',
   rails: '/up',
   fastapi: '/docs',
@@ -17,7 +15,7 @@ export const HEALTH_PROBE_DEFAULTS: Partial<Record<ServerProfile, string>> = {
   // already targets — leaving these unset preserves the M46 behavior.
 };
 
-export function profileProbePath(profile: ServerProfile | undefined): string | null {
+export function profileProbePath(profile: string | undefined): string | null {
   if (!profile) return null;
   return HEALTH_PROBE_DEFAULTS[profile] ?? null;
 }

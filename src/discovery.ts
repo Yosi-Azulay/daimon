@@ -3,6 +3,7 @@ import path from 'node:path';
 import fg from 'fast-glob';
 import type { AppmanConfig, DiscoveredApp } from './types.js';
 import { isSafeAppName } from './shellSafe.js';
+import { allProfiles, matchDetect, RootFs, type FrameworkProfile } from './frameworks.js';
 
 function readJson(p: string): any | null {
   try {
@@ -32,6 +33,9 @@ function toFgPath(p: string): string {
 export interface DiscoveryStats {
   scanned: number;
   rejected: Record<string, number>;
+  // Per-profile match counts (M65). Keyed by profile id; workspace
+  // enumerators count one per registered project.
+  profiles?: Record<string, number>;
 }
 
 export interface DiscoverOptions {
@@ -42,6 +46,12 @@ export interface DiscoverOptions {
 function bump(stats: DiscoveryStats | undefined, reason: string): void {
   if (!stats) return;
   stats.rejected[reason] = (stats.rejected[reason] ?? 0) + 1;
+}
+
+function bumpProfile(stats: DiscoveryStats | undefined, id: string, n = 1): void {
+  if (!stats) return;
+  if (!stats.profiles) stats.profiles = {};
+  stats.profiles[id] = (stats.profiles[id] ?? 0) + n;
 }
 
 // Pick a globally unique storage key for `baseName`. When two workspaces have
@@ -64,10 +74,6 @@ function uniqueKey(
   return { key: candidate, collided: false };
 }
 
-function fileContains(p: string, rx: RegExp): boolean {
-  try { return rx.test(fs.readFileSync(p, 'utf8')); } catch { return false; }
-}
-
 function addUnique(
   found: Map<string, DiscoveredApp>,
   baseName: string,
@@ -84,106 +90,136 @@ function addUnique(
   return true;
 }
 
-function detectPolyglotApps(
-  root: string,
-  workspaceLabel: string | undefined,
-  found: Map<string, DiscoveredApp>,
-): boolean {
-  const baseName = path.basename(root);
-  let matched = false;
+interface RootContext {
+  root: string;
+  workspaceLabel: string | undefined;
+  viteSubfolders: boolean;
+  found: Map<string, DiscoveredApp>;
+  warnings: string[];
+  stats: DiscoveryStats | undefined;
+}
 
-  const managePy = path.join(root, 'manage.py');
-  if (fs.existsSync(managePy) && fileContains(managePy, /\bdjango\b/i)) {
-    addUnique(found, baseName, {
-      workspaceRoot: root,
-      workspaceType: 'polyglot',
-      serverProfile: 'django',
-      command: 'python manage.py runserver',
+// Nx workspace enumerator: one app per project.json with a serve target.
+// Returns true when the root is an nx workspace (even with zero projects) so
+// the angular row stays suppressed and the root counts as "matched".
+function enumerateNx(profile: FrameworkProfile, ctx: RootContext, rootFs: RootFs): boolean {
+  if (!rootFs.exists('nx.json')) return false;
+  const projectFiles = fg.sync('**/project.json', {
+    cwd: toFgPath(ctx.root),
+    ignore: ['**/node_modules/**', '**/dist/**', '**/.nx/**', '**/.git/**'],
+    absolute: true,
+    dot: false,
+    // Don't follow symlinks out of the searchRoot — a symlink pointing
+    // outside the tree could otherwise pull in projects (and set a
+    // workspaceRoot) beyond the configured root.
+    followSymbolicLinks: false,
+  });
+
+  for (const pf of projectFiles) {
+    if (ctx.stats) ctx.stats.scanned += 1;
+    const pj = readJson(pf);
+    if (!pj) { bump(ctx.stats, 'unreadable project.json'); continue; }
+    if (!hasServeTarget(pj)) { bump(ctx.stats, 'no serve target'); continue; }
+    const name: string | undefined = pj.name || path.basename(path.dirname(pf));
+    if (!name) { bump(ctx.stats, 'project has no name'); continue; }
+    const added = addUnique(ctx.found, name, {
+      workspaceRoot: ctx.root,
+      workspaceType: profile.workspaceType,
+      serverProfile: profile.id,
+      command: profile.command.replace('{name}', name),
       hidden: false,
       tags: [],
-      workspaceLabel,
+      tasks: listTargetsExceptServe(pj),
+      workspaceLabel: ctx.workspaceLabel,
     });
-    matched = true;
+    if (added) {
+      bumpProfile(ctx.stats, profile.id);
+    } else {
+      ctx.warnings.push(`duplicate project name "${name}" within ${ctx.root} — keeping first`);
+      bump(ctx.stats, 'duplicate name');
+    }
   }
+  return true;
+}
 
-  const railsBin = path.join(root, 'bin', 'rails');
-  const gemfile = path.join(root, 'Gemfile');
-  if (fs.existsSync(railsBin) && fs.existsSync(gemfile)) {
-    addUnique(found, baseName, {
-      workspaceRoot: root,
-      workspaceType: 'polyglot',
-      serverProfile: 'rails',
-      command: 'bin/rails server',
+// Angular workspace enumerator: one app per angular.json project with a serve
+// target. Matches on angular.json presence like the nx enumerator.
+function enumerateAngular(profile: FrameworkProfile, ctx: RootContext, rootFs: RootFs): boolean {
+  if (!rootFs.exists('angular.json')) return false;
+  const ng = readJson(path.join(ctx.root, 'angular.json'));
+  const projects = ng?.projects || {};
+  for (const [name, p] of Object.entries<any>(projects)) {
+    if (!hasServeTarget(p)) continue;
+    const added = addUnique(ctx.found, name, {
+      workspaceRoot: ctx.root,
+      workspaceType: profile.workspaceType,
+      serverProfile: profile.id,
+      command: profile.command.replace('{name}', name),
       hidden: false,
       tags: [],
-      workspaceLabel,
+      tasks: listTargetsExceptServe(p),
+      workspaceLabel: ctx.workspaceLabel,
     });
-    matched = true;
+    if (added) bumpProfile(ctx.stats, profile.id);
+    else ctx.warnings.push(`duplicate project name "${name}" within ${ctx.root} — keeping first`);
   }
+  return true;
+}
 
-  const pyproject = path.join(root, 'pyproject.toml');
-  const requirementsTxt = path.join(root, 'requirements.txt');
-  const hasFastapi =
-    (fs.existsSync(pyproject) && fileContains(pyproject, /\bfastapi\b/i)) ||
-    (fs.existsSync(requirementsTxt) && fileContains(requirementsTxt, /\bfastapi\b/i));
-  if (hasFastapi) {
-    addUnique(found, baseName, {
-      workspaceRoot: root,
-      workspaceType: 'polyglot',
-      serverProfile: 'fastapi',
-      command: 'uvicorn main:app --reload',
-      hidden: false,
-      tags: [],
-      workspaceLabel,
-    });
-    matched = true;
+// Single-app profile: marker match registers one app named after the root dir.
+function detectSingleApp(profile: FrameworkProfile, ctx: RootContext, rootFs: RootFs): boolean {
+  if (!matchDetect(profile.detect, rootFs)) return false;
+  const baseName = `${path.basename(ctx.root)}${profile.nameSuffix ?? ''}`;
+  const added = addUnique(ctx.found, baseName, {
+    workspaceRoot: ctx.root,
+    workspaceType: profile.workspaceType,
+    serverProfile: profile.id,
+    command: profile.command,
+    hidden: false,
+    tags: [],
+    workspaceLabel: ctx.workspaceLabel,
+  });
+  if (added) bumpProfile(ctx.stats, profile.id);
+
+  // Vite keeps its opt-in subfolder scan: `{ path, viteSubfolders: true }`
+  // roots register each direct child with its own vite config too.
+  if (profile.id === 'vite' && ctx.viteSubfolders) {
+    const sub = fg.sync('*/vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(ctx.root), absolute: true, followSymbolicLinks: false });
+    for (const f of sub) {
+      const dir = path.dirname(f);
+      const subBase = path.basename(dir);
+      if (subBase === path.basename(ctx.root)) continue;
+      const subAdded = addUnique(ctx.found, subBase, {
+        workspaceRoot: dir,
+        workspaceType: profile.workspaceType,
+        serverProfile: profile.id,
+        command: profile.command,
+        hidden: false,
+        tags: [],
+        workspaceLabel: ctx.workspaceLabel,
+      });
+      if (subAdded) bumpProfile(ctx.stats, profile.id);
+    }
   }
-
-  const airToml = fs.existsSync(path.join(root, '.air.toml')) || fs.existsSync(path.join(root, 'air.toml'));
-  if (airToml) {
-    addUnique(found, baseName, {
-      workspaceRoot: root,
-      workspaceType: 'polyglot',
-      serverProfile: 'go-air',
-      command: 'air',
-      hidden: false,
-      tags: [],
-      workspaceLabel,
-    });
-    matched = true;
-  }
-
-  const trunkToml = path.join(root, 'Trunk.toml');
-  if (fs.existsSync(trunkToml)) {
-    addUnique(found, baseName, {
-      workspaceRoot: root,
-      workspaceType: 'polyglot',
-      serverProfile: 'rust-trunk',
-      command: 'trunk serve',
-      hidden: false,
-      tags: [],
-      workspaceLabel,
-    });
-    matched = true;
-  }
-
-  return matched;
+  return true;
 }
 
 // Warmup cache (M54): repeated scans with unchanged searchRoots (startup +
 // dashboard explain + doctor within a few seconds) reuse the last result.
-// The key embeds the full searchRoots config, so any root change invalidates;
-// the short TTL keeps newly created workspaces discoverable without a restart.
+// The key embeds the full searchRoots + custom-frameworks config, so any
+// change invalidates; the short TTL keeps newly created workspaces
+// discoverable without a restart.
 const SCAN_CACHE_TTL_MS = 10_000;
 let scanCache: { key: string; at: number; apps: DiscoveredApp[]; warnings: string[]; stats: DiscoveryStats } | null = null;
 
 export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): DiscoveredApp[] {
-  const cacheKey = JSON.stringify(config.searchRoots);
+  const cacheKey = JSON.stringify([config.searchRoots, config.frameworks ?? []]);
   if (scanCache && scanCache.key === cacheKey && Date.now() - scanCache.at < SCAN_CACHE_TTL_MS) {
     if (opts.warnings) opts.warnings.push(...scanCache.warnings);
     if (opts.stats) {
       opts.stats.scanned = scanCache.stats.scanned;
       opts.stats.rejected = { ...scanCache.stats.rejected };
+      opts.stats.profiles = { ...(scanCache.stats.profiles ?? {}) };
     }
     return scanCache.apps.map(a => ({ ...a }));
   }
@@ -192,6 +228,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
   const found = new Map<string, DiscoveredApp>();
   const warnings: string[] = opts.warnings ?? [];
   const ownsWarnings = opts.warnings === undefined;
+  const profiles = allProfiles(config.frameworks);
 
   for (const rootEntry of config.searchRoots) {
     const rootRaw = typeof rootEntry === 'string' ? rootEntry : rootEntry.path;
@@ -204,121 +241,25 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
       continue;
     }
 
-    const nxJson = path.join(root, 'nx.json');
-    const angularJson = path.join(root, 'angular.json');
+    const ctx: RootContext = { root, workspaceLabel, viteSubfolders, found, warnings, stats: opts.stats };
+    const rootFs = new RootFs(root);
+    // Multi-family coexistence (M65): every profile row gets a shot at every
+    // root; `suppressedBy` expresses the few intra-family precedence rules
+    // (nx over angular, vite/storybook over the polyglot rows).
+    const matched = new Set<string>();
 
-    if (fs.existsSync(nxJson)) {
-      const projectFiles = fg.sync('**/project.json', {
-        cwd: toFgPath(root),
-        ignore: ['**/node_modules/**', '**/dist/**', '**/.nx/**', '**/.git/**'],
-        absolute: true,
-        dot: false,
-        // Don't follow symlinks out of the searchRoot — a symlink pointing
-        // outside the tree could otherwise pull in projects (and set a
-        // workspaceRoot) beyond the configured root.
-        followSymbolicLinks: false,
-      });
-
-      for (const pf of projectFiles) {
-        if (opts.stats) opts.stats.scanned += 1;
-        const pj = readJson(pf);
-        if (!pj) { bump(opts.stats, 'unreadable project.json'); continue; }
-        if (!hasServeTarget(pj)) { bump(opts.stats, 'no serve target'); continue; }
-        const name: string | undefined = pj.name || path.basename(path.dirname(pf));
-        if (!name) { bump(opts.stats, 'project has no name'); continue; }
-        const added = addUnique(found, name, {
-          workspaceRoot: root,
-          workspaceType: 'nx',
-          serverProfile: 'nx',
-          command: `npx nx serve ${name}`,
-          hidden: false,
-          tags: [],
-          tasks: listTargetsExceptServe(pj),
-          workspaceLabel,
-        });
-        if (!added) {
-          warnings.push(`duplicate project name "${name}" within ${root} — keeping first`);
-          bump(opts.stats, 'duplicate name');
-        }
-      }
-      continue;
+    for (const profile of profiles) {
+      if (profile.suppressedBy?.some(id => matched.has(id))) continue;
+      let hit: boolean;
+      if (profile.workspace === 'nx') hit = enumerateNx(profile, ctx, rootFs);
+      else if (profile.workspace === 'angular') hit = enumerateAngular(profile, ctx, rootFs);
+      else hit = detectSingleApp(profile, ctx, rootFs);
+      if (hit) matched.add(profile.id);
     }
 
-    if (fs.existsSync(angularJson)) {
-      const ng = readJson(angularJson);
-      const projects = ng?.projects || {};
-      for (const [name, p] of Object.entries<any>(projects)) {
-        if (!hasServeTarget(p)) continue;
-        const added = addUnique(found, name, {
-          workspaceRoot: root,
-          workspaceType: 'angular',
-          serverProfile: 'angular',
-          command: `npx ng serve ${name}`,
-          hidden: false,
-          tags: [],
-          tasks: listTargetsExceptServe(p),
-          workspaceLabel,
-        });
-        if (!added) warnings.push(`duplicate project name "${name}" within ${root} — keeping first`);
-      }
-      continue;
-    }
-
-    const hasVite = fg.sync('vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true, deep: 1, followSymbolicLinks: false });
-    const hasStorybook = fs.existsSync(path.join(root, '.storybook'));
-    let matched = false;
-
-    if (hasVite.length > 0) {
-      const baseName = path.basename(root);
-      addUnique(found, baseName, {
-        workspaceRoot: root,
-        workspaceType: 'vite',
-        serverProfile: 'vite',
-        command: `npx vite`,
-        hidden: false,
-        tags: [],
-        workspaceLabel,
-      });
-      matched = true;
-      if (viteSubfolders) {
-        const sub = fg.sync('*/vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(root), absolute: true, followSymbolicLinks: false });
-        for (const f of sub) {
-          const dir = path.dirname(f);
-          const subBase = path.basename(dir);
-          if (subBase === baseName) continue;
-          addUnique(found, subBase, {
-            workspaceRoot: dir,
-            workspaceType: 'vite',
-            serverProfile: 'vite',
-            command: `npx vite`,
-            hidden: false,
-            tags: [],
-            workspaceLabel,
-          });
-        }
-      }
-    }
-
-    if (hasStorybook) {
-      const baseName = `${path.basename(root)}-storybook`;
-      addUnique(found, baseName, {
-        workspaceRoot: root,
-        workspaceType: 'storybook',
-        serverProfile: 'storybook',
-        command: `npx storybook dev --no-open`,
-        hidden: false,
-        tags: [],
-        workspaceLabel,
-      });
-      matched = true;
-    }
-
-    if (!matched) {
-      const polyglotMatched = detectPolyglotApps(root, workspaceLabel, found);
-      if (!polyglotMatched) {
-        warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook/polyglot markers: ${root}`);
-        bump(opts.stats, 'no project markers');
-      }
+    if (matched.size === 0) {
+      warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook/polyglot markers: ${root}`);
+      bump(opts.stats, 'no project markers');
     }
   }
 
@@ -360,6 +301,6 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
   }
 
   const result = [...found.values()].filter(a => !a.hidden);
-  scanCache = { key: cacheKey, at: Date.now(), apps: result.map(a => ({ ...a })), warnings: [...warnings], stats: { scanned: stats.scanned, rejected: { ...stats.rejected } } };
+  scanCache = { key: cacheKey, at: Date.now(), apps: result.map(a => ({ ...a })), warnings: [...warnings], stats: { scanned: stats.scanned, rejected: { ...stats.rejected }, profiles: { ...(stats.profiles ?? {}) } } };
   return result;
 }

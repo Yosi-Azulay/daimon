@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { AppmanConfig } from './types.js';
+import { validateCustomProfiles } from './frameworks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +59,7 @@ function defaultConfig(): AppmanConfig {
     errorRetention: { maxAgeMs: 86400000 },
     plugins: { dir: null },
     webhooks: [],
+    frameworks: [],
   };
 }
 
@@ -263,6 +265,12 @@ function validate(raw: unknown, source: string): AppmanConfig {
       out.push(w);
     }
     cfg.webhooks = out;
+  }
+
+  if (obj.frameworks !== undefined) {
+    // Custom framework profiles (M65): data-only rows. Invalid entries are
+    // skipped with a warning (doctor surfaces them); valid ones survive.
+    cfg.frameworks = validateCustomProfiles(obj.frameworks, msg => warn(`${msg} (${source})`));
   }
 
   return cfg;

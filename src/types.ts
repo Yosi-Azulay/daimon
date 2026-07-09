@@ -90,6 +90,8 @@ export interface LogsConfig {
   maxBytesPerFile: number;
 }
 
+import type { FrameworkProfile } from './frameworks.js';
+
 export interface AppmanConfig {
   searchRoots: (string | SearchRoot)[];
   portRange: [number, number];
@@ -118,6 +120,8 @@ export interface AppmanConfig {
   errorRetention: ErrorRetentionConfig;
   plugins: PluginsConfig;
   webhooks: WebhookEntry[];
+  // Custom framework profiles (M65) — validated data rows, never loaded code.
+  frameworks: FrameworkProfile[];
 }
 
 export interface SearchRoot {
@@ -137,6 +141,8 @@ export interface AppOverride {
   compileRegressionFactor?: number;
 }
 
+// Built-in profile ids. DiscoveredApp.serverProfile is a plain string because
+// custom config profiles introduce ids outside this set.
 export type ServerProfile =
   | 'angular' | 'nx' | 'vite' | 'storybook'
   | 'django' | 'rails' | 'fastapi' | 'go-air' | 'rust-trunk';
@@ -160,7 +166,7 @@ export interface DiscoveredApp {
   tags: string[];
   tasks?: string[];
   workspaceLabel?: string;
-  serverProfile?: ServerProfile;
+  serverProfile?: string;
 }
 
 export type ParserTool =

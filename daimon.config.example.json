@@ -75,6 +75,8 @@
     }
   ],
 
+  "frameworks": [],
+
   "staleDetect": {
     "enabled": true,
     "silentMs": 30000
