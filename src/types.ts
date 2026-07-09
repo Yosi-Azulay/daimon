@@ -183,7 +183,13 @@ export type ParserTool =
   | 'fastapi'
   | 'go-air'
   | 'rust-trunk'
-  | 'python';
+  | 'python'
+  // Per-profile parser ids (M67), referenced from FrameworkProfile.errorParser.
+  | 'python-traceback'
+  | 'go-build'
+  | 'rust-cargo'
+  | 'dotnet'
+  | 'jvm-gradle';
 
 export interface ParsedError {
   file?: string;

@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "sveltekit",
+      "profile": "sveltekit",
+      "command": "npx vite dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "",
+      "  VITE v6.0.3  ready in 410 ms",
+      "",
+      "  ➜  Local:   http://localhost:5173/"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:5173",
+    "errors": [
+      "✘ [ERROR] Expected token }",
+      "",
+      "    src/routes/+page.svelte:12:4:"
+    ],
+    "expectError": {
+      "file": "src/routes/+page.svelte",
+      "line": 12
+    }
+  }
+}

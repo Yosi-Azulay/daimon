@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "web",
+      "profile": "vite",
+      "command": "npx vite"
+    }
+  ],
+  "parse": null
+}

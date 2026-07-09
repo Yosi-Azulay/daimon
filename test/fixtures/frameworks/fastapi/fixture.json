@@ -1,0 +1,29 @@
+{
+  "apps": [
+    {
+      "name": "fastapi",
+      "profile": "fastapi",
+      "command": "uvicorn main:app --reload"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "INFO:     Will watch for changes in these directories: [\"/app\"]",
+      "INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)",
+      "INFO:     Started reloader process [28720] using StatReload",
+      "INFO:     Application startup complete."
+    ],
+    "expectStatus": "serving",
+    "expectUrl": null,
+    "errors": [
+      "Traceback (most recent call last):",
+      "  File \"/app/routers/items.py\", line 25, in read_item",
+      "    return items[item_id]",
+      "KeyError: 42"
+    ],
+    "expectError": {
+      "file": "/app/routers/items.py",
+      "line": 25
+    }
+  }
+}

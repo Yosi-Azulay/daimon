@@ -1,0 +1,10 @@
+{
+  "name": "rr-fixture",
+  "private": true,
+  "scripts": {
+    "dev": "react-router dev"
+  },
+  "dependencies": {
+    "react-router": "7.1.0"
+  }
+}

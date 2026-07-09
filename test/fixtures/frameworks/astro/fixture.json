@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "astro",
+      "profile": "astro",
+      "command": "npx astro dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      " astro  v5.1.3 ready in 150 ms",
+      "",
+      "┃ Local    http://localhost:4321/",
+      "┃ Network  use --host to expose"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:4321",
+    "errors": [
+      "✘ [ERROR] Expected \"}\" but found \"x\"",
+      "",
+      "    src/pages/index.astro:8:5:"
+    ],
+    "expectError": {
+      "file": "src/pages/index.astro",
+      "line": 8
+    }
+  }
+}

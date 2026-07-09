@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "rails",
+      "profile": "rails",
+      "command": "bin/rails server"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "=> Booting Puma",
+      "=> Rails 7.1.3 application starting in development",
+      "Puma starting in single mode...",
+      "* Listening on tcp://127.0.0.1:3000",
+      "Use Ctrl-C to stop"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": null,
+    "errors": [
+      "NameError (undefined local variable or method \"foo\" for an instance of WidgetsController):",
+      "app/controllers/widgets_controller.rb:14:in `show'"
+    ],
+    "expectError": {
+      "file": "app/controllers/widgets_controller.rb",
+      "line": 14
+    }
+  }
+}

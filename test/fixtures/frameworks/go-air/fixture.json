@@ -1,0 +1,29 @@
+{
+  "apps": [
+    {
+      "name": "go-air",
+      "profile": "go-air",
+      "command": "air"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "  __    _   ___",
+      " / /\\  | | | |_)",
+      "/_/--\\ |_| |_| \\_ v1.61.5, built with Go go1.23",
+      "",
+      "watching .",
+      "building...",
+      "running..."
+    ],
+    "expectStatus": "compiling",
+    "expectUrl": null,
+    "errors": [
+      "main.go:12:5: undefined: foo"
+    ],
+    "expectError": {
+      "file": "main.go",
+      "line": 12
+    }
+  }
+}

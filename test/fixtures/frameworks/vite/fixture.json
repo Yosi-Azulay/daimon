@@ -1,0 +1,29 @@
+{
+  "apps": [
+    {
+      "name": "vite",
+      "profile": "vite",
+      "command": "npx vite"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "",
+      "  VITE v6.0.3  ready in 320 ms",
+      "",
+      "  ➜  Local:   http://localhost:5173/",
+      "  ➜  Network: use --host to expose"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:5173",
+    "errors": [
+      "✘ [ERROR] Expected \";\" but found \"x\"",
+      "",
+      "    src/main.ts:3:9:"
+    ],
+    "expectError": {
+      "file": "src/main.ts",
+      "line": 3
+    }
+  }
+}

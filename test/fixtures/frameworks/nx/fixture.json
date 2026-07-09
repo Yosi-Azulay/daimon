@@ -1,0 +1,31 @@
+{
+  "apps": [
+    {
+      "name": "web",
+      "profile": "nx",
+      "command": "npx nx serve web"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "> nx run web:serve:development",
+      "Initial chunk files | Names         |  Raw size",
+      "main.js             | main          | 101.94 kB",
+      "Application bundle generation complete. [2.316 seconds]",
+      "Watch mode enabled. Watching for file changes...",
+      "  ➜  Local:   http://localhost:4200/"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:4200",
+    "errors": [
+      "✘ [ERROR] TS2304: Cannot find name \"foo\". [plugin angular-compiler]",
+      "",
+      "    apps/web/src/app/app.ts:3:9:",
+      "      3 │   const x = foo;"
+    ],
+    "expectError": {
+      "file": "apps/web/src/app/app.ts",
+      "line": 3
+    }
+  }
+}

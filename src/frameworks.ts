@@ -73,6 +73,8 @@ export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 export const KNOWN_ERROR_PARSER_IDS: ReadonlySet<string> = new Set([
   'esbuild', 'vite', 'storybook', 'jest', 'nx', 'webpack', 'node', 'typescript',
   'django', 'rails', 'fastapi', 'go-air', 'rust-trunk', 'python',
+  // M67 per-profile parsers (multi-line aware; see PROFILE_ERROR_RULES in parser.ts).
+  'python-traceback', 'go-build', 'rust-cargo', 'dotnet', 'jvm-gradle',
 ]);
 
 // Regex strings from config are compiled once here; cap length so a

@@ -1,0 +1,33 @@
+{
+  "apps": [
+    {
+      "name": "django",
+      "profile": "django",
+      "command": "python manage.py runserver"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "Watching for file changes with StatReloader",
+      "Performing system checks...",
+      "",
+      "System check identified no issues (0 silenced).",
+      "Django version 5.0.1, using settings \"mysite.settings\"",
+      "Starting development server at http://127.0.0.1:8000/",
+      "Quit the server with CONTROL-C."
+    ],
+    "expectStatus": "serving",
+    "expectUrl": null,
+    "errors": [
+      "Internal Server Error: /",
+      "Traceback (most recent call last):",
+      "  File \"/app/myapp/views.py\", line 12, in index",
+      "    return render(request, \"index.html\", {\"x\": undefined_var})",
+      "NameError: name \"undefined_var\" is not defined"
+    ],
+    "expectError": {
+      "file": "/app/myapp/views.py",
+      "line": 12
+    }
+  }
+}

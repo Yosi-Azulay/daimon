@@ -1,0 +1,10 @@
+{
+  "name": "nuxt-fixture",
+  "private": true,
+  "scripts": {
+    "dev": "nuxi dev"
+  },
+  "devDependencies": {
+    "nuxt": "3.15.0"
+  }
+}

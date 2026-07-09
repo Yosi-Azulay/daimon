@@ -1,0 +1,29 @@
+{
+  "apps": [
+    {
+      "name": "web-admin",
+      "profile": "angular",
+      "command": "npx ng serve web-admin"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "Initial chunk files | Names         |  Raw size",
+      "main.js             | main          | 102.11 kB",
+      "Application bundle generation complete. [1.818 seconds]",
+      "Watch mode enabled. Watching for file changes...",
+      "  ➜  Local:   http://localhost:4200/"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:4200",
+    "errors": [
+      "✘ [ERROR] TS2339: Property \"x\" does not exist on type \"AppComponent\". [plugin angular-compiler]",
+      "",
+      "    src/app/app.component.ts:12:26:"
+    ],
+    "expectError": {
+      "file": "src/app/app.component.ts",
+      "line": 12
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "nuxt",
+      "profile": "nuxt",
+      "command": "npx nuxi dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "Nuxt 3.15.0 with Nitro 2.10.4",
+      "  ➜ Local:    http://localhost:3000/",
+      "  ➜ Network:  use --host to expose",
+      "✔ Vite client built in 130ms"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:3000",
+    "errors": [
+      "✘ [ERROR] Could not resolve \"./missing\"",
+      "",
+      "    composables/useFoo.ts:2:20:"
+    ],
+    "expectError": {
+      "file": "composables/useFoo.ts",
+      "line": 2
+    }
+  }
+}

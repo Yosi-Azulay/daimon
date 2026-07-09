@@ -1,0 +1,25 @@
+{
+  "apps": [
+    {
+      "name": "rust-trunk",
+      "profile": "rust-trunk",
+      "command": "trunk serve"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "2026-01-05T10:00:00.000Z  INFO 📦 starting build",
+      "   Compiling app v0.1.0 (/app)"
+    ],
+    "expectStatus": "compiling",
+    "expectUrl": null,
+    "errors": [
+      "error[E0425]: cannot find value `foo` in this scope",
+      " --> src/main.rs:4:20"
+    ],
+    "expectError": {
+      "file": "src/main.rs",
+      "line": 4
+    }
+  }
+}

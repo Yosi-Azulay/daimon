@@ -1,0 +1,26 @@
+{
+  "apps": [
+    {
+      "name": "storybook-storybook",
+      "profile": "storybook",
+      "command": "npx storybook dev --no-open"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "╭─────────────────────────────────────────────╮",
+      "│   Storybook 8.4.5 for angular started       │",
+      "│   Local:            http://localhost:6006/  │",
+      "╰─────────────────────────────────────────────╯"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:6006",
+    "errors": [
+      "ERR! SyntaxError: Unexpected token (src/stories/Button.stories.ts:7:12)"
+    ],
+    "expectError": {
+      "file": "src/stories/Button.stories.ts",
+      "line": 7
+    }
+  }
+}

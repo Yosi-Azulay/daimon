@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "remix",
+      "profile": "remix",
+      "command": "npx react-router dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "",
+      "  VITE v6.0.3  ready in 380 ms",
+      "",
+      "  ➜  Local:   http://localhost:5173/"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:5173",
+    "errors": [
+      "✘ [ERROR] Expected \";\" but found \"return\"",
+      "",
+      "    app/routes/home.tsx:6:2:"
+    ],
+    "expectError": {
+      "file": "app/routes/home.tsx",
+      "line": 6
+    }
+  }
+}

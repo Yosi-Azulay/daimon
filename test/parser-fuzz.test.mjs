@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLine } from '../dist/parser.js';
+import { parseLine, compileParseContext } from '../dist/parser.js';
+import { allProfiles } from '../dist/frameworks.js';
 
 function freshState() {
   return {
@@ -78,6 +79,62 @@ test('parseLine — 2k random lines, no exceptions, bounded total time', () => {
   assert.ok(totalMs < 10000, `parser took ${totalMs.toFixed(0)}ms for ${N} lines (>10s)`);
   // Error map size must be bounded by the number of distinct hashes seen.
   assert.ok(state.errors.size <= N, `error map grew past N entries (${state.errors.size})`);
+});
+
+// M67: the same fuzz corpus must be safe under every per-profile parse
+// context (python-traceback/go-build/rust-cargo/dotnet/jvm-gradle rules plus
+// readiness/url regexes from the registry rows).
+test('parseLine — 2k random lines under each profile parse context, no exceptions', () => {
+  const parsers = ['python-traceback', 'go-build', 'rust-cargo', 'dotnet', 'jvm-gradle'];
+  const contexts = parsers.map(id => compileParseContext({
+    id: `fuzz-${id}`, family: 'js', detect: {}, command: 'x', builtin: false,
+    workspaceType: 'polyglot', errorParser: id,
+    readiness: { pattern: 'Ready in \\d+' }, url: { pattern: 'Local:\\s+(https?:\\/\\/\\S+)' },
+  }));
+  for (const row of allProfiles(undefined)) {
+    const ctx = compileParseContext(row);
+    if (ctx) contexts.push(ctx);
+  }
+  for (const ctx of contexts) {
+    const state = freshState();
+    const rand = rng(0xdead1e);
+    for (let i = 0; i < 2000; i++) {
+      const line = buildLine(rand);
+      try {
+        const r = parseLine(state, line, ctx);
+        assert.ok(r === null || typeof r === 'object');
+      } catch (err) {
+        assert.fail(`parseLine threw under profile ctx on iteration ${i}: ${err?.message ?? err}`);
+      }
+    }
+  }
+});
+
+// Extra fuzz pieces exercising the new parsers' own shapes.
+test('parseLine — profile-parser shaped fragments are safe and bounded', () => {
+  const shapes = [
+    'Traceback (most recent call last):',
+    '  File "/app/x.py", line 999999999999, in <module>',
+    'main.go:1:1: ' + 'x'.repeat(5000),
+    'error[E9999]: ' + '('.repeat(200),
+    ' --> src/' + 'a/'.repeat(500) + 'main.rs:1:1',
+    'Program.cs(2147483647,2147483647): error CS9999: overflow',
+    'Foo.java:5: error: ' + '\\u0000'.repeat(50),
+    'Exception in thread "main" java.lang.NullPointerException',
+    '\tat com.example.Foo.bar(Foo.java:42)',
+    '\tat com.example.$Lambda$1.run(Unknown Source)',
+  ];
+  const ctxs = ['python-traceback', 'go-build', 'rust-cargo', 'dotnet', 'jvm-gradle'].map(id =>
+    compileParseContext({ id: `s-${id}`, family: 'js', detect: {}, command: 'x', builtin: false, workspaceType: 'polyglot', errorParser: id }));
+  for (const ctx of ctxs) {
+    const state = freshState();
+    for (const line of shapes) {
+      const t0 = performance.now();
+      const r = parseLine(state, line, ctx);
+      assert.ok(r === null || typeof r === 'object');
+      assert.ok(performance.now() - t0 < 100, `profile-shaped line took too long: ${line.slice(0, 40)}`);
+    }
+  }
 });
 
 test('parseLine — empty + whitespace + ANSI-only input is null-safe', () => {

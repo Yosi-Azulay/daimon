@@ -1,0 +1,29 @@
+{
+  "apps": [
+    {
+      "name": "nextjs",
+      "profile": "nextjs",
+      "command": "npx next dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "   ▲ Next.js 15.1.0",
+      "   - Local:        http://localhost:3000",
+      "   - Network:      http://192.168.1.20:3000",
+      "",
+      " ✓ Starting...",
+      " ✓ Ready in 2.1s"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:3000",
+    "errors": [
+      "Error: Cannot find module \"./missing\"",
+      "    at Object.<anonymous> (app/page.tsx:3:9)"
+    ],
+    "expectError": {
+      "file": "app/page.tsx",
+      "line": 3
+    }
+  }
+}

@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import treeKill from 'tree-kill';
 import stripAnsi from 'strip-ansi';
 import type { AppState, AppStatus, DiscoveredApp, ErrorEntry } from './types.js';
-import { parseLine } from './parser.js';
+import { parseLine, type ProfileParseContext } from './parser.js';
 import { isSafeAppName } from './shellSafe.js';
 
 const LOG_BUFFER_MAX = 500;
@@ -20,6 +20,8 @@ export interface AppProcessDeps {
   onLogLine?: (line: string) => void;
   onCompile?: (ms: number) => void;
   onBundleUpdate?: () => void;
+  // Per-profile readiness/url/error-parser context (M67).
+  parseCtx?: ProfileParseContext;
 }
 
 export class AppProcess {
@@ -136,7 +138,7 @@ export class AppProcess {
       }
       this.deps.onLogLine?.(clean);
       const prev = state.status;
-      const r = parseLine(state, clean);
+      const r = parseLine(state, clean, this.deps.parseCtx);
       if (r?.statusChanged) {
         changed = true;
         this.deps.onStatusChange?.(prev, state.status);

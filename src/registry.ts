@@ -24,6 +24,8 @@ import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.j
 import { readSecrets, substituteSecrets } from './secrets.js';
 import { SessionRecorder } from './session.js';
 import { detectBundleRegression, detectCompileRegression, detectErrorFlapRegression, suspectCommitForDir } from './regressions.js';
+import { allProfiles } from './frameworks.js';
+import { compileParseContext } from './parser.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -494,10 +496,16 @@ export class Registry extends EventEmitter {
     const baseEnv = { ...envFromFile, ...(this.config.overrides?.[name]?.env ?? {}), ...(so?.env ?? {}) };
     const secrets = readSecrets();
     const mergedEnvOverride = substituteSecrets(baseEnv, secrets);
+    // Per-profile readiness/url/error-parser context (M67): the registry row
+    // for this app's serverProfile, compiled once per profile.
+    const profileRow = e.app.serverProfile
+      ? allProfiles(this.config.frameworks).find(p => p.id === e.app.serverProfile)
+      : undefined;
     const proc = new AppProcess({
       state: e.state,
       app: e.app,
       port,
+      parseCtx: compileParseContext(profileRow),
       envOverride: Object.keys(mergedEnvOverride).length ? mergedEnvOverride : undefined,
       commandOverride: so?.command,
       onStateChange: () => this.emit('change'),

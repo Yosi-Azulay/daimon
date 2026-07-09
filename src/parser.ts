@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { AppState, ErrorEntry, ParsedError, ParserTool } from './types.js';
+import type { FrameworkProfile } from './frameworks.js';
 
 const SERVING_PATTERNS = [
   /Local:\s+http/i,
@@ -101,9 +102,9 @@ const ERROR_PATTERNS = [
 
 const TS_CODE_RX = /\berror TS(\d+)/;
 const ESBUILD_TS_RX = /✘\s*\[ERROR\]\s*TS(\d+)/;
-const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|py|rb|go|rs)):(\d+):(\d+)/;
+const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|astro|py|rb|go|rs)):(\d+):(\d+)/;
 // Stack-trace style: "at handler (D:\\app\\src\\index.ts:42:10)" or "at file:///D:/...:42:10".
-const PAREN_LOCATION_RX = /\(([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|py|rb|go|rs)):(\d+):(\d+)\)/;
+const PAREN_LOCATION_RX = /\(([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|astro|py|rb|go|rs)):(\d+):(\d+)\)/;
 // TSC report format: "src/foo.ts(10,3): error TS2322: ...".
 const TSC_LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte))\((\d+),(\d+)\)\s*:/;
 // Python traceback line:   File "/path/to/file.py", line 42
@@ -120,7 +121,7 @@ const WEBPACK_ERROR_RX = /^ERROR in\s+(\S+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte))(?:
 //   ✘ [ERROR] TS2724: ...
 //       apps/editor/src/app/app.ts:3:9:
 // Match a whole-line "<path>:<line>:<col>:" with optional indentation and trailing colon.
-const BARE_LOCATION_LINE_RX = /^\s+([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte)):(\d+):(\d+):?\s*$/;
+const BARE_LOCATION_LINE_RX = /^\s+([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|astro)):(\d+):(\d+):?\s*$/;
 
 const TOOL_RULES: { tool: ParserTool; rx: RegExp }[] = [
   { tool: 'vite', rx: /\[vite\]|\[plugin:vite:|transformWithEsbuild/i },
@@ -144,6 +145,105 @@ function detectTool(line: string): ParserTool | undefined {
     if (rx.test(line)) return tool;
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Per-profile parsing (M67). A framework profile row can reference one of
+// these parser ids; the rules ADD detection/extraction on top of the generic
+// pipeline. Fail-soft by construction: rules only ever contribute extra
+// signal — unmatched lines flow through the generic path unchanged, and no
+// line is ever dropped or reordered.
+// ---------------------------------------------------------------------------
+
+interface LocationRule {
+  rx: RegExp;
+  file: number;
+  line: number;
+  col?: number;
+}
+
+interface ProfileErrorRules {
+  tool: ParserTool;
+  // Lines that OPEN an error entry (in addition to the generic ERROR_PATTERNS).
+  errorRx?: RegExp[];
+  // Inline file:line extraction tried before the generic location rules.
+  locations?: LocationRule[];
+  // Continuation lines that backfill the previous entry's missing location.
+  backfills?: LocationRule[];
+}
+
+const PROFILE_ERROR_RULES: Record<string, ProfileErrorRules> = {
+  // Python: "Traceback (most recent call last):" then indented File frames.
+  // The generic pipeline already opens the entry; the deepest File frame
+  // backfills {file,line} (last frame = the raising site).
+  'python-traceback': {
+    tool: 'python-traceback',
+    errorRx: [/^Traceback \(most recent call last\):/],
+    backfills: [{ rx: /File\s+"([^"]+\.py)",\s+line\s+(\d+)/, file: 1, line: 2 }],
+  },
+  // Go compiler / air rebuilds: "main.go:12:5: undefined: foo".
+  'go-build': {
+    tool: 'go-build',
+    errorRx: [/^\S+\.go:\d+:\d+:\s+/],
+    locations: [{ rx: /^(\S+\.go):(\d+):(\d+):\s+/, file: 1, line: 2, col: 3 }],
+  },
+  // Cargo: "error[E0308]: mismatched types" (or bare "error: ...") with the
+  // location on the following "  --> src/main.rs:4:5" line.
+  'rust-cargo': {
+    tool: 'rust-cargo',
+    errorRx: [/^error(?:\[E\d+\])?:\s+/],
+    backfills: [{ rx: /^\s*-->\s+([^\s:]+\.rs):(\d+):(\d+)/, file: 1, line: 2, col: 3 }],
+  },
+  // MSBuild/Roslyn: "Program.cs(12,5): error CS1002: ; expected".
+  'dotnet': {
+    tool: 'dotnet',
+    errorRx: [/:\s+error\s+[A-Z]{2,4}\d{3,5}\s*:/],
+    locations: [{ rx: /^\s*(.+?\.(?:cs|razor|cshtml|vb|fs))\((\d+),(\d+)\)\s*:\s*error/i, file: 1, line: 2, col: 3 }],
+  },
+  // javac: "Foo.java:5: error: ';' expected"; Spring stacktraces backfill from
+  // the first "at pkg.Class.method(Foo.java:42)" frame.
+  'jvm-gradle': {
+    tool: 'jvm-gradle',
+    errorRx: [/\.(?:java|kt|kts|groovy):\d+:\s*error/i, /^Exception in thread\s+/, /^Caused by:\s+\S+/],
+    locations: [{ rx: /^\s*(\S+?\.(?:java|kt|kts|groovy)):(\d+):\s*error/i, file: 1, line: 2 }],
+    backfills: [{ rx: /^\s+at\s+[\w.$<>]+\(([\w$.-]+\.(?:java|kt|kts)):(\d+)\)/, file: 1, line: 2 }],
+  },
+};
+
+export const PROFILE_ERROR_PARSER_IDS: ReadonlySet<string> = new Set(Object.keys(PROFILE_ERROR_RULES));
+
+// Compiled per-profile parse context: readiness/url regexes from the registry
+// row plus the referenced error-parser rules. Cached by row identity so the
+// hot log path compiles each pattern once.
+export interface ProfileParseContext {
+  readinessRx?: RegExp;
+  urlRx?: RegExp;
+  rules?: ProfileErrorRules;
+}
+
+const parseCtxCache = new Map<string, ProfileParseContext | undefined>();
+
+function safeCompile(pattern: string): RegExp | undefined {
+  try {
+    return new RegExp(pattern, 'i');
+  } catch {
+    return undefined; // custom patterns are validated at config load; fail-soft here
+  }
+}
+
+export function compileParseContext(profile: FrameworkProfile | undefined): ProfileParseContext | undefined {
+  if (!profile) return undefined;
+  const key = `${profile.id} ${profile.readiness?.pattern ?? ''} ${profile.url?.pattern ?? ''} ${profile.errorParser ?? ''}`;
+  if (parseCtxCache.has(key)) return parseCtxCache.get(key);
+  const ctx: ProfileParseContext = {};
+  if (profile.readiness?.pattern) ctx.readinessRx = safeCompile(profile.readiness.pattern);
+  if (profile.url?.pattern) ctx.urlRx = safeCompile(profile.url.pattern);
+  if (profile.errorParser && PROFILE_ERROR_RULES[profile.errorParser]) {
+    ctx.rules = PROFILE_ERROR_RULES[profile.errorParser];
+  }
+  const out = (ctx.readinessRx || ctx.urlRx || ctx.rules) ? ctx : undefined;
+  parseCtxCache.set(key, out);
+  return out;
 }
 
 const ANNOUNCED_LOCAL_RX = /Local:\s+(https?:\/\/\S+)/i;
@@ -198,6 +298,26 @@ function parseStructured(line: string): ParsedError {
   }
   const tool = detectTool(line);
   if (tool) out.tool = tool;
+  return out;
+}
+
+// Profile location rules win over the generic extraction (e.g. the dotnet
+// "Program.cs(12,5):" shape that the generic TSC rule only knows for ts/js).
+function parseStructuredWithProfile(line: string, ctx?: ProfileParseContext): ParsedError {
+  const rules = ctx?.rules;
+  if (rules?.locations) {
+    for (const rule of rules.locations) {
+      const m = line.match(rule.rx);
+      if (!m) continue;
+      const out: ParsedError = { message: line, file: m[rule.file], line: Number(m[rule.line]), tool: rules.tool };
+      if (rule.col !== undefined && m[rule.col]) out.col = Number(m[rule.col]);
+      const code = line.match(/\berror\s+([A-Z]{2,4}\d{3,5})\b/);
+      if (code) out.code = code[1];
+      return out;
+    }
+  }
+  const out = parseStructured(line);
+  if (!out.tool && rules && rules.errorRx?.some(rx => rx.test(line))) out.tool = rules.tool;
   return out;
 }
 
@@ -271,7 +391,7 @@ function parseBundleLine(state: AppState, trimmed: string): boolean {
 // minified-bundle dumps in stdout) — 2KB keeps the worst case under ~20ms.
 const MAX_PARSE_LINE_CHARS = 2048;
 
-export function parseLine(state: AppState, line: string): ParseResult | null {
+export function parseLine(state: AppState, line: string, ctx?: ProfileParseContext): ParseResult | null {
   if (line.length > MAX_PARSE_LINE_CHARS) line = line.slice(0, MAX_PARSE_LINE_CHARS);
   const bareLoc = line.match(BARE_LOCATION_LINE_RX);
   const parenLoc = !bareLoc ? line.match(PAREN_LOCATION_RX) : null;
@@ -300,6 +420,27 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
           line: Number(m[2]),
         };
       }
+    } else if (ctx?.rules?.backfills) {
+      // Per-profile continuation lines (traceback frames, "-->" locations,
+      // stack frames). Later frames may refine an earlier fill: a Python
+      // traceback's deepest File frame is the raising site, so profile
+      // backfills overwrite a previous PROFILE fill but never a generic one.
+      for (const rule of ctx.rules.backfills) {
+        const m = line.match(rule.rx);
+        if (!m) continue;
+        const prevEntry = state.errors.get(state.lastErrorHash);
+        if (prevEntry && (!prevEntry.parsed?.file || (prevEntry.parsed as any)._profileFill)) {
+          prevEntry.parsed = {
+            ...(prevEntry.parsed ?? { message: prevEntry.message }),
+            file: m[rule.file],
+            line: Number(m[rule.line]),
+            ...(rule.col !== undefined && m[rule.col] ? { col: Number(m[rule.col]) } : {}),
+            tool: ctx.rules.tool,
+          };
+          Object.defineProperty(prevEntry.parsed, '_profileFill', { value: true, enumerable: false });
+        }
+        break;
+      }
     }
   }
 
@@ -310,7 +451,17 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
   let statusChanged = false;
   let announcedUrl: string | undefined;
 
-  const ann = detectAnnouncedUrl(trimmed);
+  let ann = detectAnnouncedUrl(trimmed);
+  if (!ann && ctx?.urlRx) {
+    // Profile URL extraction (M67): first capture group is the URL. Catches
+    // announcements the generic patterns miss (Flask's "* Running on",
+    // Astro's colon-less "Local http://...").
+    const m = trimmed.match(ctx.urlRx);
+    if (m?.[1]) {
+      const raw = m[1].replace(/[),.;]+$/, '');
+      if (/^https?:\/\//i.test(raw)) ann = rewriteHost(raw, '127.0.0.1');
+    }
+  }
   if (ann && !state.announcedUrl) {
     state.announcedUrl = ann;
     announcedUrl = ann;
@@ -319,7 +470,7 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
   const bundleUpdated = parseBundleLine(state, trimmed);
   let compileMs: number | undefined;
 
-  if (SERVING_PATTERNS.some(rx => rx.test(trimmed))) {
+  if (SERVING_PATTERNS.some(rx => rx.test(trimmed)) || (ctx?.readinessRx?.test(trimmed) ?? false)) {
     const wasError = state.status === 'error' || !!state.recoveringFromError;
     if (state.status === 'compiling' || state.status === 'starting' || state.status === 'error') {
       const now = Date.now();
@@ -356,7 +507,10 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
   // then warning. Test against the raw line for lint so eslint's indentation
   // (which carries semantic weight) is preserved.
   const isLint = LINT_PATTERNS.some(rx => rx.test(line));
-  const isError = !isLint && ERROR_PATTERNS.some(rx => rx.test(trimmed));
+  const isError = !isLint && (
+    ERROR_PATTERNS.some(rx => rx.test(trimmed))
+    || (ctx?.rules?.errorRx?.some(rx => rx.test(trimmed)) ?? false)
+  );
   const isWarning = !isLint && !isError && WARNING_PATTERNS.some(rx => rx.test(trimmed));
   if (isError || isWarning || isLint) {
     const hash = hashLine(trimmed);
@@ -374,7 +528,7 @@ export function parseLine(state: AppState, line: string): ParseResult | null {
         count: 1,
         firstSeen: now,
         lastSeen: now,
-        parsed: parseStructured(trimmed),
+        parsed: parseStructuredWithProfile(trimmed, ctx),
         level: isLint ? 'lint' : isWarning ? 'warning' : 'error',
       };
       state.errors.set(hash, entry);

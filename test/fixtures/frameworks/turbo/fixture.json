@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "site",
+      "profile": "nextjs",
+      "command": "npx next dev"
+    }
+  ],
+  "parse": null
+}
