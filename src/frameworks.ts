@@ -55,8 +55,18 @@ export interface FrameworkProfile {
   // Skip this profile for a root when any of these profile ids already
   // matched the same root (vite beats the polyglot rows; nx beats angular).
   suppressedBy?: string[];
+  // Generic last-resort profile (package-json): only consulted when NO other
+  // profile matched the directory, and never inside node_modules.
+  fallback?: boolean;
   builtin: boolean;
 }
+
+// Command placeholders, resolved per directory at discovery time:
+//   {name}   — project name (workspace enumerators)
+//   {script} — first present script from detect.packageJson.script order
+//   {pmRun}  — npm run|pnpm run|yarn|bun run   (by lockfile)
+//   {pmExec} — npx|pnpm exec|yarn|bunx          (by lockfile)
+export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
 // Parser ids a profile (built-in or custom) may reference. Matches the
 // ParserTool union in types.ts; M67 extends it with the multi-line parsers.
@@ -97,6 +107,75 @@ const BUILTINS: FrameworkProfile[] = [
     suppressedBy: ['nx'],
     builtin: true,
   },
+  // --- JS meta-frameworks (M66). Ordered before vite: several of them keep a
+  // vite.config in the repo, and the framework CLI is the right dev server.
+  {
+    id: 'nextjs',
+    family: 'js',
+    detect: { anyFiles: ['next.config.js', 'next.config.mjs', 'next.config.ts', 'next.config.cjs'] },
+    command: '{pmExec} next dev',
+    readiness: { pattern: 'Ready in\\s+[\\d.]+' },
+    url: { pattern: 'Local:\\s+(https?:\\/\\/\\S+)' },
+    workspaceType: 'vite',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'nuxt',
+    family: 'js',
+    detect: { anyFiles: ['nuxt.config.ts', 'nuxt.config.js', 'nuxt.config.mjs'] },
+    command: '{pmExec} nuxi dev',
+    readiness: { pattern: 'Local:\\s+https?:\\/\\/' },
+    url: { pattern: 'Local:\\s+(https?:\\/\\/\\S+)' },
+    workspaceType: 'vite',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'sveltekit',
+    family: 'js',
+    detect: {
+      anyFiles: ['svelte.config.js', 'svelte.config.ts', 'svelte.config.mjs', 'svelte.config.cjs'],
+      packageJson: { dependsOn: ['@sveltejs/kit'] },
+    },
+    command: '{pmExec} vite dev',
+    readiness: { pattern: 'VITE v[\\d.]+\\s+ready|ready in \\d+' },
+    url: { pattern: 'Local:\\s+(https?:\\/\\/\\S+)' },
+    errorParser: 'vite',
+    workspaceType: 'vite',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'astro',
+    family: 'js',
+    detect: { anyFiles: ['astro.config.mjs', 'astro.config.js', 'astro.config.ts', 'astro.config.cjs'] },
+    command: '{pmExec} astro dev',
+    readiness: { pattern: 'astro\\s+v[\\d.]+\\s+ready|ready in \\d+' },
+    // Astro's box-drawing banner has no colon after "Local".
+    url: { pattern: 'Local\\s+:?\\s*(https?:\\/\\/\\S+)' },
+    errorParser: 'vite',
+    workspaceType: 'vite',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'remix',
+    family: 'js',
+    detect: {
+      anyFiles: [
+        'react-router.config.ts', 'react-router.config.js', 'react-router.config.mjs',
+        'remix.config.js', 'remix.config.cjs', 'remix.config.ts',
+      ],
+    },
+    command: '{pmExec} react-router dev',
+    readiness: { pattern: 'VITE v[\\d.]+\\s+ready|ready in \\d+' },
+    url: { pattern: 'Local:\\s+(https?:\\/\\/\\S+)' },
+    errorParser: 'vite',
+    workspaceType: 'vite',
+    healthProbe: 'http',
+    builtin: true,
+  },
   {
     id: 'vite',
     family: 'js',
@@ -105,6 +184,8 @@ const BUILTINS: FrameworkProfile[] = [
     errorParser: 'vite',
     workspaceType: 'vite',
     healthProbe: 'http',
+    // A meta-framework's vite.config belongs to that framework's own dev server.
+    suppressedBy: ['nextjs', 'nuxt', 'sveltekit', 'astro', 'remix'],
     builtin: true,
   },
   {
@@ -178,6 +259,41 @@ const BUILTINS: FrameworkProfile[] = [
     suppressedBy: ['vite', 'storybook'],
     builtin: true,
   },
+  // --- Monorepo enumerators (M66): like nx, these register member packages,
+  // not a root app. nx/angular own their workspace when both are present.
+  {
+    id: 'pnpm-workspace',
+    family: 'js',
+    detect: { files: ['pnpm-workspace.yaml'] },
+    command: '',
+    workspace: 'pnpm',
+    workspaceType: 'vite',
+    suppressedBy: ['nx', 'angular'],
+    builtin: true,
+  },
+  {
+    id: 'turbo',
+    family: 'js',
+    detect: { files: ['turbo.json'] },
+    command: '',
+    workspace: 'turbo',
+    workspaceType: 'vite',
+    suppressedBy: ['nx', 'angular', 'pnpm-workspace'],
+    builtin: true,
+  },
+  // --- Generic package.json fallback (M66). Lowest precedence: consulted
+  // only when nothing else matched the directory. Script order is the
+  // command-selection order (dev, then serve, then start).
+  {
+    id: 'package-json',
+    family: 'js',
+    detect: { packageJson: { script: ['dev', 'serve', 'start'] } },
+    command: '{pmRun} {script}',
+    workspaceType: 'vite',
+    healthProbe: 'http',
+    fallback: true,
+    builtin: true,
+  },
 ];
 
 export function builtinProfiles(): FrameworkProfile[] {
@@ -185,8 +301,12 @@ export function builtinProfiles(): FrameworkProfile[] {
 }
 
 export function allProfiles(custom: FrameworkProfile[] | undefined): FrameworkProfile[] {
-  // Custom profiles are always checked after built-ins.
-  return custom && custom.length ? [...BUILTINS, ...custom] : BUILTINS;
+  if (!custom || custom.length === 0) return BUILTINS;
+  // Custom profiles are checked after built-ins — but the generic fallback
+  // row stays last overall, so a custom profile beats `npm run dev`.
+  const named = BUILTINS.filter(p => !p.fallback);
+  const fallbacks = BUILTINS.filter(p => p.fallback);
+  return [...named, ...custom, ...fallbacks];
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +356,59 @@ export class RootFs {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Package-manager awareness (M66). Detection only reads lockfile NAMES —
+// daimon never runs install commands. Member packages inherit the workspace
+// root's lockfile when they have none of their own.
+// ---------------------------------------------------------------------------
+
+export function detectPackageManager(dirs: RootFs[]): PackageManager {
+  for (const d of dirs) {
+    if (d.exists('pnpm-lock.yaml')) return 'pnpm';
+    if (d.exists('yarn.lock')) return 'yarn';
+    if (d.exists('bun.lock') || d.exists('bun.lockb')) return 'bun';
+    if (d.exists('package-lock.json')) return 'npm';
+  }
+  return 'npm';
+}
+
+export function pmRun(pm: PackageManager, script: string): string {
+  switch (pm) {
+    case 'pnpm': return `pnpm run ${script}`;
+    case 'yarn': return `yarn ${script}`;
+    case 'bun': return `bun run ${script}`;
+    default: return `npm run ${script}`;
+  }
+}
+
+export function pmExec(pm: PackageManager, cmd: string): string {
+  switch (pm) {
+    case 'pnpm': return `pnpm exec ${cmd}`;
+    case 'yarn': return `yarn ${cmd}`;
+    case 'bun': return `bunx ${cmd}`;
+    default: return `npx ${cmd}`;
+  }
+}
+
+// Resolve {script}/{pmRun}/{pmExec} placeholders for a concrete directory.
+// Returns null when the command needs a script the package.json doesn't have.
+export function resolveCommand(profile: FrameworkProfile, dirFs: RootFs, workspaceFs?: RootFs): string | null {
+  let cmd = profile.command;
+  if (cmd.includes('{script}')) {
+    const scripts = dirFs.packageJson()?.scripts ?? {};
+    const order = profile.detect.packageJson?.script ?? [];
+    const script = order.find(s => typeof scripts[s] === 'string');
+    if (!script) return null;
+    cmd = cmd.split('{script}').join(script);
+  }
+  if (cmd.includes('{pmRun}') || cmd.includes('{pmExec}')) {
+    const pm = detectPackageManager(workspaceFs && workspaceFs !== dirFs ? [dirFs, workspaceFs] : [dirFs]);
+    cmd = cmd.replace(/\{pmRun\}\s+(.+)$/, (_m, rest) => pmRun(pm, rest));
+    cmd = cmd.replace(/\{pmExec\}\s+(.+)$/, (_m, rest) => pmExec(pm, rest));
+  }
+  return cmd;
+}
+
 function compilePattern(pattern: string): RegExp | null {
   if (pattern.length > MAX_PATTERN_CHARS) return null;
   try {
@@ -279,6 +452,45 @@ export function matchDetect(detect: FrameworkDetect, rootFs: RootFs): boolean {
   }
 
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace member globs (M66). pnpm-workspace.yaml is parsed with a minimal
+// YAML subset (a top-level `packages:` list) — good enough for the file's
+// documented shape without adding a YAML dependency.
+// ---------------------------------------------------------------------------
+
+export function pnpmWorkspaceGlobs(content: string): { include: string[]; exclude: string[] } {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  let inPackages = false;
+  for (const line of content.split(/\r?\n/)) {
+    if (/^packages\s*:\s*(#.*)?$/.test(line)) { inPackages = true; continue; }
+    if (!inPackages) continue;
+    if (/^\S/.test(line)) break; // next top-level key
+    const m = line.match(/^\s*-\s*['"]?([^'"#\r\n]+?)['"]?\s*(#.*)?$/);
+    if (!m) continue;
+    const glob = m[1].trim();
+    if (!glob) continue;
+    if (glob.startsWith('!')) exclude.push(glob.slice(1));
+    else include.push(glob);
+  }
+  return { include, exclude };
+}
+
+// npm/yarn/bun style `workspaces` in package.json: string[] or { packages: string[] }.
+export function packageJsonWorkspaceGlobs(pkg: any): { include: string[]; exclude: string[] } {
+  const raw = Array.isArray(pkg?.workspaces) ? pkg.workspaces
+    : Array.isArray(pkg?.workspaces?.packages) ? pkg.workspaces.packages
+    : [];
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const g of raw) {
+    if (typeof g !== 'string' || !g.trim()) continue;
+    if (g.startsWith('!')) exclude.push(g.slice(1));
+    else include.push(g.trim());
+  }
+  return { include, exclude };
 }
 
 // ---------------------------------------------------------------------------

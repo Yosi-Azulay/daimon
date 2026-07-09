@@ -69,7 +69,8 @@ test('registry ships ≥9 built-in profiles with the 9 v0.10 ids', () => {
 test('every built-in row has family, detect clause, command, workspaceType', () => {
   for (const p of builtinProfiles()) {
     assert.ok(p.family, `${p.id} missing family`);
-    assert.ok(p.command, `${p.id} missing command`);
+    // Workspace enumerators (pnpm/turbo) register member apps, not a root app.
+    if (!(p.workspace === 'pnpm' || p.workspace === 'turbo')) assert.ok(p.command, `${p.id} missing command`);
     assert.ok(p.workspaceType, `${p.id} missing workspaceType`);
     const d = p.detect;
     assert.ok(d.files?.length || d.anyFiles?.length || d.fileContains?.length || d.packageJson,

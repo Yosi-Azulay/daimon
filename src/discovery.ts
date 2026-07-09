@@ -3,7 +3,11 @@ import path from 'node:path';
 import fg from 'fast-glob';
 import type { AppmanConfig, DiscoveredApp } from './types.js';
 import { isSafeAppName } from './shellSafe.js';
-import { allProfiles, matchDetect, RootFs, type FrameworkProfile } from './frameworks.js';
+import {
+  allProfiles, matchDetect, resolveCommand, RootFs,
+  pnpmWorkspaceGlobs, packageJsonWorkspaceGlobs,
+  type FrameworkProfile,
+} from './frameworks.js';
 
 function readJson(p: string): any | null {
   try {
@@ -166,15 +170,25 @@ function enumerateAngular(profile: FrameworkProfile, ctx: RootContext, rootFs: R
   return true;
 }
 
-// Single-app profile: marker match registers one app named after the root dir.
-function detectSingleApp(profile: FrameworkProfile, ctx: RootContext, rootFs: RootFs): boolean {
-  if (!matchDetect(profile.detect, rootFs)) return false;
-  const baseName = `${path.basename(ctx.root)}${profile.nameSuffix ?? ''}`;
+// Single-app profile: marker match registers one app named after the dir.
+// `dir` is the searchRoot itself, or a workspace member package (M66);
+// `workspaceFs` (member case) supplies the root lockfile for pm detection.
+function detectSingleApp(
+  profile: FrameworkProfile,
+  ctx: RootContext,
+  dir: string,
+  dirFs: RootFs,
+  workspaceFs?: RootFs,
+): boolean {
+  if (!matchDetect(profile.detect, dirFs)) return false;
+  const command = resolveCommand(profile, dirFs, workspaceFs);
+  if (command === null) return false;
+  const baseName = `${path.basename(dir)}${profile.nameSuffix ?? ''}`;
   const added = addUnique(ctx.found, baseName, {
-    workspaceRoot: ctx.root,
+    workspaceRoot: dir,
     workspaceType: profile.workspaceType,
     serverProfile: profile.id,
-    command: profile.command,
+    command,
     hidden: false,
     tags: [],
     workspaceLabel: ctx.workspaceLabel,
@@ -183,14 +197,14 @@ function detectSingleApp(profile: FrameworkProfile, ctx: RootContext, rootFs: Ro
 
   // Vite keeps its opt-in subfolder scan: `{ path, viteSubfolders: true }`
   // roots register each direct child with its own vite config too.
-  if (profile.id === 'vite' && ctx.viteSubfolders) {
+  if (profile.id === 'vite' && ctx.viteSubfolders && dir === ctx.root) {
     const sub = fg.sync('*/vite.config.{ts,js,mjs,cjs}', { cwd: toFgPath(ctx.root), absolute: true, followSymbolicLinks: false });
     for (const f of sub) {
-      const dir = path.dirname(f);
-      const subBase = path.basename(dir);
+      const subDir = path.dirname(f);
+      const subBase = path.basename(subDir);
       if (subBase === path.basename(ctx.root)) continue;
       const subAdded = addUnique(ctx.found, subBase, {
-        workspaceRoot: dir,
+        workspaceRoot: subDir,
         workspaceType: profile.workspaceType,
         serverProfile: profile.id,
         command: profile.command,
@@ -199,6 +213,80 @@ function detectSingleApp(profile: FrameworkProfile, ctx: RootContext, rootFs: Ro
         workspaceLabel: ctx.workspaceLabel,
       });
       if (subAdded) bumpProfile(ctx.stats, profile.id);
+    }
+  }
+  return true;
+}
+
+// Generic package.json fallback (M66). Lowest precedence: skipped whenever a
+// named profile already matched the directory, and never inside node_modules.
+// Every skip is explained in discovery.stats.rejected.
+function tryFallback(
+  profile: FrameworkProfile,
+  ctx: RootContext,
+  dir: string,
+  dirFs: RootFs,
+  matched: Set<string>,
+  workspaceFs?: RootFs,
+): boolean {
+  if (dir.split(/[\\/]/).includes('node_modules')) {
+    if (matchDetect(profile.detect, dirFs)) bump(ctx.stats, 'fallback: inside node_modules');
+    return false;
+  }
+  if (matched.size > 0) {
+    if (matchDetect(profile.detect, dirFs)) bump(ctx.stats, 'fallback superseded by named profile');
+    return false;
+  }
+  if (detectSingleApp(profile, ctx, dir, dirFs, workspaceFs)) return true;
+  if (dirFs.exists('package.json')) bump(ctx.stats, 'package.json has no dev/serve/start script');
+  return false;
+}
+
+// pnpm-workspace.yaml / turbo.json enumerator (M66): member packages get the
+// full single-app profile pass, the way nx.json enumerates project.json.
+function enumerateMembers(
+  profile: FrameworkProfile,
+  ctx: RootContext,
+  rootFs: RootFs,
+  profiles: FrameworkProfile[],
+): boolean {
+  let globs: { include: string[]; exclude: string[] };
+  if (profile.workspace === 'pnpm') {
+    const content = rootFs.content('pnpm-workspace.yaml');
+    if (content === null) return false;
+    globs = pnpmWorkspaceGlobs(content);
+  } else {
+    if (!rootFs.exists('turbo.json')) return false;
+    globs = packageJsonWorkspaceGlobs(rootFs.packageJson());
+  }
+  if (globs.include.length === 0) return true; // marker present, nothing listed
+
+  const patterns = globs.include.map(g => toFgPath(g).replace(/\/+$/, '') + '/package.json');
+  const ignore = [
+    '**/node_modules/**', '**/dist/**', '**/.git/**',
+    ...globs.exclude.map(g => toFgPath(g).replace(/\/+$/, '') + '/**'),
+  ];
+  const pkgFiles = fg.sync(patterns, {
+    cwd: toFgPath(ctx.root),
+    ignore,
+    absolute: true,
+    dot: false,
+    followSymbolicLinks: false,
+  });
+
+  for (const pf of pkgFiles.sort()) {
+    const dir = path.resolve(path.dirname(pf)); // fg returns forward slashes on Windows
+    if (dir === ctx.root) continue;
+    if (ctx.stats) ctx.stats.scanned += 1;
+    const dirFs = new RootFs(dir);
+    const memberMatched = new Set<string>();
+    for (const p of profiles) {
+      if (p.workspace) continue; // no nested workspace enumeration
+      if (p.suppressedBy?.some(id => memberMatched.has(id))) continue;
+      const hit = p.fallback
+        ? tryFallback(p, ctx, dir, dirFs, memberMatched, rootFs)
+        : detectSingleApp(p, ctx, dir, dirFs, rootFs);
+      if (hit) memberMatched.add(p.id);
     }
   }
   return true;
@@ -253,7 +341,9 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
       let hit: boolean;
       if (profile.workspace === 'nx') hit = enumerateNx(profile, ctx, rootFs);
       else if (profile.workspace === 'angular') hit = enumerateAngular(profile, ctx, rootFs);
-      else hit = detectSingleApp(profile, ctx, rootFs);
+      else if (profile.workspace === 'pnpm' || profile.workspace === 'turbo') hit = enumerateMembers(profile, ctx, rootFs, profiles);
+      else if (profile.fallback) hit = tryFallback(profile, ctx, root, rootFs, matched);
+      else hit = detectSingleApp(profile, ctx, root, rootFs);
       if (hit) matched.add(profile.id);
     }
 
