@@ -94,7 +94,7 @@ const ERROR_PATTERNS = [
   /^panic:\s+/,
   /^thread\s+'[^']+'\s+panicked at/,
   /^error\[E\d+\]:/,
-  /^\S+\.(?:go|rb|py|rs):\d+:\d+:/,
+  /^\S+\.(?:go|rb|py|rs|dart):\d+:\d+:/,
   /^\s*[A-Z][a-zA-Z]*\.[A-Z][a-zA-Z]*:\s+/,
   /^[A-Z][a-zA-Z]+(?:::[A-Z][a-zA-Z]+)+\s*[(:]/,
   /^[A-Z][a-zA-Z]*Error\s*\(/,
@@ -102,7 +102,7 @@ const ERROR_PATTERNS = [
 
 const TS_CODE_RX = /\berror TS(\d+)/;
 const ESBUILD_TS_RX = /✘\s*\[ERROR\]\s*TS(\d+)/;
-const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|astro|py|rb|go|rs)):(\d+):(\d+)/;
+const LOCATION_RX = /([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|astro|py|rb|go|rs|dart)):(\d+):(\d+)/;
 // Stack-trace style: "at handler (D:\\app\\src\\index.ts:42:10)" or "at file:///D:/...:42:10".
 const PAREN_LOCATION_RX = /\(([A-Z]:[\\/][^\s:()]+|[^\s:()]+\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|astro|py|rb|go|rs)):(\d+):(\d+)\)/;
 // TSC report format: "src/foo.ts(10,3): error TS2322: ...".

@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "expo",
+      "profile": "expo",
+      "command": "npx expo start"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "Starting project at /app",
+      "Starting Metro Bundler",
+      "Web is waiting on http://localhost:8081",
+      "› Metro waiting on exp://192.168.1.20:8081",
+      "› Press w │ open web"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:8081",
+    "errors": [
+      "Error: Unable to resolve module ./missing from /app/App.js",
+      "    at ModuleResolver.resolveDependency (App.js:12:5)"
+    ],
+    "expectError": {
+      "file": "App.js",
+      "line": 12
+    }
+  }
+}

@@ -117,6 +117,21 @@ const BUILTINS: FrameworkProfile[] = [
     suppressedBy: ['nx'],
     builtin: true,
   },
+  // Tauri (M69) sits before the JS meta-frameworks: a Tauri repo usually
+  // carries the frontend's config too, but `tauri dev` is the right dev
+  // command (it launches the frontend and the Rust shell together).
+  {
+    id: 'tauri',
+    family: 'mobile',
+    detect: { files: ['src-tauri/tauri.conf.json'] },
+    command: '{pmRun} tauri dev',
+    // Readiness/URL come from the underlying vite/next dev-server lines,
+    // which the generic patterns already recognise.
+    errorParser: 'rust-cargo',
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
+    builtin: true,
+  },
   // --- JS meta-frameworks (M66). Ordered before vite: several of them keep a
   // vite.config in the repo, and the framework CLI is the right dev server.
   {
@@ -128,6 +143,7 @@ const BUILTINS: FrameworkProfile[] = [
     url: { pattern: 'Local:\\s+(https?:\\/\\/\\S+)' },
     workspaceType: 'vite',
     healthProbe: 'http',
+    suppressedBy: ['tauri'],
     builtin: true,
   },
   {
@@ -139,6 +155,7 @@ const BUILTINS: FrameworkProfile[] = [
     url: { pattern: 'Local:\\s+(https?:\\/\\/\\S+)' },
     workspaceType: 'vite',
     healthProbe: 'http',
+    suppressedBy: ['tauri'],
     builtin: true,
   },
   {
@@ -154,6 +171,7 @@ const BUILTINS: FrameworkProfile[] = [
     errorParser: 'vite',
     workspaceType: 'vite',
     healthProbe: 'http',
+    suppressedBy: ['tauri'],
     builtin: true,
   },
   {
@@ -167,6 +185,7 @@ const BUILTINS: FrameworkProfile[] = [
     errorParser: 'vite',
     workspaceType: 'vite',
     healthProbe: 'http',
+    suppressedBy: ['tauri'],
     builtin: true,
   },
   {
@@ -184,6 +203,32 @@ const BUILTINS: FrameworkProfile[] = [
     errorParser: 'vite',
     workspaceType: 'vite',
     healthProbe: 'http',
+    suppressedBy: ['tauri'],
+    builtin: true,
+  },
+  // --- Mobile/native wave (M69): dev-server aspects only. Web-preview URL
+  // becomes the app URL; device/emulator flows stay in the framework's own
+  // terminal UX (daimon logs still capture them).
+  {
+    id: 'expo',
+    family: 'mobile',
+    detect: { files: ['app.json'], packageJson: { dependsOn: ['expo'] } },
+    command: '{pmExec} expo start',
+    readiness: { pattern: 'Metro waiting on' },
+    url: { pattern: 'Web is waiting on\\s+(https?:\\/\\/\\S+)' },
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'flutter',
+    family: 'mobile',
+    detect: { files: ['pubspec.yaml'], fileContains: [{ file: 'pubspec.yaml', pattern: 'sdk:\\s*flutter|\\bflutter\\b' }] },
+    command: 'flutter run -d web-server',
+    readiness: { pattern: 'is available at|is being served at' },
+    url: { pattern: '(?:is available at|is being served at):?\\s*(https?:\\/\\/\\S+)' },
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
     builtin: true,
   },
   {
@@ -194,8 +239,9 @@ const BUILTINS: FrameworkProfile[] = [
     errorParser: 'vite',
     workspaceType: 'vite',
     healthProbe: 'http',
-    // A meta-framework's vite.config belongs to that framework's own dev server.
-    suppressedBy: ['nextjs', 'nuxt', 'sveltekit', 'astro', 'remix'],
+    // A meta-framework's (or tauri shell's) vite.config belongs to that
+    // framework's own dev server.
+    suppressedBy: ['nextjs', 'nuxt', 'sveltekit', 'astro', 'remix', 'tauri'],
     builtin: true,
   },
   {

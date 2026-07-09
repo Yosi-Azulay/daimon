@@ -1,0 +1,6 @@
+name: flutter_fixture
+environment:
+  sdk: ^3.5.0
+dependencies:
+  flutter:
+    sdk: flutter

@@ -1,0 +1,12 @@
+{
+  "name": "tauri-fixture",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.2.0",
+    "vite": "6.0.0"
+  }
+}

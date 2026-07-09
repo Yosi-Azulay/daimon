@@ -1,0 +1,30 @@
+{
+  "apps": [
+    {
+      "name": "tauri",
+      "profile": "tauri",
+      "command": "npm run tauri dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "     Running BeforeDevCommand (`npm run dev`)",
+      "",
+      "  VITE v6.0.3  ready in 290 ms",
+      "",
+      "  ➜  Local:   http://localhost:1420/",
+      "     Running DevCommand (`cargo  run --no-default-features --color always --`)",
+      "   Compiling tauri-fixture v0.1.0 (/app/src-tauri)"
+    ],
+    "expectStatus": "compiling",
+    "expectUrl": "http://localhost:1420",
+    "errors": [
+      "error[E0308]: mismatched types",
+      "  --> src-tauri/src/main.rs:7:9"
+    ],
+    "expectError": {
+      "file": "src-tauri/src/main.rs",
+      "line": 7
+    }
+  }
+}

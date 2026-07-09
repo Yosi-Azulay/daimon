@@ -1,0 +1,4 @@
+[package]
+name = "tauri-fixture"
+[dependencies]
+tauri = "2"

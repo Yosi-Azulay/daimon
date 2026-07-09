@@ -1,0 +1,26 @@
+{
+  "apps": [
+    {
+      "name": "flutter",
+      "profile": "flutter",
+      "command": "flutter run -d web-server"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "Launching lib/main.dart on Web Server in debug mode...",
+      "Waiting for connection from debug service on Web Server...",
+      "lib/main.dart is being served at http://localhost:34489",
+      "The web-server device requires the Dart Debug extension."
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:34489",
+    "errors": [
+      "lib/main.dart:12:5: Error: Undefined name 'foo'."
+    ],
+    "expectError": {
+      "file": "lib/main.dart",
+      "line": 12
+    }
+  }
+}
