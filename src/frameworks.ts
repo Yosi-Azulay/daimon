@@ -27,6 +27,9 @@ export interface FrameworkDetect {
   anyFiles?: string[];
   // At least one entry must match: its file exists and its content matches.
   fileContains?: FileContainsRule[];
+  // At least one root-level file matching the glob contains the pattern
+  // (dotnet's "*.csproj with Sdk=Web"). Built-in rows only.
+  globContains?: { glob: string; pattern: string }[];
   // package.json probes: dependsOn = at least one dep/devDep present;
   // script = at least one script name present. Both clauses must hold when given.
   packageJson?: { dependsOn?: string[]; script?: string[] };
@@ -58,6 +61,11 @@ export interface FrameworkProfile {
   // Generic last-resort profile (package-json): only consulted when NO other
   // profile matched the directory, and never inside node_modules.
   fallback?: boolean;
+  // First entry whose marker file exists picks the command; `win32` variant
+  // used on Windows (./mvnw → mvnw.cmd). Falls back to `command`.
+  commandCandidates?: { ifFile: string; command: string; win32?: string }[];
+  // Windows replacement for `command` (bin/rails needs the ruby shim).
+  win32Command?: string;
   builtin: boolean;
 }
 
@@ -73,8 +81,8 @@ export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 export const KNOWN_ERROR_PARSER_IDS: ReadonlySet<string> = new Set([
   'esbuild', 'vite', 'storybook', 'jest', 'nx', 'webpack', 'node', 'typescript',
   'django', 'rails', 'fastapi', 'go-air', 'rust-trunk', 'python',
-  // M67 per-profile parsers (multi-line aware; see PROFILE_ERROR_RULES in parser.ts).
-  'python-traceback', 'go-build', 'rust-cargo', 'dotnet', 'jvm-gradle',
+  // M67/M68 per-profile parsers (multi-line aware; see PROFILE_ERROR_RULES in parser.ts).
+  'python-traceback', 'go-build', 'rust-cargo', 'dotnet', 'jvm-gradle', 'php',
 ]);
 
 // Regex strings from config are compiled once here; cap length so a
@@ -201,12 +209,17 @@ const BUILTINS: FrameworkProfile[] = [
     healthProbe: 'http',
     builtin: true,
   },
+  // --- Polyglot rows, upgraded from spawn-only to full pipeline citizens
+  // (M68): readiness drives compiling→serving, url feeds the probe, and the
+  // errorParser ids select the M67 multi-line parsers.
   {
     id: 'django',
     family: 'python',
     detect: { files: ['manage.py'], fileContains: [{ file: 'manage.py', pattern: '\\bdjango\\b' }] },
     command: 'python manage.py runserver',
-    errorParser: 'django',
+    readiness: { pattern: 'Quit the server with CONTROL-C' },
+    url: { pattern: 'Starting development server at\\s+(https?:\\/\\/\\S+)' },
+    errorParser: 'python-traceback',
     workspaceType: 'polyglot',
     healthProbe: 'http',
     suppressedBy: ['vite', 'storybook'],
@@ -217,6 +230,9 @@ const BUILTINS: FrameworkProfile[] = [
     family: 'ruby',
     detect: { files: ['bin/rails', 'Gemfile'] },
     command: 'bin/rails server',
+    // Windows has no shebang handling — run the binstub through ruby.
+    win32Command: 'ruby bin/rails server',
+    readiness: { pattern: 'Use Ctrl-C to stop|Listening on (?:tcp|http)' },
     errorParser: 'rails',
     workspaceType: 'polyglot',
     healthProbe: 'http',
@@ -233,7 +249,9 @@ const BUILTINS: FrameworkProfile[] = [
       ],
     },
     command: 'uvicorn main:app --reload',
-    errorParser: 'fastapi',
+    readiness: { pattern: 'Application startup complete|Uvicorn running on' },
+    url: { pattern: 'Uvicorn running on\\s+(https?:\\/\\/\\S+)' },
+    errorParser: 'python-traceback',
     workspaceType: 'polyglot',
     healthProbe: 'http',
     suppressedBy: ['vite', 'storybook'],
@@ -244,7 +262,8 @@ const BUILTINS: FrameworkProfile[] = [
     family: 'go',
     detect: { anyFiles: ['.air.toml', 'air.toml'] },
     command: 'air',
-    errorParser: 'go-air',
+    readiness: { pattern: '^running\\.\\.\\.' },
+    errorParser: 'go-build',
     workspaceType: 'polyglot',
     healthProbe: 'http',
     suppressedBy: ['vite', 'storybook'],
@@ -255,10 +274,91 @@ const BUILTINS: FrameworkProfile[] = [
     family: 'rust',
     detect: { files: ['Trunk.toml'] },
     command: 'trunk serve',
-    errorParser: 'rust-trunk',
+    readiness: { pattern: 'serving static assets at|server listening at' },
+    url: { pattern: '(?:serving static assets at|server listening at)\\s*(?:->\\s*)?(https?:\\/\\/\\S+)' },
+    errorParser: 'rust-cargo',
     workspaceType: 'polyglot',
     healthProbe: 'http',
     suppressedBy: ['vite', 'storybook'],
+    builtin: true,
+  },
+  // --- Backend wave (M68).
+  {
+    id: 'dotnet',
+    family: 'dotnet',
+    detect: { globContains: [{ glob: '*.csproj', pattern: 'Sdk="Microsoft\\.NET\\.Sdk\\.Web"' }] },
+    command: 'dotnet watch',
+    readiness: { pattern: 'Now listening on:' },
+    url: { pattern: 'Now listening on:\\s+(https?:\\/\\/\\S+)' },
+    errorParser: 'dotnet',
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'spring-boot',
+    family: 'jvm',
+    detect: {
+      fileContains: [
+        { file: 'pom.xml', pattern: 'spring-boot' },
+        { file: 'build.gradle', pattern: 'org\\.springframework\\.boot' },
+        { file: 'build.gradle.kts', pattern: 'org\\.springframework\\.boot' },
+      ],
+    },
+    command: 'mvn spring-boot:run',
+    commandCandidates: [
+      { ifFile: 'mvnw', command: './mvnw spring-boot:run', win32: 'mvnw.cmd spring-boot:run' },
+      { ifFile: 'gradlew', command: './gradlew bootRun', win32: 'gradlew.cmd bootRun' },
+      { ifFile: 'pom.xml', command: 'mvn spring-boot:run' },
+      { ifFile: 'build.gradle', command: 'gradle bootRun' },
+      { ifFile: 'build.gradle.kts', command: 'gradle bootRun' },
+    ],
+    readiness: { pattern: 'Started \\S+ in [\\d.]+ seconds' },
+    errorParser: 'jvm-gradle',
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'laravel',
+    family: 'php',
+    detect: { files: ['artisan'], fileContains: [{ file: 'artisan', pattern: 'laravel|Illuminate' }] },
+    command: 'php artisan serve',
+    readiness: { pattern: 'Server running on' },
+    url: { pattern: 'Server running on:?\\s+\\[?(https?:\\/\\/[^\\]\\s]+)' },
+    errorParser: 'php',
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'flask',
+    family: 'python',
+    detect: {
+      anyFiles: ['app.py', 'wsgi.py'],
+      fileContains: [
+        { file: 'requirements.txt', pattern: '\\bflask\\b' },
+        { file: 'pyproject.toml', pattern: '\\bflask\\b' },
+      ],
+    },
+    command: 'flask run',
+    readiness: { pattern: '\\* Running on' },
+    url: { pattern: 'Running on\\s+(https?:\\/\\/\\S+)' },
+    errorParser: 'python-traceback',
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
+    builtin: true,
+  },
+  {
+    id: 'express-nest',
+    family: 'js',
+    detect: { packageJson: { dependsOn: ['express', '@nestjs/core'], script: ['dev', 'start'] } },
+    command: '{pmRun} {script}',
+    url: { pattern: '(?:listening|running)\\s+(?:on|at):?\\s+.*?(https?:\\/\\/\\S+)' },
+    // Plain node servers rarely announce readiness on stdout — the TCP
+    // fallback flips them to serving when the port accepts connections.
+    healthProbe: 'tcp',
+    workspaceType: 'polyglot',
     builtin: true,
   },
   // --- Monorepo enumerators (M66): like nx, these register member packages,
@@ -319,9 +419,27 @@ export function allProfiles(custom: FrameworkProfile[] | undefined): FrameworkPr
 export class RootFs {
   private existsCache = new Map<string, boolean>();
   private contentCache = new Map<string, string | null>();
+  private globCache = new Map<string, string[]>();
   private pkgJson: any | null | undefined;
 
   constructor(readonly root: string) {}
+
+  // Root-level (depth 1) glob, memoized. Returns matching file names.
+  glob(pattern: string): string[] {
+    let hit = this.globCache.get(pattern);
+    if (hit === undefined) {
+      try {
+        hit = fs.readdirSync(this.root).filter(name => {
+          if (!matchSimpleGlob(pattern, name)) return false;
+          try { return fs.statSync(path.join(this.root, name)).isFile(); } catch { return false; }
+        });
+      } catch {
+        hit = [];
+      }
+      this.globCache.set(pattern, hit);
+    }
+    return hit;
+  }
 
   exists(rel: string): boolean {
     let hit = this.existsCache.get(rel);
@@ -394,8 +512,25 @@ export function pmExec(pm: PackageManager, cmd: string): string {
 
 // Resolve {script}/{pmRun}/{pmExec} placeholders for a concrete directory.
 // Returns null when the command needs a script the package.json doesn't have.
-export function resolveCommand(profile: FrameworkProfile, dirFs: RootFs, workspaceFs?: RootFs): string | null {
+// `platform` is injectable for tests; Windows picks commandCandidates' win32
+// variants (mvnw.cmd) and win32Command (ruby bin/rails).
+export function resolveCommand(
+  profile: FrameworkProfile,
+  dirFs: RootFs,
+  workspaceFs?: RootFs,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
   let cmd = profile.command;
+  let candidateHit = false;
+  if (profile.commandCandidates) {
+    for (const c of profile.commandCandidates) {
+      if (!dirFs.exists(c.ifFile)) continue;
+      cmd = platform === 'win32' && c.win32 ? c.win32 : c.command;
+      candidateHit = true;
+      break;
+    }
+  }
+  if (!candidateHit && platform === 'win32' && profile.win32Command) cmd = profile.win32Command;
   if (cmd.includes('{script}')) {
     const scripts = dirFs.packageJson()?.scripts ?? {};
     const order = profile.detect.packageJson?.script ?? [];
@@ -420,8 +555,15 @@ function compilePattern(pattern: string): RegExp | null {
   }
 }
 
+// Minimal `*`-only glob for root-level marker files ("*.csproj").
+function matchSimpleGlob(pattern: string, name: string): boolean {
+  const rx = new RegExp('^' + pattern.split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
+  return rx.test(name);
+}
+
 export function matchDetect(detect: FrameworkDetect, rootFs: RootFs): boolean {
   const hasClause = !!(detect.files?.length || detect.anyFiles?.length || detect.fileContains?.length
+    || detect.globContains?.length
     || detect.packageJson?.dependsOn?.length || detect.packageJson?.script?.length);
   if (!hasClause) return false;
 
@@ -435,6 +577,18 @@ export function matchDetect(detect: FrameworkDetect, rootFs: RootFs): boolean {
       if (content === null) return false;
       const rx = compilePattern(rule.pattern);
       return rx ? rx.test(content) : false;
+    });
+    if (!anyMatch) return false;
+  }
+
+  if (detect.globContains) {
+    const anyMatch = detect.globContains.some(rule => {
+      const rx = compilePattern(rule.pattern);
+      if (!rx) return false;
+      return rootFs.glob(rule.glob).some(name => {
+        const content = rootFs.content(name);
+        return content !== null && rx.test(content);
+      });
     });
     if (!anyMatch) return false;
   }

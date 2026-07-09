@@ -3,7 +3,8 @@
     {
       "name": "rails",
       "profile": "rails",
-      "command": "bin/rails server"
+      "command": "bin/rails server",
+      "commandWin32": "ruby bin/rails server"
     }
   ],
   "parse": {

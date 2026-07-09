@@ -200,6 +200,13 @@ const PROFILE_ERROR_RULES: Record<string, ProfileErrorRules> = {
     errorRx: [/:\s+error\s+[A-Z]{2,4}\d{3,5}\s*:/],
     locations: [{ rx: /^\s*(.+?\.(?:cs|razor|cshtml|vb|fs))\((\d+),(\d+)\)\s*:\s*error/i, file: 1, line: 2, col: 3 }],
   },
+  // PHP/Laravel: "PHP Fatal error: ... in /app/routes/web.php:5" (or the
+  // classic "... in /app/x.php on line 5") and laravel.log-style ERROR lines.
+  'php': {
+    tool: 'php',
+    errorRx: [/^PHP (?:Fatal error|Parse error|Warning):/, /(?:local|production)\.ERROR:/],
+    locations: [{ rx: /\bin\s+(\S+\.php)(?::|\s+on\s+line\s+)(\d+)/i, file: 1, line: 2 }],
+  },
   // javac: "Foo.java:5: error: ';' expected"; Spring stacktraces backfill from
   // the first "at pkg.Class.method(Foo.java:42)" frame.
   'jvm-gradle': {

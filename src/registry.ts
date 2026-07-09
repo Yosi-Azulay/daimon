@@ -367,6 +367,33 @@ export class Registry extends EventEmitter {
     this.emit('event', full);
   }
 
+  // TCP readiness fallback (M68): profiles with healthProbe 'tcp' have no
+  // reliable stdout signature — the HealthMonitor flips them to serving when
+  // the port accepts a connection. Mirrors the parser's serving transition,
+  // including the compile/ready-cycle accounting that feeds M61 estimates.
+  markServing(name: string, message?: string): void {
+    const e = this.entries.get(name);
+    if (!e) return;
+    const s = e.state;
+    if (s.status !== 'starting' && s.status !== 'compiling') return;
+    const prev = s.status;
+    const now = Date.now();
+    if (s.compileStartedAt != null) {
+      const ms = now - s.compileStartedAt;
+      s.lastCompileMs = ms;
+      s.lastCompileAt = now;
+      s.compileStartedAt = null;
+      s.compileHistory.push(ms);
+      if (s.compileHistory.length > 20) s.compileHistory.splice(0, s.compileHistory.length - 20);
+      this.history?.recordCompile(name, ms, now);
+    } else {
+      s.lastCompileAt = now;
+    }
+    s.status = 'serving';
+    this.recordEvent({ app: name, type: 'status', from: prev, to: 'serving', message });
+    this.emit('change');
+  }
+
   setHealth(name: string, health: AppHealth): void {
     const e = this.entries.get(name);
     if (!e) return;

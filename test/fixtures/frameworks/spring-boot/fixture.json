@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "spring-boot",
+      "profile": "spring-boot",
+      "command": "./mvnw spring-boot:run",
+      "commandWin32": "mvnw.cmd spring-boot:run"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "  .   ____          _            __ _ _",
+      " :: Spring Boot ::                (v3.4.1)",
+      "2026-01-05T10:00:00.000+02:00  INFO 12345 --- [           main] com.example.DemoApplication              : Starting DemoApplication using Java 21",
+      "2026-01-05T10:00:02.000+02:00  INFO 12345 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http)",
+      "2026-01-05T10:00:02.100+02:00  INFO 12345 --- [           main] com.example.DemoApplication              : Started DemoApplication in 2.153 seconds (process running for 2.5)"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": null,
+    "errors": [
+      "/app/src/main/java/com/example/DemoApplication.java:15: error: ';' expected"
+    ],
+    "expectError": {
+      "file": "/app/src/main/java/com/example/DemoApplication.java",
+      "line": 15
+    }
+  }
+}

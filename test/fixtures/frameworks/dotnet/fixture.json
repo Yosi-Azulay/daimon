@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "dotnet",
+      "profile": "dotnet",
+      "command": "dotnet watch"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "dotnet watch ⌚ Started",
+      "Building...",
+      "info: Microsoft.Hosting.Lifetime[14]",
+      "      Now listening on: http://localhost:5163",
+      "info: Microsoft.Hosting.Lifetime[0]",
+      "      Application started. Press Ctrl+C to shut down."
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:5163",
+    "errors": [
+      "Program.cs(12,5): error CS1002: ; expected [/app/Api.csproj]"
+    ],
+    "expectError": {
+      "file": "Program.cs",
+      "line": 12
+    }
+  }
+}

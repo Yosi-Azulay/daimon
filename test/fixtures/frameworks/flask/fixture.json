@@ -1,0 +1,29 @@
+{
+  "apps": [
+    {
+      "name": "flask",
+      "profile": "flask",
+      "command": "flask run"
+    }
+  ],
+  "parse": {
+    "startup": [
+      " * Serving Flask app \"app\"",
+      " * Debug mode: on",
+      " * Running on http://127.0.0.1:5000",
+      "Press CTRL+C to quit"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://127.0.0.1:5000",
+    "errors": [
+      "Traceback (most recent call last):",
+      "  File \"/app/app.py\", line 9, in hello",
+      "    return render_template(\"index.html\", user=current_user)",
+      "NameError: name \"current_user\" is not defined"
+    ],
+    "expectError": {
+      "file": "/app/app.py",
+      "line": 9
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "nest-fixture",
+  "private": true,
+  "scripts": {
+    "dev": "nest start --watch"
+  },
+  "dependencies": {
+    "@nestjs/core": "10.4.0",
+    "@nestjs/common": "10.4.0"
+  }
+}

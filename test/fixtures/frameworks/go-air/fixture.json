@@ -16,7 +16,7 @@
       "building...",
       "running..."
     ],
-    "expectStatus": "compiling",
+    "expectStatus": "serving",
     "expectUrl": null,
     "errors": [
       "main.go:12:5: undefined: foo"

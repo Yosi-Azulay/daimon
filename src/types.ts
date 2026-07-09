@@ -189,7 +189,8 @@ export type ParserTool =
   | 'go-build'
   | 'rust-cargo'
   | 'dotnet'
-  | 'jvm-gradle';
+  | 'jvm-gradle'
+  | 'php';
 
 export interface ParsedError {
   file?: string;

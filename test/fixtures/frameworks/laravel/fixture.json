@@ -1,0 +1,26 @@
+{
+  "apps": [
+    {
+      "name": "laravel",
+      "profile": "laravel",
+      "command": "php artisan serve"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "",
+      "   INFO  Server running on [http://127.0.0.1:8000].",
+      "",
+      "  Press Ctrl+C to stop the server"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://127.0.0.1:8000",
+    "errors": [
+      "PHP Fatal error:  Uncaught Error: Call to undefined function foo() in /app/routes/web.php:5"
+    ],
+    "expectError": {
+      "file": "/app/routes/web.php",
+      "line": 5
+    }
+  }
+}

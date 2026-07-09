@@ -73,7 +73,7 @@ test('every built-in row has family, detect clause, command, workspaceType', () 
     if (!(p.workspace === 'pnpm' || p.workspace === 'turbo')) assert.ok(p.command, `${p.id} missing command`);
     assert.ok(p.workspaceType, `${p.id} missing workspaceType`);
     const d = p.detect;
-    assert.ok(d.files?.length || d.anyFiles?.length || d.fileContains?.length || d.packageJson,
+    assert.ok(d.files?.length || d.anyFiles?.length || d.fileContains?.length || d.globContains?.length || d.packageJson,
       `${p.id} has no detect clause`);
   }
 });

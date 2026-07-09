@@ -9,10 +9,12 @@
   "parse": {
     "startup": [
       "2026-01-05T10:00:00.000Z  INFO 📦 starting build",
-      "   Compiling app v0.1.0 (/app)"
+      "   Compiling app v0.1.0 (/app)",
+      "2026-01-05T10:00:05.000Z  INFO ✅ success",
+      "2026-01-05T10:00:05.100Z  INFO 📡 serving static assets at -> http://127.0.0.1:8080"
     ],
-    "expectStatus": "compiling",
-    "expectUrl": null,
+    "expectStatus": "serving",
+    "expectUrl": "http://127.0.0.1:8080",
     "errors": [
       "error[E0425]: cannot find value `foo` in this scope",
       " --> src/main.rs:4:20"

@@ -95,7 +95,9 @@ for (const id of fixtureIds) {
     for (const want of fx.apps) {
       const app = apps.find(a => a.baseName === want.name && a.serverProfile === want.profile);
       assert.ok(app, `expected app ${want.name} (${want.profile}); got ${apps.map(a => `${a.baseName}:${a.serverProfile}`).join(', ') || 'none'}`);
-      if (want.command) assert.equal(app.command, want.command);
+      // Windows command resolution (M68): fixtures may carry a win32 variant.
+      const wantCmd = process.platform === 'win32' ? (want.commandWin32 ?? want.command) : want.command;
+      if (wantCmd) assert.equal(app.command, wantCmd);
     }
   });
 

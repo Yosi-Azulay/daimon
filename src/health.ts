@@ -1,8 +1,27 @@
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import type { Registry } from './registry.js';
 import type { AppmanConfig, HealthProbeConfig } from './types.js';
 import { isFatalProbeError, isHealthyHttpStatus, profileProbePath } from './healthProfiles.js';
+import { allProfiles } from './frameworks.js';
+
+// Loopback-only TCP connect check (M68). Used both as the readiness fallback
+// for healthProbe:'tcp' profiles and as their health probe.
+export function tcpProbe(port: number, timeoutMs: number, host = '127.0.0.1'): Promise<boolean> {
+  return new Promise(resolve => {
+    const sock = net.connect({ port, host });
+    const done = (ok: boolean) => {
+      sock.removeAllListeners();
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false));
+    sock.once('error', () => done(false));
+  });
+}
 
 const FRESH_SERVING_RETRY_MS = 1000;
 const INITIAL_DELAY_MS = 500;
@@ -56,10 +75,13 @@ function buildUrl(scheme: string, host: string, port: number | null, path: strin
   return `${scheme}://${bracketed}${portPart}${path.startsWith('/') ? path : '/' + path}`;
 }
 
+const TCP_READINESS_INTERVAL_MS = 750;
+
 export class HealthMonitor {
   private timers = new Map<string, NodeJS.Timeout>();
   private starting = new Map<string, NodeJS.Timeout>();
   private freshness = new Map<string, FreshState>();
+  private tcpReadiness = new Map<string, NodeJS.Timeout>();
   private stopped = false;
 
   constructor(
@@ -77,8 +99,18 @@ export class HealthMonitor {
     this.registry.off('change', this.onChange);
     for (const t of this.timers.values()) clearInterval(t);
     for (const t of this.starting.values()) clearTimeout(t);
+    for (const t of this.tcpReadiness.values()) clearInterval(t);
     this.timers.clear();
     this.starting.clear();
+    this.tcpReadiness.clear();
+  }
+
+  // healthProbe:'tcp' when the app's registry row (built-in or custom) says so.
+  private isTcpProfile(name: string): boolean {
+    const app = this.registry.getApp(name);
+    if (!app?.serverProfile) return false;
+    const row = allProfiles(this.fullConfig?.frameworks).find(p => p.id === app.serverProfile);
+    return row?.healthProbe === 'tcp';
   }
 
   private onChange = () => {
@@ -89,6 +121,27 @@ export class HealthMonitor {
   private evaluate(name: string): void {
     const s = this.registry.getState(name);
     if (!s) return;
+
+    // TCP readiness fallback (M68): while a tcp-profile app is starting or
+    // compiling, poll its port; first accepted connection flips it to serving.
+    const awaitingTcp = (s.status === 'starting' || s.status === 'compiling')
+      && s.port != null && this.isTcpProfile(name);
+    if (awaitingTcp) {
+      if (!this.tcpReadiness.has(name)) {
+        const t = setInterval(() => {
+          const cur = this.registry.getState(name);
+          if (!cur || (cur.status !== 'starting' && cur.status !== 'compiling') || cur.port == null) return;
+          void tcpProbe(cur.port, this.cfg.timeoutMs).then(ok => {
+            if (ok) this.registry.markServing(name, `port ${cur.port} accepting connections (tcp readiness)`);
+          });
+        }, TCP_READINESS_INTERVAL_MS);
+        this.tcpReadiness.set(name, t);
+      }
+    } else {
+      const t = this.tcpReadiness.get(name);
+      if (t) { clearInterval(t); this.tcpReadiness.delete(name); }
+    }
+
     if (s.status === 'serving') {
       if (this.timers.has(name) || this.starting.has(name)) return;
       this.freshness.set(name, { retried: false });
@@ -114,6 +167,16 @@ export class HealthMonitor {
   private async probe(name: string): Promise<void> {
     const s = this.registry.getState(name);
     if (!s || s.status !== 'serving') return;
+
+    // tcp-profile apps are healthy when the port accepts a connection —
+    // probing an arbitrary TCP service with HTTP would misreport it.
+    if (this.isTcpProfile(name) && !s.announcedUrl && s.port != null) {
+      const ok = await tcpProbe(s.port, this.cfg.timeoutMs);
+      this.registry.setLastHealthError(name, ok ? null : `tcp connect failed on port ${s.port}`);
+      this.registry.setHealth(name, ok ? 'healthy' : 'unhealthy');
+      return;
+    }
+
     const override = this.fullConfig?.overrides?.[name]?.url;
     // Resolve healthProbePath against (1) user override, (2) prior auto-discovery,
     // (3) framework profile default from M52. The profile default takes effect

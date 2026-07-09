@@ -1,0 +1,26 @@
+{
+  "apps": [
+    {
+      "name": "express-nest",
+      "profile": "express-nest",
+      "command": "npm run dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "[Nest] 12345  - 01/05/2026, 10:00:00 AM     LOG [NestFactory] Starting Nest application...",
+      "[Nest] 12345  - 01/05/2026, 10:00:01 AM     LOG [NestApplication] Nest application successfully started +2ms",
+      "Application is running on: http://127.0.0.1:3000"
+    ],
+    "expectStatus": "starting",
+    "expectUrl": "http://127.0.0.1:3000",
+    "errors": [
+      "TypeError: Cannot read properties of undefined (reading \"findAll\")",
+      "    at CatsController.getCats (src/cats/cats.controller.ts:18:29)"
+    ],
+    "expectError": {
+      "file": "src/cats/cats.controller.ts",
+      "line": 18
+    }
+  }
+}

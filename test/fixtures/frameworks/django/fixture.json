@@ -17,7 +17,7 @@
       "Quit the server with CONTROL-C."
     ],
     "expectStatus": "serving",
-    "expectUrl": null,
+    "expectUrl": "http://127.0.0.1:8000",
     "errors": [
       "Internal Server Error: /",
       "Traceback (most recent call last):",
