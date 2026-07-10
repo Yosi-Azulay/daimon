@@ -1,4 +1,4 @@
-import {
+﻿import {
   AfterViewInit,
   ChangeDetectionStrategy,
   Component,
@@ -69,7 +69,7 @@ function fmtRelative(ts: number, now: number = Date.now()): string {
 }
 
 function fmtTransitionTs(ts: number | undefined): string {
-  if (!ts) return '—';
+  if (!ts) return 'â€”';
   const d = new Date(ts);
   return d.toLocaleString();
 }
@@ -149,7 +149,7 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
         <h1>
           History
           @if (name) {
-            <span class="dm-sep">·</span>
+            <span class="dm-sep">Â·</span>
             <dm-mono><span class="dm-app">{{ name }}</span></dm-mono>
             @if (currentApp(); as a) {
               <dm-status-pill [status]="a.status" [health]="a.health"></dm-status-pill>
@@ -279,14 +279,14 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
             @if (why()?.lastTransition; as lt) {
               <div class="dm-transition">
                 <div class="dm-transition-arrow">
-                  <span class="dm-transition-from">{{ lt.from || '—' }}</span>
+                  <span class="dm-transition-from">{{ lt.from || 'â€”' }}</span>
                   <mat-icon class="dm-transition-icon">arrow_forward</mat-icon>
-                  <span class="dm-transition-to" [attr.data-to]="lt.to">{{ lt.to || '—' }}</span>
+                  <span class="dm-transition-to" [attr.data-to]="lt.to">{{ lt.to || 'â€”' }}</span>
                 </div>
                 <div class="dm-transition-meta">
                   <dm-mono>{{ fmtTs(lt.ts) }}</dm-mono>
                   @if (lt.message) {
-                    <span class="dm-sep">·</span>
+                    <span class="dm-sep">Â·</span>
                     <span class="dm-transition-msg">{{ lt.message }}</span>
                   }
                 </div>
@@ -301,14 +301,14 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
                       <div class="dm-timeline-head">
                         <strong>{{ ev.type }}</strong>
                         @if (ev.from || ev.to) {
-                          <span class="dm-sep">·</span>
-                          <span><dm-mono>{{ ev.from || '—' }} → {{ ev.to || '—' }}</dm-mono></span>
+                          <span class="dm-sep">Â·</span>
+                          <span><dm-mono>{{ ev.from || 'â€”' }} â†’ {{ ev.to || 'â€”' }}</dm-mono></span>
                         }
                       </div>
                       <div class="dm-timeline-meta">
                         <dm-mono>{{ fmtTs(ev.ts) }}</dm-mono>
                         @if (ev.message) {
-                          <span class="dm-sep">·</span>
+                          <span class="dm-sep">Â·</span>
                           <span>{{ ev.message }}</span>
                         }
                       </div>
@@ -334,8 +334,8 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
     .dm-back:hover { text-decoration: underline; }
 
     .dm-skel-grid, .dm-grid { display: grid; gap: 1rem; }
-    .dm-skel-grid { grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
-    .dm-grid { grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
+    .dm-skel-grid { grid-template-columns: repeat(auto-fill, minmax(min(18rem, 100%), 1fr)); }
+    .dm-grid { grid-template-columns: repeat(auto-fill, minmax(min(20rem, 100%), 1fr)); }
     .dm-card {
       display: flex; flex-direction: column; gap: .75rem;
       padding: 1rem;

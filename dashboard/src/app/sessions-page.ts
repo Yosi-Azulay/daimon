@@ -1,4 +1,4 @@
-import {
+﻿import {
   ChangeDetectionStrategy,
   Component,
   OnDestroy,
@@ -43,7 +43,7 @@ function fmtElapsed(ms: number): string {
           @if (loading()) {
             <dm-skeleton width="12rem" height="1rem"></dm-skeleton>
           } @else if (recording()) {
-            <span>Recording in progress · {{ elapsedLabel() }}</span>
+            <span>Recording in progress Â· {{ elapsedLabel() }}</span>
           } @else {
             <span>Not recording</span>
           }
@@ -141,7 +141,7 @@ function fmtElapsed(ms: number): string {
     .dm-page-header h1 { margin: 0; }
     .dm-page-sub { color: var(--mat-sys-on-surface-variant); margin-top: .25rem; font-size: .875rem; }
 
-    .dm-skel-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+    .dm-skel-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(18rem, 100%), 1fr)); }
 
     .dm-status-card {
       margin-bottom: 1rem;
@@ -192,7 +192,7 @@ function fmtElapsed(ms: number): string {
 
     .dm-info-grid {
       display: grid; gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
     }
     .dm-info-card { border: 1px solid var(--mat-sys-outline-variant); }
     .dm-info-list {
@@ -262,7 +262,7 @@ export class SessionsPageComponent implements OnInit, OnDestroy {
       this.recording.set(!!s?.recording);
       this.path.set(s?.path);
       // If recording is already in progress when the page mounts, we don't know
-      // the actual start time — anchor at "now" so the elapsed timer is at least
+      // the actual start time â€” anchor at "now" so the elapsed timer is at least
       // monotonic from this moment.
       if (s?.recording) this.startedAt.set(Date.now());
       else this.startedAt.set(null);

@@ -36,15 +36,15 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
   `,
   styles: [`
     .dm-keys { width: 100%; border-collapse: collapse; }
-    .dm-keys td { padding: .375rem .5rem; vertical-align: middle; }
+    .dm-keys td { padding: var(--dm-space-1) var(--dm-space-2); vertical-align: middle; font: 400 var(--dm-text-sm)/var(--dm-line-normal) var(--dm-font); }
     .dm-keys td:first-child { width: 9rem; }
     kbd {
-      font-family: 'Roboto Mono', ui-monospace, monospace;
-      font-size: .75rem;
+      font-family: var(--dm-mono);
+      font-size: var(--dm-text-xs);
       padding: 2px 6px;
-      border-radius: 4px;
-      background: var(--mat-sys-surface-container);
-      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: var(--dm-radius-xs);
+      background: var(--dm-color-surface-2);
+      border: 1px solid var(--dm-color-border);
     }
   `],
 })
@@ -62,7 +62,7 @@ export class KeyboardShortcutsService {
     const { MatDialog } = await import('@angular/material/dialog');
     runInInjectionContext(this.envInjector, () => {
       const dialog = inject(MatDialog);
-      dialog.open(ShortcutsHelpComponent, { width: '420px' });
+      dialog.open(ShortcutsHelpComponent, { width: 'min(420px, 92vw)' });
     });
   }
 

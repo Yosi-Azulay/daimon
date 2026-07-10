@@ -106,3 +106,30 @@ mat-panel-description { justify-content: flex-end; flex: 1 0 0; padding-right: .
   font-family: var(--dm-mono);
   font-size: .875rem;
 }
+
+// Focus outlines from tokens (M71): a single, consistent focus treatment.
+:focus-visible {
+  outline: 2px solid var(--dm-color-primary);
+  outline-offset: 2px;
+  border-radius: var(--dm-radius-xs);
+}
+
+// Tables → stacked cards on narrow viewports (M71). Applies to the shared
+// table classes (history, doctor, requests, bundle, help dialog); each row
+// becomes a bordered card, headers hide, cells flow inline.
+@media (max-width: 640px) {
+  table.dm-table, table.dm-req-table, table.dm-bundle, table.dm-keys {
+    display: block;
+    thead { display: none; }
+    tbody { display: block; }
+    tr {
+      display: flex; flex-wrap: wrap; gap: 0 .75rem; align-items: baseline;
+      border: 1px solid var(--dm-color-border);
+      border-radius: var(--dm-radius-lg);
+      background: var(--dm-color-surface);
+      margin-bottom: var(--dm-space-2);
+      padding: var(--dm-space-2) var(--dm-space-3);
+    }
+    td, th { display: inline-flex; border: 0 !important; padding: 2px 0 !important; min-width: 0; word-break: break-word; }
+  }
+}

@@ -127,6 +127,7 @@ const SINCE_OPTS: { key: string; label: string }[] = [
     .dm-app-pick select { padding: 4px 8px; border-radius: 8px; background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface); border: 1px solid var(--mat-sys-outline-variant); font: 500 .8125rem/1.25rem Roboto; }
     .dm-tl-viewport { height: calc(100vh - 240px); border: 1px solid var(--mat-sys-outline-variant); border-radius: 12px; background: var(--mat-sys-surface-container-lowest); }
     .dm-tl-row { display: grid; grid-template-columns: 80px 90px 160px 1fr; align-items: center; gap: .75rem; padding: 10px 14px; border-bottom: 1px solid color-mix(in oklch, var(--mat-sys-outline-variant) 50%, transparent); cursor: pointer; font: 500 .8125rem/1.25rem 'Roboto Mono', ui-monospace, monospace; }
+    @media (max-width: 640px) { .dm-tl-row { grid-template-columns: 64px 1fr; gap: .25rem .5rem; } .dm-tl-row .dm-tl-app { display: none; } .dm-tl-row .dm-tl-summary { grid-column: 1 / -1; white-space: normal; } }
     .dm-tl-row:hover { background: var(--mat-sys-surface-container); }
     .dm-tl-ts { color: var(--mat-sys-on-surface-variant); }
     .dm-tl-kind { width: max-content; padding: 2px 8px; border-radius: 999px; font: 500 .6875rem/1rem Roboto; }

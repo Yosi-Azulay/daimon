@@ -35,6 +35,10 @@ for (const route of ROUTES) {
     // Console-error budget: tolerate up to 1 expected error (e.g., favicon).
     const fatal = consoleErrors.filter(e => !/favicon|ResizeObserver|chunk-/.test(e));
     expect.soft(fatal, `console errors on ${route.path}`).toEqual([]);
+    // M71: no horizontal scroll at any viewport (the mobile-390 project runs
+    // this same assertion at 390px).
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect.soft(overflow, `horizontal overflow on ${route.path}`).toBeLessThanOrEqual(0);
   });
 }
 

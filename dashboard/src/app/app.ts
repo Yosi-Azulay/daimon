@@ -50,8 +50,21 @@ const WS_KEY = 'daimon.workspace';
     .dm-main {
       grid-area: main;
       overflow-y: auto;
-      padding: 1.5rem;
-      background: var(--mat-sys-surface);
+      padding: var(--dm-space-6);
+      background: var(--dm-color-bg);
+    }
+    /* Responsive shell (M71): under 768px the rail becomes a bottom bar and
+       the topbar condenses; every route stays usable down to 390px. */
+    @media (max-width: 768px) {
+      .dm-shell {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+        grid-template-areas:
+          "topbar"
+          "main"
+          "rail";
+      }
+      .dm-main { padding: var(--dm-space-3); }
     }
     .dm-cwd-banner {
       display: flex; align-items: center; gap: .75rem;

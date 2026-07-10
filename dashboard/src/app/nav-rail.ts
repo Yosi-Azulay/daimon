@@ -97,6 +97,23 @@ const KEY = 'daimon.nav.expanded';
       color: var(--mat-sys-primary);
     }
     .dm-rail-label { flex: 1; }
+    /* Bottom bar under 768px (M71): horizontal, icon-only, scrollable. */
+    @media (max-width: 768px) {
+      .dm-rail, .dm-rail.expanded {
+        width: 100%;
+        flex-direction: row;
+        align-items: center;
+        border-right: 0;
+        border-top: 1px solid var(--dm-color-border);
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+      }
+      .dm-rail::-webkit-scrollbar { display: none; }
+      .dm-rail-toggle, .dm-rail-brand, .dm-rail-label { display: none; }
+      .dm-rail-items { flex-direction: row; gap: 2px; padding: 4px 6px; }
+      .dm-rail-item { padding: 8px 10px; border-radius: var(--dm-radius-lg); }
+    }
   `],
 })
 export class NavRailComponent implements OnInit {

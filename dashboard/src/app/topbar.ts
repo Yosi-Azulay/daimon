@@ -4,6 +4,7 @@ import { ThemeToggleComponent } from './theme-toggle';
 
 const WS_KEY = 'daimon.workspace';
 const PROFILE_KEY = 'daimon.profile';
+const DENSITY_KEY = 'daimon.density';
 
 type MenuKey = 'ws' | 'profile' | null;
 
@@ -72,8 +73,13 @@ type MenuKey = 'ws' | 'profile' | null;
 
       <button class="dm-cmdk" type="button" (click)="onCmdK()" title="Command palette">
         <span class="material-symbols-outlined">search</span>
-        <span style="margin: 0 .5rem;">Jump to…</span>
+        <span class="dm-cmdk-label">Jump to…</span>
         <kbd class="dm-kbd">⌘K</kbd>
+      </button>
+
+      <button class="dm-density" type="button" (click)="toggleDensity()"
+              [title]="'Density: ' + density() + ' (click to toggle)'" [attr.aria-pressed]="density() === 'compact'">
+        <span class="material-symbols-outlined">{{ density() === 'compact' ? 'density_small' : 'density_medium' }}</span>
       </button>
 
       <dm-theme-toggle />
@@ -162,6 +168,21 @@ type MenuKey = 'ws' | 'profile' | null;
       font-size: 1.125rem; line-height: 1; padding: 0;
     }
     .dm-scope-x:hover { background: var(--mat-sys-surface-container-highest); }
+    .dm-density {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px; border: 0; background: transparent;
+      border-radius: var(--dm-radius-full); color: var(--mat-sys-on-surface-variant); cursor: pointer;
+    }
+    .dm-density:hover { background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface); }
+    .dm-density .material-symbols-outlined { font-size: 20px; }
+    /* Condensed topbar under 768px (M71). */
+    @media (max-width: 768px) {
+      .dm-topbar { padding: 6px 8px; gap: .375rem; overflow-x: auto; scrollbar-width: none; }
+      .dm-topbar::-webkit-scrollbar { display: none; }
+      .dm-cmdk-label, .dm-kbd, .dm-conn-text { display: none; }
+      .dm-cmdk { padding: 8px; }
+      .dm-chip span:not(.material-symbols-outlined) { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    }
   `],
 })
 export class TopbarComponent implements OnInit, OnDestroy {
@@ -171,6 +192,9 @@ export class TopbarComponent implements OnInit, OnDestroy {
   profile = signal<string | null>(null);
   profiles = signal<string[]>([]);
   readonly openMenu = signal<MenuKey>(null);
+  // Density mode (M71): comfortable (default) | compact, persisted; applied
+  // as data-density on <html> so the tokens file can scale spacing globally.
+  readonly density = signal<'comfortable' | 'compact'>('comfortable');
 
   filteredCount = computed(() => {
     const ws = this.workspace();
@@ -180,6 +204,8 @@ export class TopbarComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.workspace.set(localStorage.getItem(WS_KEY));
     this.profile.set(localStorage.getItem(PROFILE_KEY));
+    const d = localStorage.getItem(DENSITY_KEY);
+    this.applyDensity(d === 'compact' ? 'compact' : 'comfortable');
     void this.loadProfiles();
     // Stay in sync when other components (or the cwd auto-pick) update the
     // active workspace.
@@ -254,5 +280,15 @@ export class TopbarComponent implements OnInit, OnDestroy {
 
   onCmdK(): void {
     window.dispatchEvent(new CustomEvent('daimon:cmdk'));
+  }
+
+  toggleDensity(): void {
+    this.applyDensity(this.density() === 'compact' ? 'comfortable' : 'compact');
+  }
+
+  private applyDensity(d: 'comfortable' | 'compact'): void {
+    this.density.set(d);
+    localStorage.setItem(DENSITY_KEY, d);
+    document.documentElement.setAttribute('data-density', d);
   }
 }

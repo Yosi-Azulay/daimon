@@ -197,6 +197,11 @@ function relTime(ms: number, now: number): string {
       font-size: .8125rem;
       color: var(--mat-sys-on-surface);
     }
+    @media (max-width: 640px) {
+      .dm-event { grid-template-columns: max-content 1fr; height: auto; padding: 4px .75rem; }
+      .dm-event > *:nth-child(3) { display: none; }
+      .dm-event > *:last-child { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
+    }
     .dm-event:first-child { border-top: 0; }
     .dm-time { color: var(--mat-sys-on-surface-variant); }
     .dm-type {

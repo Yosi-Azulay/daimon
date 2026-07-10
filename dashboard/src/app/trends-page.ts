@@ -1,4 +1,4 @@
-import {
+﻿import {
   AfterViewInit,
   ChangeDetectionStrategy,
   Component,
@@ -103,7 +103,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     };
     if (!this.canvasRef) {
       // Race: setLoading() destroyed the canvas, then setData() ran before
-      // Angular re-projected the `@else { <canvas> }` branch — so canvasRef is
+      // Angular re-projected the `@else { <canvas> }` branch â€” so canvasRef is
       // still null at this microtask. queueMicrotask + a couple of fallback
       // animation frames let the view query update before we try again. Without
       // this, the chart silently stays empty after every window/app switch.
@@ -150,7 +150,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     <div class="dm-page-header">
       <div>
         <h1>Trends</h1>
-        <div class="dm-page-sub">Historical compile · bundle · error · restart trends</div>
+        <div class="dm-page-sub">Historical compile Â· bundle Â· error Â· restart trends</div>
       </div>
       <div class="dm-controls">
         <mat-button-toggle-group [value]="window()" (change)="onWindowChange($event.value)" hideSingleSelectionIndicator aria-label="Time window">
@@ -188,7 +188,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     .dm-controls { display: flex; gap: .75rem; flex-wrap: wrap; }
     .dm-grid {
       display: grid; gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(28rem, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(28rem, 100%), 1fr));
     }
   `],
 })
@@ -240,7 +240,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
                      'color-mix(in oklch, ' + primary + ' 60%, transparent)',
                      'color-mix(in oklch, ' + tertiary + ' 60%, transparent)'];
 
-    // One batched round-trip per app returns all four metrics — cuts the Trends
+    // One batched round-trip per app returns all four metrics â€” cuts the Trends
     // page from 4N parallel calls down to N. With three apps that's 3 round-
     // trips instead of 12.
     const perApp = await Promise.all(apps.map(app =>
@@ -276,13 +276,13 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
     const bundleDatasets: any[] = [];
     bundleSeries.forEach((s, i) => {
       bundleDatasets.push({
-        label: s.app + ' · initialKB',
+        label: s.app + ' Â· initialKB',
         data: this.align(s.points, labelMap.buckets, 'v'),
         backgroundColor: palette[(i * 2) % palette.length],
         stack: s.app,
       });
       bundleDatasets.push({
-        label: s.app + ' · lazyKB',
+        label: s.app + ' Â· lazyKB',
         data: this.align(s.points, labelMap.buckets, 'v2'),
         backgroundColor: palette[(i * 2 + 1) % palette.length],
         stack: s.app,
@@ -313,7 +313,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
 
     this.restartChart?.setData({
       title: 'Restart rate',
-      subtitle: 'error→starting transitions per ' + (win === '24h' ? 'hour' : 'day'),
+      subtitle: 'errorâ†’starting transitions per ' + (win === '24h' ? 'hour' : 'day'),
       chartType: 'bar',
       labels: labelMap.labels,
       datasets: restartSeries.map((s, i) => ({
@@ -330,7 +330,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       const labels = sorted.map(r => fmtBucketLabel(r.ts, win));
       this.selfChart?.setData({
         title: 'Daimon self',
-        subtitle: 'rss · heap · event-loop lag',
+        subtitle: 'rss Â· heap Â· event-loop lag',
         chartType: 'line',
         labels,
         datasets: [

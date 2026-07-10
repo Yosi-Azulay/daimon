@@ -1,4 +1,4 @@
-import {
+﻿import {
   ChangeDetectionStrategy,
   Component,
   OnDestroy,
@@ -46,7 +46,7 @@ function ttl(ms: number, now: number): string {
   template: `
     <div class="dm-page-header">
       <div>
-        <h1>Agents <span class="dm-count">· {{ agents().length }}</span></h1>
+        <h1>Agents <span class="dm-count">Â· {{ agents().length }}</span></h1>
         <div class="dm-page-sub">
           @if (self()) {
             <span>You are <dm-mono>{{ self() }}</dm-mono></span>
@@ -70,7 +70,7 @@ function ttl(ms: number, now: number): string {
                 @if (a.id === self()) { <span class="dm-tag dm-tag-self">you</span> }
               </mat-card-title>
               <mat-card-subtitle>
-                {{ a.callCount }} calls · last seen {{ rel(a.lastSeen) }} · first seen {{ rel(a.firstSeen) }}
+                {{ a.callCount }} calls Â· last seen {{ rel(a.lastSeen) }} Â· first seen {{ rel(a.firstSeen) }}
               </mat-card-subtitle>
             </mat-card-header>
             <mat-card-content>
@@ -120,7 +120,7 @@ function ttl(ms: number, now: number): string {
     .dm-page-header h1 { font: 500 1.5rem/2rem Roboto; margin: 0; color: var(--mat-sys-on-surface); }
     .dm-count { color: var(--mat-sys-on-surface-variant); font-weight: 400; }
     .dm-page-sub { color: var(--mat-sys-on-surface-variant); font-size: .875rem; margin-top: .25rem; }
-    .dm-agents-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+    .dm-agents-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); }
     .dm-agent-card { border: 1px solid var(--mat-sys-outline-variant); }
     .dm-agent-self { border-color: var(--mat-sys-primary); box-shadow: 0 0 0 1px var(--mat-sys-primary); }
     .dm-agent-row { display: flex; align-items: center; gap: .5rem; margin: .375rem 0; font-size: .875rem; color: var(--mat-sys-on-surface); }

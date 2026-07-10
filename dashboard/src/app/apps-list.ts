@@ -289,6 +289,7 @@ export class AppsCardsViewComponent {
     .ib .material-symbols-outlined{font-size:16px}
     .eb{display:inline-flex;align-items:center;padding:0 6px;border-radius:999px;font:600 .75rem/1rem var(--dm-mono);background:color-mix(in oklch,var(--mat-sys-error) 14%,transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent)}
     @media (max-width:1000px){.rw{grid-template-columns:100px minmax(120px,1fr) 70px 70px 60px 110px}.rw .ws,.rw .sm:nth-of-type(3),.rw .sm:nth-of-type(4){display:none}}
+    @media (max-width:640px){.rw{grid-template-columns:auto minmax(0,1fr) auto;gap:.5rem}.rw .ws,.rw .sm,.rw>div:nth-child(8){display:none}}
   `],
 })
 export class AppsListViewComponent {

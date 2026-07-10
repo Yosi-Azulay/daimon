@@ -80,6 +80,23 @@
   --dm-motion-medium: 300ms;
 }
 
+/* Density mode (M71): `comfortable` is the default scale above; `compact`
+   tightens spacing (~25%) and trims the large type steps. Components that
+   consume the spacing tokens tighten automatically. */
+:root[data-density='compact'] {
+  --dm-space-1: 0.1875rem;
+  --dm-space-2: 0.375rem;
+  --dm-space-3: 0.5rem;
+  --dm-space-4: 0.75rem;
+  --dm-space-5: 1rem;
+  --dm-space-6: 1.125rem;
+  --dm-space-8: 1.5rem;
+  --dm-space-12: 2.25rem;
+  --dm-text-lg: 0.95rem;
+  --dm-text-xl: 1.25rem;
+  --dm-line-loose: 1.375rem;
+}
+
 /* Dark scheme: tone swatches need a darker lightness so workspace accents
    and framework badges keep contrast against dark surfaces. Everything that
    aliases --mat-sys-* re-themes automatically via color-scheme. */

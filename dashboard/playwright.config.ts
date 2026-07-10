@@ -23,6 +23,9 @@ export default defineConfig({
     navigationTimeout: 10_000,
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    // Viewport matrix (M71): desktop + narrow phone. Every route must be
+    // usable at 390px with no horizontal scroll.
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } } },
+    { name: 'mobile-390', use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 } } },
   ],
 });
