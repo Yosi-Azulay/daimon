@@ -100,6 +100,7 @@ Then give the user a short **`/goal` prompt** (~1.5–1.8 KB) that:
 - Defines "done" (which milestone ships v0.X.0)
 - Says "if the plan is wrong or ambiguous on a specific point, stop and ask before improvising"
 - Specifies descope order
+- Grants delegation (standing since v0.12): the agent may spawn subagents and pick each one's model + reasoning effort — cheap/fast (Haiku, low effort) for mechanical work (fixtures, restyles, doc regen), strongest model + high effort for core/architectural milestones and final review. The main agent stays accountable for gates; subagent output merges only after its tests pass.
 
 The user pastes this directly into `/goal`. It must fit under 4000 chars (the /goal limit).
 
