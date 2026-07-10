@@ -4,6 +4,42 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-10
+
+"Polyglot & Polished" — framework support becomes a declarative adapter registry with three new waves of profiles (M65–M69), every profile becomes a full pipeline citizen (readiness / URL / error parsing), and the dashboard gets its long-deferred redesign (M70–M71). M72 pays the v0.10 debt; 20 single-app built-in profiles + 2 monorepo enumerators + the generic fallback ship with fixtures.
+
+### Added
+
+- **Framework adapter registry (M65)** — `src/frameworks.ts`: every framework is a declarative `FrameworkProfile` row (detect markers / command / readiness / url / errorParser / healthProbe / badge+tone). `discoverApps()` is a loop over the registry; new frameworks are registry rows + fixtures, never `discovery.ts` branches. New verb `daimon frameworks` + `GET /api/frameworks`; `discovery.stats` gains per-profile match counts.
+- **Custom profiles** — `frameworks: []` in `daimon.config.json`: data-only rows (marker files, regex strings, built-in parser ids — never loaded code), validated at load with doctor-surfaced warnings, checked after built-ins.
+- **Multi-family coexistence (M65)** — the nx/angular short-circuits are gone: a root with both `angular.json` and `manage.py` registers both apps.
+- **JS wave (M66)** — `nextjs`, `nuxt`, `sveltekit`, `astro`, `remix` profiles with readiness + URL patterns; a meta-framework's `vite.config` no longer double-registers a vite app.
+- **Generic `package.json` fallback (M66)** — any directory with a `dev`/`serve`/`start` script registers (lowest precedence, never inside `node_modules`, every skip explained in rejection stats).
+- **Monorepo enumerators (M66)** — `pnpm-workspace.yaml` and `turbo.json` roots enumerate member packages through the full profile pass, nx-style.
+- **Package-manager awareness (M66)** — commands adapt to the lockfile (`pnpm`/`yarn`/`bun`/`npm`); members inherit the workspace root's lockfile. Detection only reads lockfile names.
+- **Per-profile intelligence (M67)** — registry `readiness` patterns drive `compiling → serving`, `url` patterns feed the announced-URL health probe. New multi-line error parsers: `python-traceback`, `go-build`, `rust-cargo`, `dotnet`, `jvm-gradle` (+ `php` in M68) — fail-soft, additive, never drop or reorder log lines.
+- **Adapter test kit (M67)** — `test/fixtures/frameworks/<id>/` per profile + parameterized `test/frameworks.test.mjs` asserting detection, command, readiness, URL, and a parsed error with file:line. A built-in profile without a fixture fails the suite.
+- **Backend wave (M68)** — `dotnet` (watch), `spring-boot` (mvnw/gradlew with Windows `.cmd` resolution), `laravel`, `flask`, `express-nest`; the 5 v0.10 polyglot profiles upgraded from spawn-only to full readiness/URL/error parsing; TCP-listen readiness fallback (`healthProbe: "tcp"`) flips port-silent servers to `serving` when the port accepts connections (loopback only); `bin/rails` runs through `ruby` on Windows.
+- **Mobile wave (M69)** — `expo` (Metro), `flutter` (`-d web-server`), `tauri`. Web-preview URL only; no device/emulator orchestration.
+- **Design system (M70)** — `dashboard/src/styles/tokens.css`: color (light+dark), spacing, type, radii, elevation, motion; primitives and workspace tones consume tokens (dark-mode tones fixed as a side effect).
+- **Mission control (M70)** — the home card grid gains per-app framework badges (inline SVG glyph + registry tone) and a 24h uptime/error sparkline from the history timeline; ready countdowns, soft-lock chips and quick actions as before; the compact list stays as a toggle. `AppSummary` gains `serverProfile`.
+- **Responsive (M71)** — nav-rail collapses to a bottom bar under 768px; every route usable at 390px (tables stack to cards, grids clamp); density `comfortable | compact` toggle persisted; focus outlines from tokens; Playwright viewport matrix (1280 + 390) with per-route zero-horizontal-overflow assertions.
+- **Error grouping (M72)** — `GET /api/errors?group=fingerprint`, `daimon errors --group`, and a fingerprint group mode in the dashboard errors panel: same source location (or number-normalized message) folds into one group with count, first/last-seen and affected apps.
+- **Per-app webhooks (M72)** — `webhooks[].apps` scoping + `overrides.<app>.webhooks` blocks merged with the global list; absent fields keep the exact v0.10 behavior.
+- **VS Code (M72)** — code-lens over `package.json` scripts ("▶ Start via daimon" / "■ Stop" / dashboard, lock-aware) and framework badge tags on error tree items.
+- **TUI (M72)** — app rows show the profile badge tag (`[next]`, `[flask]`).
+- **MCP (M72)** — `daimon_frameworks` tool (21-tool surface).
+
+### Changed
+
+- `ServerProfile` widened to plain string on `DiscoveredApp`/`AppSummary` (custom profile ids).
+- Announced-URL extraction and location parsing extended (`.astro`, `.dart` files; profile URL patterns catch Flask/Astro-style announcements the generic patterns miss).
+- Suite: **387 tests** (from 271), including the framework kit, backend-wave TCP readiness, and fuzz coverage for every per-profile parse context.
+
+### Migration
+
+See `RELEASE-v0.11.0.md` — default dashboard home is the mission-control card grid (list survives as a toggle), `frameworks: []` config addition, `GET /api/frameworks`.
+
 ## [0.10.2] — 2026-07-02
 
 Security & robustness hardening from a five-area code review (daemon core, persistence, CLI/MCP surface, process/ops, security posture). No new features; all fixes.

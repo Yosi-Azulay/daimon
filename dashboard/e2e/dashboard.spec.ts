@@ -8,20 +8,23 @@
 
 import { test, expect, type Page } from '@playwright/test';
 
+// Landmark assertions are scoped to <main>: at 390px the nav-rail labels are
+// (correctly) hidden in the bottom bar, so an unscoped getByText would match
+// a hidden nav label first and false-fail.
 const ROUTES: { path: string; expect: (page: Page) => Promise<void> }[] = [
-  { path: '/',           expect: async p => { await expect(p.locator('h1, h2').first()).toBeVisible(); } },
-  { path: '/errors',     expect: async p => { await expect(p.getByText(/error|warning/i).first()).toBeVisible(); } },
-  { path: '/logs',       expect: async p => { await expect(p.locator('h1, h2').first()).toBeVisible(); } },
-  { path: '/config',     expect: async p => { await expect(p.locator('h1, h2').first()).toBeVisible(); } },
-  { path: '/doctor',     expect: async p => { await expect(p.getByText(/doctor|check/i).first()).toBeVisible(); } },
-  { path: '/events',     expect: async p => { await expect(p.getByText(/event/i).first()).toBeVisible(); } },
-  { path: '/history',    expect: async p => { await expect(p.locator('h1, h2').first()).toBeVisible(); } },
-  { path: '/trends',     expect: async p => { await expect(p.getByText(/trend/i).first()).toBeVisible(); } },
-  { path: '/timeline',   expect: async p => { await expect(p.getByText(/timeline/i).first()).toBeVisible(); } },
-  { path: '/tests',      expect: async p => { await expect(p.locator('h1, h2').first()).toBeVisible(); } },
-  { path: '/sessions',   expect: async p => { await expect(p.locator('h1, h2').first()).toBeVisible(); } },
-  { path: '/agents',     expect: async p => { await expect(p.getByText(/agent/i).first()).toBeVisible(); } },
-  { path: '/regressions', expect: async p => { await expect(p.getByText(/regression|compile|bundle/i).first()).toBeVisible(); } },
+  { path: '/',           expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
+  { path: '/errors',     expect: async p => { await expect(p.locator('main').getByText(/error|warning/i).first()).toBeVisible(); } },
+  { path: '/logs',       expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
+  { path: '/config',     expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
+  { path: '/doctor',     expect: async p => { await expect(p.locator('main').getByText(/doctor|check/i).first()).toBeVisible(); } },
+  { path: '/events',     expect: async p => { await expect(p.locator('main').getByText(/event/i).first()).toBeVisible(); } },
+  { path: '/history',    expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
+  { path: '/trends',     expect: async p => { await expect(p.locator('main').getByText(/trend/i).first()).toBeVisible(); } },
+  { path: '/timeline',   expect: async p => { await expect(p.locator('main').getByText(/timeline/i).first()).toBeVisible(); } },
+  { path: '/tests',      expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
+  { path: '/sessions',   expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
+  { path: '/agents',     expect: async p => { await expect(p.locator('main').getByText(/agent/i).first()).toBeVisible(); } },
+  { path: '/regressions', expect: async p => { await expect(p.locator('main').getByText(/regression|compile|bundle/i).first()).toBeVisible(); } },
 ];
 
 for (const route of ROUTES) {
@@ -41,6 +44,22 @@ for (const route of ROUTES) {
     expect.soft(overflow, `horizontal overflow on ${route.path}`).toBeLessThanOrEqual(0);
   });
 }
+
+// M73 — v0.11 drive additions: mission control across a mixed multi-framework
+// workspace (badges from the registry), and detail reachable from a card.
+test('mission control shows framework badges for a mixed workspace', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('dm-framework-badge').first()).toBeVisible({ timeout: 10_000 });
+  const badges = await page.locator('dm-framework-badge .dm-fw-tag').allTextContents();
+  expect(new Set(badges.filter(Boolean)).size, `distinct badges: ${badges.join(',')}`).toBeGreaterThanOrEqual(3);
+});
+
+test('app detail opens from a mission-control card', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('article.c').first().click();
+  await expect(page).toHaveURL(/\/apps\//);
+  await expect(page.locator('h1, h2').first()).toBeVisible();
+});
 
 test('Agents route shows at least 2 agent rows', async ({ page }) => {
   await page.goto('/agents');

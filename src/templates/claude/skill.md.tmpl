@@ -1,6 +1,6 @@
 ---
 name: daimon
-description: Local-only manager for Angular/Nx/Vite/Storybook dev servers via the `daimon` CLI on 127.0.0.1. Start/stop/inspect dev servers, surface dedup'd errors, tail logs, and block until a target state is reached. Read-only outside `~/.daimon/*` and daimon's own config. Never bind non-loopback. Never mutate user source.
+description: Local-only manager for dev servers (Angular/Nx/Next.js/Vite/Django/Rails/.NET/Flutter and 20+ frameworks) via the `daimon` CLI on 127.0.0.1. Start/stop/inspect dev servers, surface dedup'd errors, tail logs, and block until a target state is reached. Read-only outside `~/.daimon/*` and daimon's own config. Never bind non-loopback. Never mutate user source.
 daimon-version: {{daimon_version}}
 generated-at: {{generated_at}}
 ---
@@ -16,7 +16,8 @@ Loopback CLI at `http://127.0.0.1:{{api_port}}`. Compact JSON on stdout, errors 
 - `daimon status <name>` → compact `{name,status,port,url,health,errCount,lastChangeMs,uptime}`. `--full` for events/metrics.
 - `daimon ensure <name> [--until serving|healthy] [--timeout 180]` → one call: starts if stopped, blocks to target, returns terminal state.
 - `daimon ensure-up <profile>` → same for an entire profile; cascades dependencies.
-- `daimon errors <name> [--since 5m|--since-last --client claude] [--structured]` → dedup'd errors, compact `{file,line,col,code,message}`.
+- `daimon errors <name> [--since 5m|--since-last --client claude] [--structured]` → dedup'd errors, compact `{file,line,col,code,message}`. `daimon errors --group` (no name) → all apps' errors grouped by stack fingerprint.
+- `daimon frameworks` → the framework adapter registry: built-in + custom profiles, which apps each matched, rejection stats.
 - `daimon logs <name> [--tail N] [--since 30s]` → recent log lines.
 - `daimon start|stop|restart <name>` · `daimon up|down [<profile>]` · `daimon wait <name> --until healthy --timeout 60s`.
 - `daimon why <name>` → last status transition + 5 events. `daimon why-empty` → explain an empty `list`.

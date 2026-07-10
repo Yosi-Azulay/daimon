@@ -348,7 +348,7 @@ export function discoverApps(config: AppmanConfig, opts: DiscoverOptions = {}): 
     }
 
     if (matched.size === 0) {
-      warnings.push(`searchRoot has none of nx.json/angular.json/vite.config.*/.storybook/polyglot markers: ${root}`);
+      warnings.push(`searchRoot matched no framework profile (run \`daimon frameworks\` to see the registry): ${root}`);
       bump(opts.stats, 'no project markers');
     }
   }

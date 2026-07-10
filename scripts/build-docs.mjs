@@ -62,6 +62,7 @@ const MCP_TOOLS = [
   ['daimon_who_owns', 'Lock holder + last 3 agent interactions for an app.'],
   ['daimon_subscribe_events', 'Long-poll new events filtered by kind.'],
   ['daimon_notify_on_error', 'Block until next error-new event (or timeout).'],
+  ['daimon_frameworks', 'List the framework adapter registry: built-in + custom profiles, match counts, badges.'],
 ];
 
 function renderMcp() {
@@ -107,7 +108,7 @@ const html = `<!doctype html>
 <body>
 
 <h1>daimon <span class="badge">v${DAIMON_VERSION}</span></h1>
-<p class="lede">Local dev-server manager for Angular / Nx / Vite / Storybook (+ polyglot) with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
+<p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
   <strong>Contents</strong>
@@ -128,7 +129,7 @@ npx daimon init --auto</code></pre>
 
 <h2 id="quickstart">Quickstart (3 min)</h2>
 <ol>
-  <li>Run <code>daimon init --auto</code> in a workspace that has <code>nx.json</code> / <code>angular.json</code> / <code>vite.config.*</code> / <code>.storybook</code> / <code>manage.py</code> / <code>Gemfile</code>.</li>
+  <li>Run <code>daimon init --auto</code> in a workspace with any supported framework marker — <code>nx.json</code>, <code>angular.json</code>, <code>next.config.*</code>, <code>vite.config.*</code>, <code>manage.py</code>, <code>Gemfile</code>, a <code>*.csproj</code>, <code>pubspec.yaml</code>, or just a <code>package.json</code> with a <code>dev</code> script. Run <code>daimon frameworks</code> to see the full registry.</li>
   <li>Run <code>daimon list</code> to see discovered apps.</li>
   <li>Run <code>daimon start &lt;app&gt;</code> (or <code>daimon up &lt;profile&gt;</code> for the whole stack).</li>
   <li>Open the dashboard: <code>daimon dashboard</code>.</li>
@@ -148,8 +149,9 @@ ${renderMcp()}
   <li><code>autoStart</code> — apps to start when the daemon launches.</li>
   <li><code>profiles</code> — named sets of apps for <code>daimon up &lt;profile&gt;</code> / <code>daimon ci start &lt;profile&gt;</code>.</li>
   <li><code>healthProbe</code> — toggle and shape the per-app health probe.</li>
-  <li><code>webhooks</code> — outbound notifications: <code>[{url, events?, headers?, filter?}]</code> with Slack/Discord shaping for error / regression / status events.</li>
-  <li><code>overrides.&lt;app&gt;</code> — per-app port / command / env, plus tuning knobs like <code>compileRegressionFactor</code> (multiplier over the compile-time baseline before a regression fires).</li>
+  <li><code>webhooks</code> — outbound notifications: <code>[{url, events?, headers?, filter?, apps?}]</code> with Slack/Discord shaping; <code>apps</code> scopes an entry to specific apps (v0.11).</li>
+  <li><code>frameworks</code> — custom framework profiles (v0.11): data-only rows <code>[{id, detect, command, readiness?, url?, errorParser?}]</code> checked after the built-in registry. Detection markers and regex strings only — never loaded code.</li>
+  <li><code>overrides.&lt;app&gt;</code> — per-app port / command / env / webhooks, plus tuning knobs like <code>compileRegressionFactor</code> (multiplier over the compile-time baseline before a regression fires).</li>
   <li><code>history</code> — SQLite retention controls.</li>
 </ul>
 

@@ -4,7 +4,7 @@
 
 # Daimon
 
-A local manager for dev servers: Angular / Nx / Vite / Storybook out of the box, plus Django / Rails / FastAPI / Go-air / Rust-trunk. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server.
+A local manager for dev servers, polyglot since v0.11: Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri — plus a generic `package.json` fallback and custom profiles from config. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server.
 
 Daimon is built for the **single machine with several agents on it**: you in one terminal, a Claude Code session in another repo, a second Claude in a third. All of them talk to the same daemon, see only their own workspace by default, carry distinct agent identities, and coordinate through per-app soft-locks instead of stepping on each other's dev servers.
 
@@ -27,6 +27,68 @@ daimon init             # interactive scaffolder; writes ./daimon.config.json or
 daimon list             # auto-spawns the daemon on first call (defaults to cwd-scoped — pass --all for every workspace)
 daimon daemon status
 ```
+
+## Framework support (v0.11)
+
+Every framework is a declarative row in the adapter registry (`src/frameworks.ts`) — detection markers, spawn command, readiness/URL patterns, error parser. Run `daimon frameworks` (or `GET /api/frameworks`) to see the registry with per-profile match counts.
+
+| Profile | Detection markers | Command | Readiness · URL | Errors |
+| --- | --- | --- | --- | --- |
+| `nx` | `nx.json` + per-project `project.json` serve targets | `npx nx serve <name>` | generic (webpack/esbuild banners) | generic |
+| `angular` | `angular.json` serve targets | `npx ng serve <name>` | generic | generic |
+| `nextjs` | `next.config.*` | `next dev` (pm-aware) | `Ready in …` · `Local:` | generic |
+| `nuxt` | `nuxt.config.*` | `nuxi dev` (pm-aware) | `Local:` · `Local:` | generic |
+| `sveltekit` | `svelte.config.*` + `@sveltejs/kit` dep | `vite dev` (pm-aware) | `VITE … ready` · `Local:` | vite |
+| `astro` | `astro.config.*` | `astro dev` (pm-aware) | `astro … ready` · `Local` | vite |
+| `remix` | `react-router.config.*` / `remix.config.*` | `react-router dev` (pm-aware) | `VITE … ready` · `Local:` | vite |
+| `vite` | `vite.config.*` | `npx vite` | generic | vite |
+| `storybook` | `.storybook/` | `npx storybook dev` | generic | storybook |
+| `django` | `manage.py` (django marker) | `python manage.py runserver` | `Quit the server…` · announced URL | python-traceback |
+| `rails` | `bin/rails` + `Gemfile` | `bin/rails server` (`ruby bin/rails` on Windows) | `Use Ctrl-C to stop` | rails |
+| `fastapi` | `fastapi` in `pyproject.toml`/`requirements.txt` | `uvicorn main:app --reload` | `Uvicorn running on` · announced URL | python-traceback |
+| `flask` | `app.py`/`wsgi.py` + `flask` marker | `flask run` | `* Running on` · announced URL | python-traceback |
+| `laravel` | `artisan` | `php artisan serve` | `Server running on` · announced URL | php |
+| `spring-boot` | `pom.xml`/`build.gradle*` spring-boot marker | `mvnw`/`gradlew` (Windows `.cmd` aware) | `Started … in … seconds` | jvm-gradle |
+| `dotnet` | `*.csproj` with `Sdk="Microsoft.NET.Sdk.Web"` | `dotnet watch` | `Now listening on:` · announced URL | dotnet |
+| `express-nest` | `express`/`@nestjs/core` dep + dev/start script | `npm run dev` (pm-aware) | TCP port-listen fallback | generic |
+| `go-air` | `.air.toml` | `air` | `running...` | go-build |
+| `rust-trunk` | `Trunk.toml` | `trunk serve` | `serving static assets at` · announced URL | rust-cargo |
+| `expo` | `app.json` + `expo` dep | `expo start` (pm-aware) | `Metro waiting on` · web-preview URL | generic |
+| `flutter` | `pubspec.yaml` (flutter sdk) | `flutter run -d web-server` | `is being served at` · web URL | dart file:line |
+| `tauri` | `src-tauri/tauri.conf.json` | `npm run tauri dev` (pm-aware) | via underlying vite/next | rust-cargo |
+| `pnpm-workspace` / `turbo` | `pnpm-workspace.yaml` / `turbo.json` | enumerate member packages | per-member profile | per-member |
+| `package-json` (fallback) | `package.json` with `dev`/`serve`/`start` script | `npm run <script>` (pm-aware) | announced URL when printed | generic |
+
+Notes:
+
+- **Multi-family coexistence**: a root with both `angular.json` and `manage.py` registers both apps. The fallback never fires when a named profile matched the same directory, and never inside `node_modules` — every skip is explained in `daimon discover`'s rejection stats.
+- **Package-manager awareness**: commands adapt to the lockfile (`pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `bun.lock*` → `bun`, else `npm`). Detection only reads lockfile *names* — daimon never runs installs.
+- **Mobile profiles** manage the web-preview dev server only; device/emulator flows stay in the framework's own terminal UX.
+
+### Custom profiles
+
+Add your own framework as **data** (validated at config load — regex strings and built-in parser ids, never loaded code):
+
+```jsonc
+// daimon.config.json
+{
+  "frameworks": [
+    {
+      "id": "phoenix",
+      "detect": {
+        "files": ["mix.exs"],
+        "fileContains": [{ "file": "mix.exs", "pattern": "Mix\\.Project" }]
+      },
+      "command": "mix phx.server",
+      "readiness": { "pattern": "Running \\S+ with cowboy" },
+      "url": { "pattern": "Access \\S+ at (https?:\\/\\/\\S+)" },
+      "errorParser": "jvm-gradle"
+    }
+  ]
+}
+```
+
+`detect` supports `files` (all must exist), `anyFiles` (any), `fileContains` (any file+regex pair), and `packageJson` (`dependsOn` / `script`). Custom profiles are checked after built-ins; invalid entries are skipped with a doctor-surfaced warning. Known `errorParser` ids: `python-traceback`, `go-build`, `rust-cargo`, `dotnet`, `jvm-gradle`, `php`, plus the classic tool ids (`vite`, `webpack`, …).
 
 ## Multi-agent on one machine (v0.9 + v0.10)
 
@@ -358,7 +420,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-262 `node:test` cases across small focused files (~15s wall-clock): dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (Vite/Storybook/Jest/Nx/Angular esbuild/webpack/Node/Django/Rails/FastAPI/Go-air/Rust-trunk — see `test/fixtures/parsers/`), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery), corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
+387 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 

@@ -18,10 +18,16 @@ src/
   agents.ts         # Agent identity (`<host>-<pid>-<rand4>`) + 30s per-app LockManager.
   audit.ts          # Tab-delimited audit log; 6 columns (5-col rows still parse).
   webhooks.ts       # Outbound webhooks: queue + rate limit + Slack/Discord shape detection.
+                    # Per-app scoping via webhooks[].apps + overrides.<app>.webhooks (M72).
+  frameworks.ts     # Framework adapter registry (M65): every framework is a declarative
+                    # FrameworkProfile row (detect/command/readiness/url/errorParser/badge).
+                    # Custom config profiles are validated DATA, never loaded code.
+  errorGroups.ts    # Error grouping by stack fingerprint (GET /api/errors?group=fingerprint).
   regressions.ts    # Pattern detection: compile/bundle/error-flap regression detectors.
   doctor.ts         # `daimon doctor` rules.
   autoFix.ts        # Doctor's --auto-fix repairs.
-  discovery.ts      # Workspace marker scan: nx.json / angular.json / vite.config.* / .storybook / Gemfile / etc.
+  discovery.ts      # Workspace scan — a loop over the frameworks.ts registry (M65).
+                    # Handles enumerators (nx/angular/pnpm/turbo), fallback precedence, overrides.
   mcp.ts            # MCP server. Wraps the HTTP API and forwards X-Daimon-Agent.
   ...
 dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
@@ -59,19 +65,19 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - New CLI verbs go in `cliSurface.ts` (one entry per verb), then dispatch in `cli.ts`'s `switch (cmd)`.
 - New audit columns must keep the older row count parseable — `parseAuditLine` already handles 5- and 6-col rows.
 - New tests must be added to the `test` script in `package.json` (`node --test test/foo.test.mjs ...`).
+- **New framework = registry row + fixture, never a discovery.ts branch.** Add a `FrameworkProfile` row in `src/frameworks.ts` and a fixture dir in `test/fixtures/frameworks/<id>/` (marker files + `fixture.json` with startup/error output). The parameterized suite (`test/frameworks.test.mjs`) fails if a built-in profile ships without a fixture.
 
-## v0.10 highlights (what landed this release)
+## v0.11 highlights (what landed this release)
 
-- Agent identity + soft-lock: every CLI call carries `X-Daimon-Agent: <host>-<pid>-<hex>`. Two Claudes on the same daemon get distinct IDs; start/stop/restart serialise per-app with `?steal=1` override.
-- Pattern detection: `regression-detected` event for compile-time / bundle / error-flap spikes, with `git log -1` suspect-commit hint.
-- Webhooks + CI: global `webhooks: [{url, events, headers?, filter?}]` config; new `daimon ci start <profile>` returns a structured report and exits 2 on timeout.
-- Recovery hardening: corrupt history.db auto-rebuilds on startup, archiving the bad file as `history.db.corrupt-<ts>` for forensics.
-- VS Code extension (`vscode-extension/`): status bar + errors view + Start/Stop/Dashboard commands.
-- Perf at scale: 50-app / 100k-event bench harness with hot-path budgets.
+- Framework adapter registry (`src/frameworks.ts`): 20 single-app built-in profiles + pnpm/turbo enumerators + a generic package.json fallback, all declarative rows. `daimon frameworks` / `GET /api/frameworks` list the registry; custom profiles come from config as validated data.
+- Per-profile intelligence: readiness patterns drive `compiling→serving`, url patterns feed the health probe, and per-profile parsers (python-traceback/go-build/rust-cargo/dotnet/jvm-gradle/php) extract file:line from backend stacks. TCP port-listen readiness for stdout-silent servers.
+- Adapter test kit: `test/fixtures/frameworks/<id>/` + parameterized `test/frameworks.test.mjs` — the gate for every profile.
+- Dashboard redesign: design tokens (`dashboard/src/styles/tokens.css`), mission-control home (badges, 24h sparklines), responsive to 390px, density toggle.
+- Deferred debt: error grouping by fingerprint (`/api/errors?group=fingerprint`, `daimon errors --group`), per-app webhooks, VS Code code-lens, TUI/VS Code badges, MCP `daimon_frameworks`.
 
 ## Where to look next
 
-- `PLAN-v0.10.md` — the v0.10 milestones (M54–M64) in spec form.
-- `RELEASE-v0.10.0.md` — release notes with migration steps.
+- `PLAN-v0.11.md` — the v0.11 milestones (M65–M73) in spec form.
+- `RELEASE-v0.11.0.md` — release notes with migration steps.
 - `CHANGELOG.md` — chronological log of every shipped release.
 - `daimon.config.example.json` — every config key with safe defaults.

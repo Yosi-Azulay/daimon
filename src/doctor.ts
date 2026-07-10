@@ -6,6 +6,7 @@ import { isPortFree } from './ports.js';
 import { History } from './history.js';
 import { analyseRestartCadence } from './profiles.js';
 import { configValidationWarnings } from './config.js';
+import { allProfiles, matchDetect, RootFs } from './frameworks.js';
 
 export interface Check {
   name: string;
@@ -35,11 +36,12 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
       checks.push({ name: `searchRoot exists: ${abs}`, ok: false, detail: 'not found' });
       continue;
     }
-    const hasMarker = fs.existsSync(path.join(abs, 'nx.json'))
-      || fs.existsSync(path.join(abs, 'angular.json'))
-      || fs.existsSync(path.join(abs, '.storybook'))
-      || ['ts', 'js', 'mjs', 'cjs'].some(x => fs.existsSync(path.join(abs, `vite.config.${x}`)));
-    checks.push({ name: `searchRoot has marker: ${abs}`, ok: hasMarker, detail: hasMarker ? undefined : 'no nx.json/angular.json/vite.config.*/.storybook' });
+    // v0.11: consult the full framework registry (built-ins + custom config
+    // profiles) instead of the legacy four-marker list, so a Next.js/Django/
+    // dotnet-only root doesn't false-flag.
+    const rootFs = new RootFs(abs);
+    const hasMarker = allProfiles(config.frameworks).some(p => matchDetect(p.detect, rootFs));
+    checks.push({ name: `searchRoot has marker: ${abs}`, ok: hasMarker, detail: hasMarker ? undefined : 'no framework markers (see `daimon frameworks` for the registry)' });
   }
 
   for (const [name, ov] of Object.entries(config.overrides ?? {})) {

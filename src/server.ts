@@ -79,7 +79,7 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
 
 function parseDuration(s: string | null): number | undefined {
   if (!s) return undefined;
-  const m = s.match(/^(\d+)(ms|s|m|h)?$/);
+  const m = s.match(/^(\d+)(ms|s|m|h|d)?$/);
   if (!m) return undefined;
   const n = Number(m[1]);
   switch (m[2] || 'ms') {
@@ -87,6 +87,9 @@ function parseDuration(s: string | null): number | undefined {
     case 's': return n * 1000;
     case 'm': return n * 60 * 1000;
     case 'h': return n * 60 * 60 * 1000;
+    // 'd' was missing pre-v0.11: `?since=30d` (regressions page, timeline CLI)
+    // silently collapsed the window to "now" and returned nothing.
+    case 'd': return n * 24 * 60 * 60 * 1000;
   }
   return undefined;
 }
@@ -100,7 +103,7 @@ function resolveFormat(url: URL, getConfig?: () => AppmanConfig): 'compact' | 'f
 }
 
 function compactSummary(s: AppSummary): Record<string, unknown> {
-  return {
+  const out: Record<string, unknown> = {
     name: s.name,
     status: s.status,
     port: s.port,
@@ -108,6 +111,8 @@ function compactSummary(s: AppSummary): Record<string, unknown> {
     errCount: s.errorCount,
     lastChangeMs: s.lastChangeMs ?? null,
   };
+  if (s.serverProfile) out.serverProfile = s.serverProfile; // badge tag (M70/M72)
+  return out;
 }
 
 function compactStatus(s: AppSummary): Record<string, unknown> {
@@ -790,7 +795,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           suggestion: apps.length === 0
             ? (roots.length === 0
               ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder."
-              : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook / manage.py / Gemfile / pyproject.toml (fastapi) / .air.toml / Trunk.toml.")
+              : "discovery returned no apps. Check that searchRoots contain a framework marker (nx.json / angular.json / next.config.* / vite.config.* / manage.py / *.csproj / pubspec.yaml / a package.json dev script, …) — run 'daimon frameworks' for the full registry.")
             : `${apps.length} apps discovered${polyglotHint}`,
         });
         return;
@@ -1012,7 +1017,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
                   ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder to add the current cwd."
                   : cwd
                     ? `no apps under cwd '${cwd}'. Run 'daimon list --all' to see apps from other workspaces, or 'daimon init --auto' to register this dir.`
-                    : "discovery returned no apps. Check that searchRoots contain nx.json / angular.json / vite.config.* / .storybook, then run 'daimon doctor'.")
+                    : "discovery returned no apps. Check that searchRoots contain a framework marker (run 'daimon frameworks' for the registry), then run 'daimon doctor'.")
                 : 'apps discovered; _meta is informational.',
             };
           }
