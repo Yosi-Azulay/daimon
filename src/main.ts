@@ -5,7 +5,9 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig, configLookupPaths } from './config.js';
 import { discoverApps } from './discovery.js';
 import { Registry } from './registry.js';
-import { PortAllocator } from './ports.js';
+import { PortAllocator, parsePortPool } from './ports.js';
+import { inspectApiPort, renderApiPortConflict } from './portDiag.js';
+import { writeCrashDump } from './crashDump.js';
 import { startServer } from './server.js';
 import { HealthMonitor } from './health.js';
 import { UsageMonitor } from './usage.js';
@@ -16,14 +18,15 @@ import { findCycle } from './depends.js';
 import { Notifier } from './notifier.js';
 import { StaleDetector } from './staleDetector.js';
 import { RequestLog } from './requestLog.js';
-import { buildLockInfo, removeLock, writeLock } from './daemon.js';
+import { buildLockInfo, readLock, removeLock, writeLock } from './daemon.js';
 import { patchConfigOnDisk, softReloadFromDisk } from './configManager.js';
 import { installCrashHandlers } from './crashDump.js';
 import { consumeHandoff } from './stateHandoff.js';
 import { loadSessionState, saveSessionState } from './sessionState.js';
 import { SelfMetricsCollector } from './selfMetrics.js';
 import { loadPlugins, pluginsDir, runPluginScans, buildContext, type LoadedPlugin } from './plugins.js';
-import { WebhookDispatcher, effectiveWebhooks } from './webhooks.js';
+import { DigestScheduler, WebhookDispatcher, effectiveWebhooks, redactWebhookUrl } from './webhooks.js';
+import { buildReport, renderReportMd } from './report.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -67,13 +70,18 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   }
 
   const persisted = loadPersistedState();
-  const portAlloc = new PortAllocator(config.portRange, {
+  // ports.pool (M81) narrows the allocator to the pool range; absent = the
+  // legacy portRange behavior, byte for byte.
+  const portAlloc = new PortAllocator(parsePortPool(config.ports?.pool) ?? config.portRange, {
     initial: persisted.ports,
     onChange: snap => savePersistedState({ ports: snap }),
   });
   const registry = new Registry(config, apps, portAlloc);
   crashRegistry = registry;
   crashConfig = config;
+  // Notification mutes (M84) persist alongside port assignments.
+  registry.restoreMutes(persisted.mutes);
+  registry.onMutesChanged = snap => savePersistedState({ mutes: snap });
   const history = new History(config.history);
   registry.setHistory(history);
   const archivedDb = history.archivedCorruptDbPath();
@@ -163,6 +171,32 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
       })
     : null;
 
+  // Scheduled digest (M84): one 1-minute timer, catch-up once, delivery via
+  // the dispatcher's normal queue/rate-limit/retry path.
+  const digestWebhooks = allWebhooks.filter(w => typeof w.digest === 'string');
+  const digestState: Record<string, number> = { ...(persisted.digests ?? {}) };
+  const digestScheduler = webhookDispatcher && digestWebhooks.length
+    ? new DigestScheduler({
+        webhooks: digestWebhooks,
+        dispatcher: webhookDispatcher,
+        buildReport: sinceTs => {
+          const report = buildReport(
+            { registry, history, flakyThreshold: config.tests?.flakyThreshold ?? 3 },
+            { since: sinceTs },
+          );
+          return { json: report, md: renderReportMd(report) };
+        },
+        state: {
+          get: url => digestState[url] ?? 0,
+          set: (url, ts) => { digestState[url] = ts; savePersistedState({ digests: { ...digestState } }); },
+        },
+        onDigestSent: url => {
+          registry.recordEvent({ app: '__daemon__', type: 'digest-sent', message: `daily digest sent to ${redactWebhookUrl(url)}` });
+        },
+      })
+    : null;
+  digestScheduler?.start();
+
   const selfMetrics = new SelfMetricsCollector(history);
   selfMetrics.setSelfWarnHandler(msg => {
     try { registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: msg }); } catch {}
@@ -188,6 +222,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { notifier.stop(); } catch {}
     try { staleDetector.stop(); } catch {}
     try { requestLog.stop(); } catch {}
+    try { digestScheduler?.stop(); } catch {}
     try { webhookDispatcher?.stop(); } catch {}
     try { history.close(); } catch {}
     try {
@@ -230,8 +265,36 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
       await runPluginScans(plugins, ctx);
     },
   });
-  process.stdout.write(`[daimon] api: http://127.0.0.1:${apiPort}\n`);
-  try { writeLock(buildLockInfo(apiPort, headless, cfgPath)); } catch (err: any) { process.stderr.write(`[daimon] warning: could not write daemon.lock: ${err?.message || err}\n`); }
+  // A live lock observed before our bind = a running daemon we may be
+  // colliding with; feeds the EADDRINUSE forensics below.
+  const preexistingLock = readLock() !== null;
+  server.once('error', (err: any) => {
+    if (err?.code !== 'EADDRINUSE') {
+      process.stderr.write(`[daimon] api server error: ${err?.stack || err}\n`);
+      process.exit(1);
+    }
+    // Startup forensics (M81): identify the holder, say whether it answers as
+    // a daimon, print the remedy and the crash-dump path — then exit non-zero.
+    void (async () => {
+      let lines: string[];
+      try {
+        const f = await inspectApiPort(apiPort, preexistingLock);
+        let dump: string | null = null;
+        try { dump = writeCrashDump(new Error(renderApiPortConflict(f).join('\n')), registry, config); } catch {}
+        lines = renderApiPortConflict(f, dump);
+      } catch (inner: any) {
+        lines = [`failed to bind api port 127.0.0.1:${apiPort} (EADDRINUSE)`, `forensics failed: ${inner?.message || inner}`];
+      }
+      for (const l of lines) process.stderr.write(`[daimon] ${l}\n`);
+      process.exit(1);
+    })();
+  });
+  server.once('listening', () => {
+    process.stdout.write(`[daimon] api: http://127.0.0.1:${apiPort}\n`);
+    // Lock only after a successful bind — an EADDRINUSE loser must never
+    // clobber the winning daemon's lock (the v0.12 orphan incident).
+    try { writeLock(buildLockInfo(apiPort, headless, cfgPath)); } catch (err: any) { process.stderr.write(`[daimon] warning: could not write daemon.lock: ${err?.message || err}\n`); }
+  });
 
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });

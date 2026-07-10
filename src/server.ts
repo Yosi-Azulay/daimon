@@ -17,6 +17,9 @@ import { DAIMON_VERSION } from './version.js';
 import type { SelfMetricsCollector } from './selfMetrics.js';
 import { isPathUnder } from './pathScope.js';
 import { AgentRegistry, LockManager } from './agents.js';
+import { parsePortPool } from './ports.js';
+import { findPortHolder, scanListeningPorts } from './portDiag.js';
+import { diffEnvSnapshots, resolveEnvFilePath } from './envFiles.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -267,6 +270,7 @@ function configEtag(configPath: string | undefined): string {
 }
 
 export function startServer(registry: Registry, port: number, opts: ServerOpts = {}): http.Server {
+  const serverStartedAt = Date.now();
   const cursors = new Cursors();
   const agents = new AgentRegistry();
   const locks = new LockManager();
@@ -361,6 +365,40 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
       if (url.pathname === '/api/presets' && method === 'GET') {
         sendJson(res, 200, listPresets());
+        return;
+      }
+      // Signature endpoint (M81): lets port forensics and doctor's
+      // verify-then-kill positively identify a listener as a daimon. No auth —
+      // identification only, loopback only, no state exposed.
+      if (url.pathname === '/api/signature' && method === 'GET') {
+        sendJson(res, 200, { daimon: true, version: DAIMON_VERSION, pid: process.pid, startedAt: serverStartedAt });
+        return;
+      }
+      // `daimon ports` (M81): app→port→source→pid plus foreign holders of
+      // pool/pinned ports (one netstat/ss pass, per-holder enrichment after).
+      if (parts[0] === 'api' && parts[1] === 'ports' && !parts[2] && method === 'GET') {
+        const cfg = opts.getConfig?.();
+        const apps = registry.portsReport();
+        const candidates = new Set<number>();
+        const pool = parsePortPool(cfg?.ports?.pool ?? null) ?? cfg?.portRange ?? null;
+        if (pool) for (let p = pool[0]; p <= pool[1]; p++) candidates.add(p);
+        for (const a of apps) if (a.port != null) candidates.add(a.port);
+        const listeners = scanListeningPorts(candidates);
+        const appByPort = new Map<number, (typeof apps)[number]>();
+        for (const a of apps) if (a.port != null) appByPort.set(a.port, a);
+        const foreign: { port: number; pid: number; name?: string; cmd?: string }[] = [];
+        for (const [p, pid] of listeners) {
+          const owner = appByPort.get(p);
+          // A running daimon-managed app holds its own port (the LISTEN pid is
+          // usually a child of state.pid, so status is the reliable signal).
+          if (owner && owner.status !== 'stopped' && owner.status !== 'error') continue;
+          if (pid === process.pid) continue;
+          // Enrich the first few with process identity; beyond that, pid only.
+          const holder = foreign.length < 10 ? findPortHolder(p) : null;
+          foreign.push({ port: p, pid: holder?.pid ?? pid, ...(holder?.name ? { name: holder.name } : {}), ...(holder?.cmd ? { cmd: holder.cmd.slice(0, 160) } : {}) });
+        }
+        foreign.sort((a, b) => a.port - b.port);
+        sendJson(res, 200, { pool: cfg?.ports?.pool ?? null, apps, foreign });
         return;
       }
       if (url.pathname === '/api/self' && method === 'GET') {
@@ -946,6 +984,32 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // `daimon report` (M83): the digest — composition over existing queries,
+      // every section independently degradable. ?since=24h|7d|<ms>&app=&workspace=&md=1
+      if (parts[0] === 'api' && parts[1] === 'report' && !parts[2] && method === 'GET') {
+        const sinceP = parseSinceParam(url.searchParams.get('since'));
+        const sinceTs = sinceP.sinceTs ?? (Date.now() - (sinceP.sinceMs ?? 24 * 3600_000));
+        const { buildReport, renderReportMd } = await import('./report.js');
+        const report = buildReport({
+          registry,
+          history: registry.getHistory(),
+          agents: agents.list().map(a => ({ id: a.id, lastSeen: a.lastSeen })),
+          flakyThreshold: opts.getConfig?.().tests?.flakyThreshold ?? 3,
+        }, {
+          since: sinceTs,
+          app: url.searchParams.get('app') || undefined,
+          workspace: url.searchParams.get('workspace') || undefined,
+        });
+        if (url.searchParams.get('md') === '1') {
+          const md = renderReportMd(report);
+          res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'content-length': Buffer.byteLength(md) });
+          res.end(md);
+          return;
+        }
+        sendJson(res, 200, report);
+        return;
+      }
+
       // Full-text search (M77): everything daimon has seen, greppable.
       // ?q=&app=&since=&kind=logs|errors|events&limit=. Falls back to LIKE
       // (fallback:true) when FTS is unavailable — never errors the daemon.
@@ -976,6 +1040,60 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       // `daimon why <app>` (M76): one-shot composition of everything relevant
       // to "why is this app broken" — status, last crash, grouped errors,
       // regressions, storm state, suspect commit, matching doctor findings.
+      // Env awareness (M82): read-only, redacted. Responses carry file names,
+      // key NAMES, and timestamps — never values, never hashes.
+      if (parts[0] === 'api' && parts[1] === 'env' && parts[2] && method === 'GET') {
+        const envName0 = decodeURIComponent(parts[2]);
+        const resolvedEnv = registry.resolveByCwd(envName0, url.searchParams.get('cwd') || null);
+        if (resolvedEnv.kind === 'collision') {
+          sendJson(res, 412, { error: 'name-collision', candidates: resolvedEnv.candidates });
+          return;
+        }
+        const envName = resolvedEnv.kind === 'unique' && resolvedEnv.key ? resolvedEnv.key : envName0;
+        const appRow = registry.getApp(envName);
+        if (!appRow) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const h = registry.getHistory();
+        const stripHashes = (snapJson: string): any => {
+          try {
+            const snap = JSON.parse(snapJson);
+            return { files: (snap.files ?? []).map((f: any) => ({ file: f.file, exists: f.exists, mtime: f.mtime, size: f.size, keyNames: f.keyNames ?? [] })) };
+          } catch { return null; }
+        };
+        if (parts[3] === 'diff') {
+          const snaps = h?.queryEnvSnapshots({ app: envName, limit: 100 }) ?? [];
+          const fromParam = url.searchParams.get('from');
+          const toParam = url.searchParams.get('to');
+          const pick = (atOrBefore: number | null, skipId?: number) =>
+            snaps.find(s => (atOrBefore == null || s.ts <= atOrBefore) && s.id !== skipId) ?? null;
+          const toRow = pick(toParam ? Number(toParam) : null);
+          const fromRow = toRow
+            ? (fromParam ? pick(Number(fromParam)) : snaps.find(s => s.ts <= toRow.ts && s.id !== toRow.id) ?? null)
+            : null;
+          if (!toRow || !fromRow) {
+            sendJson(res, 200, { app: envName, note: 'need at least two snapshots (start the app to record one per spawn)', diff: null });
+            return;
+          }
+          let d;
+          try { d = diffEnvSnapshots(JSON.parse(fromRow.json), JSON.parse(toRow.json)); }
+          catch { sendJson(res, 500, { error: 'snapshot parse failed' }); return; }
+          sendJson(res, 200, { app: envName, from: fromRow.ts, to: toRow.ts, ...d });
+          return;
+        }
+        const candidates = (registry.envCandidates(envName) ?? []).map(f => ({
+          file: f,
+          exists: fs.existsSync(resolveEnvFilePath(appRow.workspaceRoot, f)),
+        }));
+        const latest = h?.queryEnvSnapshots({ app: envName, limit: 1 })[0] ?? null;
+        sendJson(res, 200, {
+          app: envName,
+          candidates,
+          // Legacy field (pre-v0.13 `daimon env`): the file actively injected.
+          active: registry.getState(envName)?.activeEnvFile ?? null,
+          snapshot: latest ? { ts: latest.ts, ageMs: Date.now() - latest.ts, ...stripHashes(latest.json) } : null,
+        });
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'why' && parts[2] && method === 'GET') {
         const whyName0 = decodeURIComponent(parts[2]);
         const resolvedWhy = registry.resolveByCwd(whyName0, url.searchParams.get('cwd') || null);
@@ -1010,6 +1128,19 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
         const storm = registry.stormState(whyName);
 
+        // envChanged (M82): current env fingerprint vs the last snapshot at or
+        // before the most recent healthy signal. Names only, never values.
+        let envChanged: any = null;
+        try {
+          const snaps = h?.queryEnvSnapshots({ app: whyName, limit: 50 }) ?? [];
+          if (snaps.length >= 2) {
+            const healthyEv = (h?.queryEvents({ app: whyName, type: 'health', limit: 200 }) ?? []).find(ev => ev.to_state === 'healthy');
+            const baselineRow = (healthyEv ? snaps.find(s => s.ts <= healthyEv.ts && s.id !== snaps[0].id) : null) ?? snaps[1];
+            const d = diffEnvSnapshots(JSON.parse(baselineRow.json), JSON.parse(snaps[0].json));
+            if (d.changed) envChanged = { since: baselineRow.ts, ...d };
+          }
+        } catch {}
+
         const { suspectCommitForDir } = await import('./regressions.js');
         const suspectCommit = await suspectCommitForDir(appRow?.workspaceRoot ?? null);
 
@@ -1038,6 +1169,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           errorGroups,
           regressions,
           storm,
+          envChanged,
           suspectCommit,
           doctor: doctorFindings,
         });
@@ -1810,6 +1942,19 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (!tryLock('stop')) return;
         const r = await registry.stop(name);
         sendJson(res, r.ok ? 200 : 400, r);
+        return;
+      }
+      // Notification mute (M84): persisted, surfaced in status + dashboard.
+      if (sub === 'mute' && method === 'POST') {
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const body: any = await readJsonBody(req);
+        const forMs = typeof body?.forMs === 'number' && body.forMs > 0 ? body.forMs : null;
+        sendJson(res, 200, registry.mute(name, forMs));
+        return;
+      }
+      if (sub === 'unmute' && method === 'POST') {
+        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        sendJson(res, 200, registry.unmute(name));
         return;
       }
       if (sub === 'restart' && method === 'POST') {

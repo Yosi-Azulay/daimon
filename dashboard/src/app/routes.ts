@@ -18,5 +18,6 @@ export const ROUTES: Routes = [
   { path: 'requests/:name', loadComponent: () => import('./requests-page').then(m => m.RequestsPageComponent) },
   { path: 'agents', loadComponent: () => import('./agents-page').then(m => m.AgentsPageComponent) },
   { path: 'regressions', loadComponent: () => import('./regressions-page').then(m => m.RegressionsPageComponent) },
+  { path: 'report', loadComponent: () => import('./report-page').then(m => m.ReportPageComponent) },
   { path: '**', redirectTo: '' },
 ];

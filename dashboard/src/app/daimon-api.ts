@@ -27,6 +27,9 @@ export interface AppRow {
   estimatedReadyAtMs?: number;
   // Framework registry profile id — drives the badge + tone (M70).
   serverProfile?: string | null;
+  // Notification mute (M84). muteUntil is null for an indefinite mute.
+  muted?: boolean;
+  muteUntil?: number | null;
 }
 
 export interface FrameworkMeta {
@@ -86,6 +89,49 @@ export interface DiscoveryMeta {
   warnings: string[];
   appsFound: number;
   suggestion: string;
+}
+
+// `daimon report` digest (M83) — mirrors src/report.ts's Report. Every
+// section is EITHER its data shape OR `{ note: string }` (degraded); never
+// an error. Kept as `any` per-section here since the sections are read-only
+// display data and the server shape is the single source of truth.
+export interface Report {
+  generatedAt: number;
+  since: number;
+  until: number;
+  app: string | null;
+  workspace: string | null;
+  sections: {
+    uptime?: any;
+    errors?: any;
+    tests?: any;
+    compiles?: any;
+    crashes?: any;
+    agents?: any;
+    env?: any;
+  };
+}
+
+// `GET /api/why/<app>` (M76, envChanged added M82) — registry-composed
+// "why is this broken" snapshot. Every field degrades to null, never throws.
+export interface AppWhy {
+  app: string;
+  status: any;
+  lastCrash: { ts: number; exitCode: number | null; signal: string | null; uptimeMs: number | null; gitHead: string | null; lastLines: string[] } | null;
+  errorGroups: { fingerprint: string; message: string; count: number; lastSeen: number; parsed: any }[];
+  regressions: any[];
+  storm: { active: boolean; countLastHour: number; threshold: number; lastExitCode: number | null };
+  envChanged: {
+    since: number;
+    filesAdded: string[];
+    filesRemoved: string[];
+    keysAdded: { file: string; key: string }[];
+    keysRemoved: { file: string; key: string }[];
+    keysChanged: { file: string; key: string }[];
+    changed: boolean;
+  } | null;
+  suspectCommit: string | null;
+  doctor: { name: string; ok: boolean; detail?: string }[];
 }
 
 const EVENT_BUFFER_MAX = 200;
@@ -361,6 +407,28 @@ export class DaimonApi {
   async getHistoryWhy(name: string): Promise<any | null> {
     try { return await firstValueFrom(this.http.get<any>(`/api/history/why/${encodeURIComponent(name)}`)); }
     catch { return null; }
+  }
+
+  // `GET /api/why/<app>` (M76/M82) — distinct from getHistoryWhy above
+  // (`/api/history/why/<app>`, the raw history-table composition). This one
+  // is the registry-composed crash/env/storm/suspect-commit snapshot the
+  // app-detail "why" panel renders (M85).
+  async getAppWhy(name: string): Promise<AppWhy | null> {
+    try { return await firstValueFrom(this.http.get<AppWhy>(`/api/why/${encodeURIComponent(name)}`)); }
+    catch { return null; }
+  }
+
+  // `daimon report` digest (M83). `since` accepts a duration string
+  // ("24h", "7d", "3d") or a raw epoch-ms timestamp, matching the server's
+  // parseSinceParam.
+  async getReport(opts: { since: string; app?: string; workspace?: string }): Promise<Report | null> {
+    try {
+      const qs = new URLSearchParams();
+      qs.set('since', opts.since);
+      if (opts.app) qs.set('app', opts.app);
+      if (opts.workspace) qs.set('workspace', opts.workspace);
+      return await firstValueFrom(this.http.get<Report>('/api/report?' + qs.toString()));
+    } catch { return null; }
   }
 
   // Test run history (M74/M75). Omitting `app` returns the most recent runs

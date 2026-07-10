@@ -53,10 +53,10 @@ describe('command-palette search helpers', () => {
     expect(flattenGroups(groups).map(h => h.ref)).toEqual(['event:1', 'log:1']);
   });
 
-  it('routeForHit sends logs to the app logs page, errors/events to app detail', () => {
+  it('routeForHit sends logs to the app logs page, errors to the app errors tab, events to the timeline at ts', () => {
     expect(routeForHit(hit({ kind: 'logs', app: 'web' }))).toBe('/logs/web');
-    expect(routeForHit(hit({ kind: 'errors', app: 'api' }))).toBe('/apps/api');
-    expect(routeForHit(hit({ kind: 'events', app: 'api' }))).toBe('/apps/api');
+    expect(routeForHit(hit({ kind: 'errors', app: 'api' }))).toBe('/apps/api?tab=errors');
+    expect(routeForHit(hit({ kind: 'events', app: 'api', ts: 12345 }))).toBe('/timeline?at=12345');
   });
 
   it('fmtHitAgo formats relative time buckets', () => {

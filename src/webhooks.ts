@@ -18,6 +18,8 @@ export interface WebhookConfig {
   // Per-app scoping (M72): when present, only events from these apps fire.
   // Absent = all apps (the pre-v0.11 behavior).
   apps?: string[];
+  // Scheduled digest (M84): "HH:MM" local time.
+  digest?: string;
 }
 
 // Merge the global webhook list with per-app override blocks (M72):
@@ -40,7 +42,10 @@ export function effectiveWebhooks(config: {
 
 interface QueueItem {
   cfg: WebhookConfig;
-  event: AppEvent;
+  // Regular event deliveries shape at send time; digest deliveries (M84)
+  // arrive pre-shaped via enqueuePayload.
+  event?: AppEvent;
+  payload?: unknown;
   enqueuedAt: number;
 }
 
@@ -108,11 +113,22 @@ export class WebhookDispatcher {
     return true;
   }
 
+  // Pre-shaped delivery through the SAME queue/rate-limit/retry path the
+  // event stream uses (M84 scheduled digest).
+  enqueuePayload(cfg: WebhookConfig, payload: unknown): void {
+    if (this.queue.length >= MAX_QUEUE) {
+      this.queue.shift();
+      this.droppedCount++;
+      this.opts.onLog?.(`webhooks: dropped oldest (queue full, total dropped=${this.droppedCount})`);
+    }
+    this.queue.push({ cfg, payload, enqueuedAt: Date.now() });
+  }
+
   private tick(): void {
     const item = this.queue.shift();
     if (!item) return;
     const send = this.opts.sendFn ?? postJson;
-    const payload = shapePayload(item.cfg.url, item.event);
+    const payload = item.payload !== undefined ? item.payload : shapePayload(item.cfg.url, item.event!);
     void this.attemptDelivery(send, item.cfg, payload, 0).then(ok => {
       if (ok) this.deliveries++;
       else this.failures++;
@@ -150,7 +166,7 @@ export class WebhookDispatcher {
 // Slack/Discord webhook URLs carry the auth token in their path, so logging the
 // full URL on a delivery failure leaks a secret into daimon's logs. Reduce it to
 // origin + a redacted path so the log still identifies the endpoint.
-function redactWebhookUrl(url: string): string {
+export function redactWebhookUrl(url: string): string {
   try {
     const u = new URL(url);
     return `${u.origin}/…`;
@@ -223,6 +239,82 @@ export function shapePayload(url: string, event: AppEvent): unknown {
     };
   }
   return generic;
+}
+
+// Digest payload shaping (M84): Slack gets the markdown as `text`, Discord a
+// truncated `content`, anything else the JSON report in a generic envelope.
+export function shapeDigestPayload(url: string, report: unknown, md: string): unknown {
+  let host = '';
+  try { host = new URL(url).hostname; } catch {}
+  if (host.endsWith('slack.com')) {
+    return { text: md.length > 39_000 ? md.slice(0, 39_000) + '\n…(truncated)' : md };
+  }
+  if (host.endsWith('discord.com') || host.endsWith('discordapp.com')) {
+    return { content: md.length > 1900 ? md.slice(0, 1900) + '…' : md };
+  }
+  return { event: 'digest', ts: Date.now(), report };
+}
+
+// Scheduled digest (M84). NOT a cron engine — one interval check at 1-minute
+// granularity plus a single catch-up: if the daemon was down at the scheduled
+// time, the next tick sends once (never more than one per day per webhook,
+// enforced by the persisted last-sent timestamp).
+export interface DigestSchedulerDeps {
+  webhooks: WebhookConfig[];
+  dispatcher: WebhookDispatcher;
+  buildReport: (sinceTs: number) => { json: unknown; md: string };
+  state: { get: (url: string) => number; set: (url: string, ts: number) => void };
+  onDigestSent?: (url: string, ts: number) => void;
+  now?: () => number;
+}
+
+const DAY_MS = 86_400_000;
+
+export class DigestScheduler {
+  private timer: NodeJS.Timeout | null = null;
+
+  constructor(private readonly deps: DigestSchedulerDeps) {}
+
+  start(): void {
+    this.timer = setInterval(() => this.tick(), 60_000);
+    this.timer.unref?.();
+    // Boot-time tick doubles as the catch-up pass.
+    this.tick();
+  }
+
+  stop(): void {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  }
+
+  // Returns how many digests were sent this tick (test observability).
+  tick(now = this.deps.now?.() ?? Date.now()): number {
+    let sent = 0;
+    for (const cfg of this.deps.webhooks) {
+      const m = cfg.digest ? /^(\d{2}):(\d{2})$/.exec(cfg.digest) : null;
+      if (!m) continue;
+      // Most recent occurrence of HH:MM (local) at or before `now`.
+      const d = new Date(now);
+      d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+      let occurrence = d.getTime();
+      if (occurrence > now) occurrence -= DAY_MS;
+      const lastSent = this.deps.state.get(cfg.url);
+      // First sight of this webhook: baseline only — a freshly configured
+      // digest must not fire retroactively for yesterday's slot.
+      if (!lastSent) { this.deps.state.set(cfg.url, now); continue; }
+      if (lastSent >= occurrence) continue; // this occurrence already covered
+      try {
+        const since = lastSent > 0 ? lastSent : occurrence - DAY_MS;
+        const { json, md } = this.deps.buildReport(since);
+        this.deps.dispatcher.enqueuePayload(cfg, shapeDigestPayload(cfg.url, json, md));
+        this.deps.state.set(cfg.url, now);
+        this.deps.onDigestSent?.(cfg.url, now);
+        sent++;
+      } catch {
+        // buildReport failing must not kill the timer; next tick retries.
+      }
+    }
+    return sent;
+  }
 }
 
 function colorFor(type: string): string {

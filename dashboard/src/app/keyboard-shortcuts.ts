@@ -26,6 +26,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         <tr><td><kbd>g</kbd> <kbd>g</kbd></td><td>Agents</td></tr>
         <tr><td><kbd>g</kbd> <kbd>r</kbd></td><td>Regressions</td></tr>
         <tr><td><kbd>g</kbd> <kbd>i</kbd></td><td>Timeline</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>p</kbd></td><td>Report</td></tr>
         <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / prev item</td></tr>
         <tr><td><kbd>s</kbd></td><td>Start focused app</td></tr>
         <tr><td><kbd>r</kbd></td><td>Restart focused app</td></tr>
@@ -84,7 +85,7 @@ export class KeyboardShortcutsService {
     if (this.pending === 'g') {
       this.pending = null;
       if (this.pendingTimer) clearTimeout(this.pendingTimer);
-      const map: Record<string, string> = { a: '/', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', t: '/trends', x: '/tests', n: '/sessions', g: '/agents', r: '/regressions', c: '/config', i: '/timeline' };
+      const map: Record<string, string> = { a: '/', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', t: '/trends', x: '/tests', n: '/sessions', g: '/agents', r: '/regressions', c: '/config', i: '/timeline', p: '/report' };
       const route = map[e.key.toLowerCase()];
       if (route) { e.preventDefault(); void this.router.navigateByUrl(route); }
       return;

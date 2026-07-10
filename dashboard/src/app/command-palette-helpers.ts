@@ -56,11 +56,16 @@ export function flattenGroups(groups: SearchHitGroup[]): SearchHit[] {
   return groups.flatMap(g => g.hits);
 }
 
-// Where selecting a hit should navigate: errors/events land on the app's
-// detail page (where errors/events already surface); logs land on that
-// app's logs page.
+// Where selecting a hit should navigate (M85 deep-links):
+//  - events land on the Timeline page, anchored at the hit's ts via `?at=`
+//    so the timeline scrolls to and highlights the nearest row;
+//  - logs land on that app's Logs page (the live tailer has no historical-ts
+//    seek, so there's no `ts` param to pass — app is the most it can target);
+//  - errors land on the app's detail page with its Errors tab preselected.
 export function routeForHit(hit: SearchHit): string {
-  return hit.kind === 'logs' ? `/logs/${hit.app}` : `/apps/${hit.app}`;
+  if (hit.kind === 'events') return `/timeline?at=${hit.ts}`;
+  if (hit.kind === 'logs') return `/logs/${hit.app}`;
+  return `/apps/${hit.app}?tab=errors`;
 }
 
 export function fmtHitAgo(ts: number, now = Date.now()): string {

@@ -195,6 +195,7 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     items.push({ kind: 'nav', icon: 'medical_services', label: 'Go to Doctor', hint: 'g d', run: () => this.go('/doctor') });
     items.push({ kind: 'nav', icon: 'tune', label: 'Go to Config', hint: 'g c', run: () => this.go('/config') });
     items.push({ kind: 'nav', icon: 'query_stats', label: 'Go to History', hint: 'g h', run: () => this.go('/history') });
+    items.push({ kind: 'nav', icon: 'summarize', label: 'Go to Report', hint: 'g p', run: () => this.go('/report') });
     for (const a of this.api.apps()) {
       items.push({ kind: 'app', icon: 'app_registration', label: a.name, hint: a.status, run: () => this.go(`/apps/${a.name}`) });
       items.push({ kind: 'action', icon: 'play_arrow', label: `Start ${a.name}`, run: () => void this.api.startApp(a.name) });

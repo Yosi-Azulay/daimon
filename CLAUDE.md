@@ -21,6 +21,20 @@ src/
                     # write path); sync runs on idle flush ticks, before retention, and
                     # before every search. FTS failure degrades to LIKE, never blocks.
   agents.ts         # Agent identity (`<host>-<pid>-<rand4>`) + 30s per-app LockManager.
+  ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
+  portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
+                    # (netstat -ano / ss), daimon signature probe, EADDRINUSE
+                    # message composition, verify-then-kill helper.
+  envFiles.ts       # Env awareness (M82): dotenv parse + spawn snapshots.
+                    # REDACTION RULE: raw values die in the same tick — parsed,
+                    # HMAC'd (per-install salt at ~/.daimon/salt, truncated to
+                    # 12 hex), and discarded inside snapshotEnvFiles. Only key
+                    # names + hashes exist beyond that frame; API responses
+                    # carry names only (hashes stay server-side). No flag may
+                    # ever print a value.
+  report.ts         # `daimon report` (M83): pure composition over history
+                    # queries; closed section list; every section degrades to a
+                    # { note } independently. Bench budget <500ms on 100k events.
   testRunners.ts    # Test-runner registry (M74): 5 fixture-gated parsers
                     # (vitest-jest/pytest/go-test/cargo-test/dotnet-test), runner
                     # resolution (overrides.<app>.testCommand > profile testRunner hint
@@ -29,6 +43,14 @@ src/
   audit.ts          # Tab-delimited audit log; 6 columns (5-col rows still parse).
   webhooks.ts       # Outbound webhooks: queue + rate limit + Slack/Discord shape detection.
                     # Per-app scoping via webhooks[].apps + overrides.<app>.webhooks (M72).
+                    # DigestScheduler (M84): webhooks[].digest "HH:MM" — ONE 1-min
+                    # interval check (not a cron engine), catch-up at most once,
+                    # never more than one send per day per webhook (persisted
+                    # last-sent in state.json), delivery via the normal queue.
+  notifier.ts       # OS notifications (M84): kind routing (notifications.kinds,
+                    # absent = legacy set), same-fingerprint batching (batchMs),
+                    # quiet hours + one exit summary, per-app mute via
+                    # Registry.isMuted. Injectable sink/clock for tests.
   frameworks.ts     # Framework adapter registry (M65): every framework is a declarative
                     # FrameworkProfile row (detect/command/readiness/url/errorParser/badge).
                     # Custom config profiles are validated DATA, never loaded code.
@@ -76,22 +98,28 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - New audit columns must keep the older row count parseable — `parseAuditLine` already handles 5- and 6-col rows.
 - New tests must be added to the `test` script in `package.json` (`node --test test/foo.test.mjs ...`).
 - **New framework = registry row + fixture, never a discovery.ts branch.** Add a `FrameworkProfile` row in `src/frameworks.ts` and a fixture dir in `test/fixtures/frameworks/<id>/` (marker files + `fixture.json` with startup/error output). The parameterized suite (`test/frameworks.test.mjs`) fails if a built-in profile ships without a fixture.
+- **Port injection is registry-declared (M81).** Profiles get a pool port ONLY via `portFlag` (template with `{port}`) / `portEnv` fields — set them only where the framework documents the mechanism. No `ports.pool` config = legacy behavior (blanket `--port` + `PORT`). Never guess a flag.
+- **Env values are redacted at the storage layer (M82).** `snapshotEnvFiles` parses, hashes, and discards raw values in one tick. Nothing downstream (DB, events, webhooks, notifications, API, CLI) may ever carry a value — `test/env-awareness.test.mjs` has a grep-style suite enforcing it. There is deliberately no `--show-values`.
+- **Orphan takeover is verify-then-kill (M81).** Doctor's `port-holder-no-lock` auto-fix kills the apiPort holder only when it answers on `GET /api/signature` AND no live lock exists, re-verified at fix time. Anything else: identify + advise.
+- **The digest is not a cron engine (M84).** One 1-minute interval in `DigestScheduler`; catch-up at most once; per-webhook last-sent persisted in state.json. Don't add more timers.
 - **New test runner = parser + fixture, same convention (M74).** Add the parser in `src/testRunners.ts`, its id to `KNOWN_TEST_RUNNER_IDS`, and a fixture in `test/fixtures/testrunners/<id>/` (marker files + `fixture.json` with pass/fail/mixed cases). `test/testrunners.test.mjs` fails on a runner without a fixture. Parsers are fail-soft: no totals is acceptable, fabricated totals are not.
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
 - **History migrations are additive** (`CREATE TABLE IF NOT EXISTS` only) — a v0.11 DB must open cleanly under v0.12 and vice versa.
 
-## v0.12 highlights (what landed this release)
+## v0.13 highlights (what landed this release)
 
-- **`daimon test` (M74–M75)**: wraps the project's own runner (never installs one); parsed failures with file:line; `test_runs`/`test_failures` tables; soft-lock gated (409/exit 5); flaky detection (≥3 pass↔fail flips at the same gitHead → one `flaky-test-detected` event, threshold `tests.flakyThreshold`); dashboard Tests page = run history + run diff + flaky badges.
-- **Crash forensics (M76)**: unrequested child exits persist crash reports (exit info + last 50 log lines + gitHead), ring-buffered 10/app; `restart-storm` fires once per storm (`restartStorm.perHour`, default 20); `daimon why <app>` / `GET /api/why/<app>` one-shot composition; doctor rules `restart-storm`, `searchroot-hygiene` (suggest-only), `daimon-home`.
-- **FTS search (M77)**: `daimon search` / `GET /api/search` over events, errors, and per-app log lines; log indexing default-on with `search.logIndex` / `overrides.<app>.logIndex` opt-out; deferred indexing (see history.ts note above); LIKE fallback + one-time self-warn on FTS failure.
-- **Context pack (M78)**: `daimon context <app> [--budget <chars>]` / `GET /api/context/<app>` — composition only, no new state; drop order compile→agents→crashes→tests→errors, status never drops, drops listed in `truncated[]`; MCP `daimon_context`/`daimon_run_tests`/`daimon_why`/`daimon_search` (25 tools).
-- **M79**: deno + bun runtime profiles; `DAIMON_HOME`; `daimon logs --grep [--stream]` (server-side regex, live SSE filter); dashboard onboarding tour (dismiss-once) + PWA manifest.
-- New event kinds (all webhook-eligible): `test-run`, `test-failed`, `flaky-test-detected`, `crash`, `restart-storm`.
+- **Ports (M81)**: `ports.pool` opt-in auto-assignment; `portFlag`/`portEnv` registry fields (documented mechanisms only); `daimon ports` / `GET /api/ports`; `GET /api/signature`; EADDRINUSE startup forensics (holder pid/name/start + signature probe + remedy + crash dump); lock written only after a successful bind; doctor `port-holder-no-lock` (verify-then-kill) + pool-aware `port-conflict-pred`.
+- **Env awareness (M82)**: registry `envFiles` conventions; spawn snapshots → `env_snapshots` table (names + salted truncated hashes, values discarded same-tick, salt at `~/.daimon/salt`); `daimon env` / `env diff`; `why` gains `envChanged`; doctor `env-file-missing` (suggest-only); redaction suite.
+- **Report (M83)**: `daimon report [--since --app --workspace --md]` / `GET /api/report[?md=1]` — composition only, closed section list, per-section degradation to notes; bench <500ms on the 100k corpus; dashboard Report page (lazy chunk).
+- **Notifications (M84)**: `notifications.{kinds,quietHours,batchMs}` (all optional = legacy behavior); same-fingerprint batching; quiet hours + one exit summary; `daimon mute/unmute` persisted in state.json and surfaced as `muted` in summaries; `webhooks[].digest "HH:MM"` daily report via the normal queue, Slack-shaped, catch-up once; `digest-sent` event.
+- **M85**: TUI `T` chord (run tests inline; `t` = tag filter); dashboard why panel, search deep-links, Trends test pass-rate + flaky series, mute badge.
+- MCP: `daimon_report`, `daimon_env` (27 tools).
+
+Key v0.12 context that still matters: `daimon test` wraps the project's own runner (soft-lock gated, flaky detection via `tests.flakyThreshold`); crash reports ring-buffer 10/app; FTS search is deferred-indexed (see history.ts note); `daimon context` is composition-only with a drop order.
 
 ## Where to look next
 
-- `PLAN-v0.12.md` — the v0.12 milestones (M74–M80) in spec form.
-- `RELEASE-v0.12.0.md` — release notes with migration steps.
+- `PLAN-v0.13.md` — the v0.13 milestones (M81–M86) in spec form.
+- `RELEASE-v0.13.0.md` — release notes with migration steps.
 - `CHANGELOG.md` — chronological log of every shipped release.
 - `daimon.config.example.json` — every config key with safe defaults.

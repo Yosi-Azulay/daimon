@@ -19,6 +19,7 @@ const ENTRIES: NavEntry[] = [
   { path: '/sessions', icon: 'radio_button_checked', label: 'Sessions', shortcut: 'g n' },
   { path: '/agents',   icon: 'badge',                label: 'Agents',   shortcut: 'g g' },
   { path: '/regressions', icon: 'trending_down',     label: 'Regressions', shortcut: 'g r' },
+  { path: '/report',   icon: 'summarize',            label: 'Report',   shortcut: 'g p' },
 ];
 
 const KEY = 'daimon.nav.expanded';

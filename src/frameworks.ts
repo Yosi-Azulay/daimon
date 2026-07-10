@@ -74,6 +74,14 @@ export interface FrameworkProfile {
   // 'vitest-jest' rows resolve the concrete runner (and command) per app via
   // a lockfile-aware dependency check; the polyglot ids map 1:1 to a command.
   testRunner?: string;
+  // Port injection (M81) — only set where the framework DOCUMENTS the flag or
+  // env var. Profiles without either never get a port injected: explicit
+  // non-participation, never guessed. `{port}` is the placeholder in portFlag.
+  portFlag?: string;
+  portEnv?: string;
+  // Env-file conventions (M82), in the framework's documented load order.
+  // Read-only awareness: daimon fingerprints these at spawn, never edits them.
+  envFiles?: string[];
   builtin: boolean;
 }
 
@@ -561,6 +569,51 @@ for (const p of BUILTINS) {
   if (t) p.testRunner = t;
 }
 
+// Port injection (M81). Only frameworks whose docs name the flag/env var are
+// listed — everything else stays out of the pool on purpose. `{port}` is the
+// placeholder; django's positional addrport doubles as a loopback pin.
+const PORT_INJECTION: Record<string, { portFlag?: string; portEnv?: string }> = {
+  nx: { portFlag: '--port {port}' },
+  angular: { portFlag: '--port {port}' },
+  vite: { portFlag: '--port {port}' },
+  nextjs: { portFlag: '-p {port}', portEnv: 'PORT' },
+  nuxt: { portFlag: '--port {port}', portEnv: 'PORT' },
+  sveltekit: { portFlag: '--port {port}' },
+  astro: { portFlag: '--port {port}' },
+  storybook: { portFlag: '-p {port}' },
+  django: { portFlag: '127.0.0.1:{port}' },
+  flask: { portFlag: '--port {port}', portEnv: 'FLASK_RUN_PORT' },
+  fastapi: { portFlag: '--port {port}' },
+  rails: { portFlag: '-p {port}' },
+  laravel: { portFlag: '--port {port}' },
+  'rust-trunk': { portFlag: '--port {port}' },
+  'express-nest': { portEnv: 'PORT' },
+};
+for (const p of BUILTINS) {
+  const inj = PORT_INJECTION[p.id];
+  if (inj) { p.portFlag = inj.portFlag; p.portEnv = inj.portEnv; }
+}
+
+// Env-file conventions (M82), per each framework's documented load order.
+// Profiles not listed fall back to the generic ['.env'] at snapshot time.
+const ENV_FILES: Record<string, string[]> = {
+  vite: ['.env', '.env.local', '.env.development', '.env.development.local'],
+  sveltekit: ['.env', '.env.local', '.env.development', '.env.development.local'],
+  astro: ['.env', '.env.local', '.env.development', '.env.development.local'],
+  remix: ['.env', '.env.local', '.env.development', '.env.development.local'],
+  nextjs: ['.env', '.env.local', '.env.development', '.env.development.local'],
+  nuxt: ['.env'],
+  flask: ['.flaskenv', '.env'],
+};
+for (const p of BUILTINS) {
+  const ef = ENV_FILES[p.id];
+  if (ef) p.envFiles = ef;
+}
+
+// Generic fallback for profiles without a documented convention (and apps
+// with no profile at all).
+export const GENERIC_ENV_FILES: string[] = ['.env'];
+
 export function builtinProfiles(): FrameworkProfile[] {
   return BUILTINS;
 }
@@ -951,6 +1004,32 @@ export function validateCustomProfiles(
         profile.healthProbe = e.healthProbe;
       } else {
         warn(`"frameworks.${id}" healthProbe must be http|tcp|none — skipped`);
+        continue;
+      }
+    }
+    if (e.portFlag !== undefined) {
+      if (typeof e.portFlag === 'string' && e.portFlag.trim() && e.portFlag.length <= 100 && e.portFlag.includes('{port}')) {
+        profile.portFlag = e.portFlag.trim();
+      } else {
+        warn(`"frameworks.${id}" portFlag must be a short template containing {port} (e.g. "--port {port}") — skipped`);
+        continue;
+      }
+    }
+    if (e.portEnv !== undefined) {
+      if (typeof e.portEnv === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(e.portEnv)) {
+        profile.portEnv = e.portEnv;
+      } else {
+        warn(`"frameworks.${id}" portEnv must be a valid environment variable name — skipped`);
+        continue;
+      }
+    }
+    if (e.envFiles !== undefined) {
+      // Relative file names only — a custom profile must not point the env
+      // fingerprinter at arbitrary absolute paths outside the workspace.
+      if (validStringArray(e.envFiles) && e.envFiles.every(f => !path.isAbsolute(f) && !f.includes('..'))) {
+        profile.envFiles = e.envFiles.map(f => f.trim());
+      } else {
+        warn(`"frameworks.${id}" envFiles must be a non-empty array of workspace-relative file names — skipped`);
         continue;
       }
     }

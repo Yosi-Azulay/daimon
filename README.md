@@ -4,7 +4,7 @@
 
 # Daimon
 
-A local manager for dev servers, polyglot since v0.11: Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri, Deno / Bun — plus a generic `package.json` fallback and custom profiles from config. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server. Since v0.12 it also closes **the whole loop**: `daimon test` with parsed failures and flaky detection, crash forensics with `daimon why`, full-text search over everything it has seen, and a one-call `daimon context` pack for agents.
+A local manager for dev servers, polyglot since v0.11: Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri, Deno / Bun — plus a generic `package.json` fallback and custom profiles from config. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server. Since v0.12 it also closes **the whole loop**: `daimon test` with parsed failures and flaky detection, crash forensics with `daimon why`, full-text search over everything it has seen, and a one-call `daimon context` pack for agents. v0.13 adds the **daily rhythm**: `daimon report` answers "what happened", env fingerprints answer "what changed", a port pool + forensics answer "who has what", and notifications you can route, batch, and mute — with a scheduled Slack digest.
 
 Daimon is built for the **single machine with several agents on it**: you in one terminal, a Claude Code session in another repo, a second Claude in a third. All of them talk to the same daemon, see only their own workspace by default, carry distinct agent identities, and coordinate through per-app soft-locks instead of stepping on each other's dev servers.
 
@@ -156,6 +156,50 @@ The context-first workflow, in order:
 3. Targeted follow-ups only as needed: `daimon why` (crashes), `daimon errors --since-last` (new compile errors after an edit), `daimon search` (where did I see that string?), `daimon test` (did my change break the suite?).
 
 Everything is compact JSON, budgetable, and soft-lock aware — two agents on one machine coordinate instead of colliding. The same verbs are exposed over MCP (`daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`), and `daimon claude install` teaches the workflow to Claude Code.
+
+## Daily rhythm (v0.13)
+
+Everything daimon records used to be pull-only — nobody asks, nobody knows. v0.13 makes the recall useful across the day.
+
+### `daimon report` — what happened
+
+```bash
+daimon report                       # last 24h, compact JSON
+daimon report --since 7d --md       # human-first markdown, paste into Slack/PRs
+daimon report --app web-admin       # one app; --workspace <label> also works
+```
+
+Per-app uptime % and restarts, error groups classified **new / recurring / resolved**, test pass-rate + flakiest tests, compile p50/p95 + the slowest build + regressions, crashes and restart storms, agent activity, and env changes. Pure composition over existing history; a section with no data degrades to a note, never an error. The dashboard gets a Report page with a period switcher. Want it delivered? `webhooks[].digest: "09:00"` sends the report daily through the normal webhook queue, Slack-shaped — one timer, one catch-up if the daemon was down, never more than one per day per webhook.
+
+### `daimon env` — what changed
+
+"It worked yesterday" is an env-file change half the time. Every spawn fingerprints the app's convention env files (from the framework registry: vite/next-style `.env*` chains, flask's `.flaskenv`, generic `.env`) — file mtime/size, **key names**, and per-key salted truncated hashes. Values are parsed and discarded in the same tick; they never reach the DB, logs, webhooks, or notifications, and there is no flag to show them — open the file.
+
+```bash
+daimon env web-admin        # convention files (found/missing), key names, snapshot age
+daimon env diff web-admin   # files/keys added/removed/changed between the last two spawns
+daimon why web-admin        # now includes envChanged since the last healthy run
+```
+
+### `daimon ports` — who has what
+
+```bash
+daimon ports    # app → port → source (pinned|pool|announced) → pid, + foreign holders
+```
+
+Opt into pool auto-assignment with `ports: { "pool": "4200-4299" }`. Ports are injected **only** through mechanisms the framework documents (registry `portFlag`/`portEnv` — `ng serve --port`, `next dev -p`, django's positional `127.0.0.1:{port}`, express's `PORT`); profiles without one simply don't participate. Assignments persist across restarts. And the daemon's own port got forensics: `EADDRINUSE` now names the holder pid, checks whether it answers as a daimon (`GET /api/signature`), prints the remedy, and `daimon doctor --auto-fix` terminates a *verified* orphan daimon — never anything else.
+
+### Notifications you don't turn off
+
+```jsonc
+"notifications": {
+  "kinds": ["error", "crash", "restart-storm"],   // route only what you want
+  "batchMs": 300000,                              // same-fingerprint errors → one notification with a count
+  "quietHours": "22:00-08:00"                     // suppressed + one "while you were away: N" summary
+}
+```
+
+All optional — absent keys keep the old behavior. Per-app: `daimon mute web-admin --for 2h` / `daimon unmute` (persisted, visible in status and the dashboard).
 
 ## Multi-agent on one machine (v0.9 + v0.10)
 
@@ -339,6 +383,7 @@ daimon start <name> [--with-deps] [--steal]
 daimon stop <name> [--steal]
 daimon restart <name> [--steal]
 daimon test <name> [--timeout <dur>] [--steal]   # run the app's own test suite; exit 0/1/2/5 (v0.12)
+daimon mute <name> [--for <dur>] / daimon unmute <name>   # silence OS notifications per app (v0.13)
 daimon up [<profile>]              # topological start; waits for each to reach serving
 daimon down [<profile>]
 daimon run <name> <task> [--watch] [-- args...]
@@ -354,6 +399,7 @@ daimon logs <name> [--tail N] [--since 30s] [--grep <regex>] [--stream]   # --gr
 daimon history <name>              # uptime%, restart count, compile p50/p95, top errors
 daimon search <query> [--app <a>] [--since <dur>] [--kind logs|errors|events]   # full-text search (v0.12)
 daimon test-history <name> [--flaky] [--limit N]   # recent test runs / flaky tests (v0.12)
+daimon report [--since 24h|7d] [--app <a>] [--workspace <l>] [--md]   # the digest (v0.13)
 
 # agent verbs
 daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]
@@ -370,8 +416,11 @@ daimon profiles suggest [--since 30d] [--min 5]   # profile candidates from co-s
 daimon ci start <profile> [--until ready|healthy] [--timeout 5m] [--json]      # CI helper (v0.10)
 
 # introspection
-daimon why <name>                  # crash forensics: last crash + errors + storms + suspect commit (v0.12)
+daimon why <name>                  # crash forensics: last crash + errors + storms + envChanged + suspect commit
 daimon why-empty                   # explain an empty `daimon list`
+daimon env <name> [--use <file>]   # env-file awareness: files, key names, snapshot age (v0.13); --use sets the active file
+daimon env diff <name> [--from <ts>] [--to <ts>]   # files/keys added/removed/changed between spawns (v0.13)
+daimon ports                       # app → port → source (pinned|pool|announced) → pid + foreign holders (v0.13)
 daimon discover [--dry-run]        # what daimon would (or did) detect
 daimon timeline [--since 7d] [--app <name>] [--kinds status,error,warning,lint,bundle,task]
 daimon tasks <name>                # discovered non-serve tasks
@@ -384,7 +433,6 @@ daimon dashboard                   # open the dashboard scoped to cwd
 
 # config
 daimon init [--force] [--auto]
-daimon env <name> [--use <file>]
 daimon pin-health <name> [--accept] [--path <p>]
 daimon export-config [--redacted]
 daimon workspaces list|add|rm|show
@@ -420,10 +468,16 @@ GET  /api/history/bundles?app=
 GET  /api/tests?app=&limit=&since=              # test-run history + failures (v0.12)
 GET  /api/tests/flaky?app=                      # flaky tests at each gitHead (v0.12)
 GET  /api/search?q=&app=&since=&kind=           # full-text search (v0.12)
-GET  /api/why/:name                             # crash forensics composition (v0.12)
+GET  /api/why/:name                             # crash forensics composition (v0.12; + envChanged v0.13)
 GET  /api/context/:name?budget=                 # agent context pack (v0.12)
+GET  /api/report?since=&app=&workspace=[&md=1]  # the digest (v0.13)
+GET  /api/env/:name                             # env-file awareness — names only, never values (v0.13)
+GET  /api/env/:name/diff?from=&to=              # env diff between spawns (v0.13)
+GET  /api/ports                                 # port map + foreign holders (v0.13)
+GET  /api/signature                             # daimon identification for port forensics (v0.13)
 GET  /api/config                                # current config (env redacted)
 POST /api/apps/:name/(start|stop|restart|snapshot|clean|run/:task)[?steal=1]
+POST /api/apps/:name/(mute|unmute)              # per-app notification mute (v0.13)
 POST /api/apps/:name/test?timeoutMs=[&steal=1]  # run the test suite, soft-lock gated (v0.12)
 POST /api/apps/:name/handoff                    # transfer soft-lock (v0.10)
 POST /api/apps/:name/focus?until=…              # NDJSON event stream
@@ -470,9 +524,10 @@ Relocatable since v0.12: set `DAIMON_HOME=<dir>` to move the entire state direct
 
 - `config.json` — your config (above)
 - `daemon.lock` — `{ pid, apiPort, version, startedAt, headless }`
-- `state.json` — sticky port assignments
+- `state.json` — sticky port assignments; since v0.13 also per-app notification mutes and digest last-sent timestamps
+- `salt` — per-install random salt for env-snapshot value hashes (v0.13; deleting it only resets change-detection baselines)
 - `cursors.json` — per-client error cursors for `--since-last`
-- `history.db` — SQLite of events, compile times, task runs, and per-app bundle sizes (powers the Trends dashboard). If it's corrupt at startup, daimon archives it as `history.db.corrupt-<ts>` and rebuilds automatically (v0.10).
+- `history.db` — SQLite of events, compile times, task runs, test runs, crashes, env snapshots, and per-app bundle sizes (powers the Trends dashboard). If it's corrupt at startup, daimon archives it as `history.db.corrupt-<ts>` and rebuilds automatically (v0.10).
 - `logs/<name>.log[.N]` — when `logs.enabled` is true
 - `snapshots/<name>-<ts>.json` — `daimon snapshot` output
 - `notifications.log` — desktop notification audit
@@ -499,7 +554,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-387 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
+529 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 

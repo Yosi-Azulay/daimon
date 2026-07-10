@@ -10,6 +10,7 @@ import type { AppEvent, AppHealth, AppSummary, AppStatus } from '../types.js';
 import LogPane from './LogPane.js';
 import { computeRibbon, renderRibbon } from './ribbon.js';
 import { allProfiles, profileBadge } from '../frameworks.js';
+import { TEST_CHORD_KEY, TEST_CHORD_HELP, canStartTestRun, formatTestSummary } from './testChord.js';
 
 // Framework badge tags for TUI rows (M72): [next], [flask], ...
 const BADGE_BY_ID = new Map(allProfiles(undefined).map(p => [p.id, profileBadge(p)]));
@@ -81,6 +82,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   const [orchestrateAsking, setOrchestrateAsking] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [events, setEvents] = useState<AppEvent[]>(registry.events({ sinceMs: 60 * 60 * 1000 }));
+  const [testRuns, setTestRuns] = useState<Record<string, { running: boolean; summary: string | null }>>({});
 
   useEffect(() => {
     const onChange = () => setApps(registry.list());
@@ -193,6 +195,10 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     else if (input === 'r') setRestartConfirm(current.name);
     else if (input === 'f') { void runFocus(current.name); }
     else if (input === 'x') void runTryFix(current.name);
+    else if (input === TEST_CHORD_KEY) {
+      if (canStartTestRun(testRuns[current.name]?.running ?? false)) void runTestsFor(current.name);
+      else flashStatus(`tests already running for ${current.name}`);
+    }
     else if (input === 'O') { setOrchestrateAsking(true); }
     else if (input === 'L') setFullLog(true);
     else if (input === 't') { setTagPicking(true); setTagInput(tagFilter.join(' ')); }
@@ -266,6 +272,21 @@ export default function App({ registry, apiPort, onQuit }: Props) {
       flashStatus(`try-fix ${name}: ${w.timedOut ? 'timeout' : 'reached'} · fixed ${r.ran.length}`);
     } catch (err: any) {
       flashStatus(`try-fix ${name} failed: ${err?.message ?? err}`);
+    }
+  };
+
+  const runTestsFor = async (name: string) => {
+    setTestRuns(r => ({ ...r, [name]: { running: true, summary: r[name]?.summary ?? null } }));
+    flashStatus(`running tests for ${name}…`);
+    try {
+      const result = await registry.runTests(name);
+      const summary = formatTestSummary(result);
+      setTestRuns(r => ({ ...r, [name]: { running: false, summary } }));
+      flashStatus(`${name}: ${summary}`);
+    } catch (err: any) {
+      const summary = formatTestSummary({ error: err?.message ?? String(err) });
+      setTestRuns(r => ({ ...r, [name]: { running: false, summary } }));
+      flashStatus(`${name}: ${summary}`);
     }
   };
 
@@ -389,6 +410,11 @@ export default function App({ registry, apiPort, onQuit }: Props) {
                 <Text>Bundle: {current.bundle.initialKB}KB initial · {current.bundle.lazyKB}KB lazy{current.bundleRegressionPct != null && current.bundleRegressionPct > 10 ? <Text color="red"> (+{current.bundleRegressionPct}% ⚠)</Text> : null}</Text>
               ) : null}
               {state.lastStatusMessage ? <Text dimColor>Note:     {state.lastStatusMessage}</Text> : null}
+              {testRuns[current.name] ? (
+                <Text color={testRuns[current.name].running ? 'yellow' : testRuns[current.name].summary?.startsWith('✗') ? 'red' : testRuns[current.name].summary?.startsWith('✓') ? 'green' : undefined}>
+                  Tests:    {testRuns[current.name].running ? 'running tests…' : testRuns[current.name].summary}
+                </Text>
+              ) : null}
               <Text>──── recent log {logFocus ? '(focused)' : ''} ────</Text>
               {recentLogs.length === 0 ? <Text dimColor>(no output yet)</Text> : recentLogs.map((line, i) => (
                 <Text key={i} wrap="truncate-end">{line}</Text>
@@ -456,7 +482,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
           </Box>
         ) : null}
         {statusMsg ? <Text color="cyan">[i] {statusMsg}</Text> : null}
-        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  [O] orchestrate  [o] open URL  [/] filter  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [q] quit</Text>
+        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  {TEST_CHORD_HELP}  [O] orchestrate  [o] open URL  [/] filter  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [q] quit</Text>
       </Box>
     </Box>
   );

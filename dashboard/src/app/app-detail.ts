@@ -23,7 +23,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Chart, registerables, type ChartConfiguration } from 'chart.js';
-import { DaimonApi, LockSnapshot } from './daimon-api';
+import { AppWhy, DaimonApi, LockSnapshot } from './daimon-api';
 import { MetricsChartComponent } from './metrics-chart';
 import { StatusPillComponent, EmptyStateComponent, MonoComponent, SkeletonComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
@@ -81,6 +81,12 @@ interface EnvInfo {
           <div class="dm-title-row">
             <h1 class="dm-title"><dm-mono>{{ s.name }}</dm-mono></h1>
             <dm-status-pill [status]="s.status" [health]="s.health" [eta]="etaFor(s)"></dm-status-pill>
+            @if (s.muted) {
+              <span class="dm-mute-chip" [matTooltip]="s.muteUntil ? ('muted until ' + fmtMuteUntil(s.muteUntil)) : 'muted indefinitely'">
+                <span class="material-symbols-outlined">notifications_off</span>
+                <span>muted</span>
+              </span>
+            }
             @if (s.workspaceLabel) {
               <span class="dm-ws-chip" [style.--dm-tone]="tone(s.workspaceLabel)">
                 <span class="dm-ws-dot"></span>
@@ -157,7 +163,7 @@ interface EnvInfo {
       </header>
 
       @if (summary(); as s) {
-        <mat-tab-group [animationDuration]="'200ms'" class="dm-tabs">
+        <mat-tab-group [animationDuration]="'200ms'" class="dm-tabs" [selectedIndex]="initialTabIndex">
           <mat-tab>
             <ng-template mat-tab-label>
               <span class="material-symbols-outlined dm-tab-icon">info</span>
@@ -358,6 +364,101 @@ interface EnvInfo {
               </section>
             </div>
           </mat-tab>
+
+          <mat-tab>
+            <ng-template mat-tab-label>
+              <span class="material-symbols-outlined dm-tab-icon">help</span>
+              Why
+            </ng-template>
+            <div class="dm-tab-body">
+              @if (whyLoading()) {
+                <dm-skeleton height="10rem"></dm-skeleton>
+              } @else if (why(); as w) {
+                <div class="dm-cards-row dm-why-row">
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Last crash</h3>
+                    @if (w.lastCrash; as c) {
+                      <dl class="dm-kv">
+                        <dt>When</dt><dd>{{ fmtWhyAgo(c.ts) }}</dd>
+                        <dt>Exit code</dt><dd><dm-mono>{{ c.exitCode ?? '—' }}</dm-mono></dd>
+                        <dt>Signal</dt><dd><dm-mono>{{ c.signal ?? '—' }}</dm-mono></dd>
+                        <dt>Uptime</dt><dd><dm-mono>{{ fmtUptime(c.uptimeMs) }}</dm-mono></dd>
+                      </dl>
+                      @if (c.lastLines.length) {
+                        <details class="dm-why-details">
+                          <summary>last {{ c.lastLines.length }} lines</summary>
+                          <pre class="dm-why-lines">{{ c.lastLines.join('\n') }}</pre>
+                        </details>
+                      }
+                    } @else {
+                      <div class="dm-dim">No crash recorded.</div>
+                    }
+                  </section>
+
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Env</h3>
+                    @if (w.envChanged; as ec) {
+                      <div class="dm-why-hint">
+                        env changed since last healthy: {{ envChangedCount(ec) }} key{{ envChangedCount(ec) === 1 ? '' : 's' }} — key names only
+                      </div>
+                      <ul class="dm-why-keys">
+                        @for (k of ec.keysAdded; track k.file + k.key) { <li><dm-mono>+{{ k.key }}</dm-mono><span class="dm-dim">{{ k.file }}</span></li> }
+                        @for (k of ec.keysRemoved; track k.file + k.key) { <li><dm-mono>-{{ k.key }}</dm-mono><span class="dm-dim">{{ k.file }}</span></li> }
+                        @for (k of ec.keysChanged; track k.file + k.key) { <li><dm-mono>~{{ k.key }}</dm-mono><span class="dm-dim">{{ k.file }}</span></li> }
+                      </ul>
+                    } @else {
+                      <div class="dm-dim">No env changes detected.</div>
+                    }
+                  </section>
+
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Restart storm</h3>
+                    <dl class="dm-kv">
+                      <dt>Active</dt><dd>{{ w.storm.active ? 'yes' : 'no' }}</dd>
+                      <dt>Last hour</dt><dd>{{ w.storm.countLastHour }} / {{ w.storm.threshold }}</dd>
+                    </dl>
+                  </section>
+
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Suspect commit</h3>
+                    @if (w.suspectCommit) {
+                      <dm-mono>{{ w.suspectCommit }}</dm-mono>
+                    } @else {
+                      <div class="dm-dim">No suspect commit identified.</div>
+                    }
+                  </section>
+                </div>
+
+                @if (w.errorGroups.length) {
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Recent error groups (24h)</h3>
+                    <ul class="dm-why-keys">
+                      @for (g of w.errorGroups; track g.fingerprint) {
+                        <li><dm-mono>{{ g.message }}</dm-mono><span class="dm-dim">×{{ g.count }}</span></li>
+                      }
+                    </ul>
+                  </section>
+                }
+
+                @if (w.doctor.length) {
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Doctor</h3>
+                    <ul class="dm-why-keys">
+                      @for (d of w.doctor; track d.name) {
+                        <li>
+                          <span class="material-symbols-outlined" [class.dm-doc-ok]="d.ok" [class.dm-doc-bad]="!d.ok">{{ d.ok ? 'check_circle' : 'error' }}</span>
+                          {{ d.name }}
+                          @if (d.detail) { <span class="dm-dim">— {{ d.detail }}</span> }
+                        </li>
+                      }
+                    </ul>
+                  </section>
+                }
+              } @else {
+                <dm-empty icon="help" title="No why data" hint="Nothing recorded yet for this app."></dm-empty>
+              }
+            </div>
+          </mat-tab>
         </mat-tab-group>
       } @else {
         <div class="dm-loading">
@@ -415,6 +516,16 @@ interface EnvInfo {
     }
     .dm-lock-chip .dm-mono, .dm-agent-chip .dm-mono { font-size: .75rem; }
     .dm-lock-ttl { font: 600 .6875rem/1rem 'Roboto Mono', ui-monospace, monospace; color: var(--mat-sys-on-surface-variant); }
+
+    .dm-mute-chip {
+      display: inline-flex; align-items: center; gap: .3rem;
+      padding: 2px 10px; border-radius: 999px;
+      background: color-mix(in oklch, var(--mat-sys-outline) 16%, transparent);
+      border: 1px solid color-mix(in oklch, var(--mat-sys-outline) 40%, transparent);
+      color: var(--mat-sys-on-surface-variant);
+      font: 500 .75rem/1rem Roboto;
+    }
+    .dm-mute-chip .material-symbols-outlined { font-size: 14px; }
 
     .dm-action-bar { display: flex; flex-wrap: wrap; gap: .375rem; }
     .dm-action-btn {
@@ -599,10 +710,29 @@ interface EnvInfo {
 
     .dm-dim { color: var(--mat-sys-on-surface-variant); font-size: .875rem; }
     .dm-loading { padding: 2rem 0; }
+
+    .dm-why-row { grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr)); }
+    .dm-why-hint { color: var(--mat-sys-on-surface-variant); font-size: .8125rem; margin-bottom: .5rem; }
+    .dm-why-keys { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
+    .dm-why-keys li { display: flex; align-items: center; gap: .5rem; padding: .25rem .5rem; border-radius: 8px; background: var(--mat-sys-surface-container); font-size: .8125rem; }
+    .dm-why-keys .material-symbols-outlined { font-size: 16px; }
+    .dm-doc-ok { color: var(--mat-sys-primary); }
+    .dm-doc-bad { color: var(--mat-sys-error); }
+    .dm-why-details { margin-top: .5rem; font-size: .8125rem; color: var(--mat-sys-on-surface-variant); }
+    .dm-why-details summary { cursor: pointer; }
+    .dm-why-lines {
+      margin: .5rem 0 0; padding: .5rem .625rem;
+      background: var(--mat-sys-surface); border: 1px solid var(--mat-sys-outline-variant); border-radius: 8px;
+      font-family: var(--dm-mono); font-size: .75rem; white-space: pre-wrap; word-break: break-word;
+      color: var(--mat-sys-on-surface); max-height: 16rem; overflow: auto;
+    }
   `],
 })
 export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   @Input() name = '';
+  // `?tab=errors|logs|history|env|why` deep-link (M85), bound automatically
+  // by withComponentInputBinding() — picks the initial mat-tab-group tab.
+  @Input() tab?: string;
 
   readonly api = inject(DaimonApi);
   private readonly http = inject(HttpClient);
@@ -618,7 +748,10 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   readonly autoScroll = signal<boolean>(true);
   readonly compileTimes = signal<{ ts: number; ms: number }[]>([]);
   readonly envInfo = signal<EnvInfo | null>(null);
+  readonly why = signal<AppWhy | null>(null);
+  readonly whyLoading = signal<boolean>(true);
   private readonly busyMap = signal<Record<string, boolean>>({});
+  initialTabIndex = 0;
 
   private logStop?: () => void;
   private pollTimer?: ReturnType<typeof setInterval>;
@@ -705,6 +838,7 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   async ngOnInit(): Promise<void> {
+    this.initialTabIndex = this.tabIndexFor(this.tab);
     await this.refresh();
     this.pollTimer = setInterval(() => void this.refresh(), 4000);
     this.tickTimer = setInterval(() => this.now.set(Date.now()), 1000);
@@ -718,6 +852,18 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     });
     void this.loadCompile();
     void this.loadEnv();
+    void this.loadWhy();
+  }
+
+  private tabIndexFor(tab: string | undefined): number {
+    switch (tab) {
+      case 'errors': return 1;
+      case 'logs': return 2;
+      case 'history': return 3;
+      case 'env': return 4;
+      case 'why': return 5;
+      default: return 0;
+    }
   }
 
   ngAfterViewInit(): void {
@@ -769,6 +915,34 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     } catch {
       this.envInfo.set(null);
     }
+  }
+
+  // Fetched once (not on the 4s poll): composes doctor + a `git log` shell-out
+  // server-side, too heavy to repeat every tick for a tab most sessions never
+  // open. Mirrors loadCompile/loadEnv's one-shot-on-init convention.
+  private async loadWhy(): Promise<void> {
+    this.whyLoading.set(true);
+    try {
+      this.why.set(await this.api.getAppWhy(this.name));
+    } finally {
+      this.whyLoading.set(false);
+    }
+  }
+
+  envChangedCount(ec: NonNullable<AppWhy['envChanged']>): number {
+    return ec.keysAdded.length + ec.keysRemoved.length + ec.keysChanged.length;
+  }
+
+  fmtWhyAgo(ts: number): string {
+    const s = Math.max(0, Math.floor((this.now() - ts) / 1000));
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  fmtMuteUntil(ts: number): string {
+    return new Date(ts).toLocaleString();
   }
 
   lockTtl(lk: LockSnapshot): string {

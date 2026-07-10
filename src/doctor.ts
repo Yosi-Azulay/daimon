@@ -8,7 +8,9 @@ import { History } from './history.js';
 import { analyseRestartCadence } from './profiles.js';
 import { configValidationWarnings } from './config.js';
 import { allProfiles, matchDetect, RootFs } from './frameworks.js';
-import { daimonDir } from './daemon.js';
+import { daimonDir, readLock } from './daemon.js';
+import { inspectApiPort } from './portDiag.js';
+import { resolveEnvFilePath } from './envFiles.js';
 
 export interface Check {
   name: string;
@@ -101,8 +103,36 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
     checks.push({ name: `node_modules: ${r}`, ok: fs.existsSync(nm), detail: fs.existsSync(nm) ? undefined : 'missing' });
   }
 
+  // apiPort + port-holder-no-lock (M81): a busy apiPort is fine when the
+  // locked daemon holds it; an unlocked holder that answers as a daimon is a
+  // verified orphan (auto-fixable); anything else is identify-and-advise.
   const apiFree = await isPortFree(config.apiPort);
-  checks.push({ name: `apiPort ${config.apiPort}`, ok: apiFree, detail: apiFree ? undefined : 'in use (may be held by us)' });
+  if (apiFree) {
+    checks.push({ name: `apiPort ${config.apiPort}`, ok: true });
+    checks.push({ name: 'port-holder-no-lock', ok: true });
+  } else {
+    const lock = readLock();
+    if (lock && lock.apiPort === config.apiPort) {
+      checks.push({ name: `apiPort ${config.apiPort}`, ok: true, detail: `held by the running daemon (pid ${lock.pid})` });
+      checks.push({ name: 'port-holder-no-lock', ok: true });
+    } else {
+      checks.push({ name: `apiPort ${config.apiPort}`, ok: false, detail: 'in use with no live daemon.lock' });
+      const f = await inspectApiPort(config.apiPort, lock !== null);
+      if (f.signature?.daimon) {
+        checks.push({
+          name: 'port-holder-no-lock',
+          ok: false,
+          detail: `apiPort ${config.apiPort} held by an unlocked daimon${f.signature.version ? ` v${f.signature.version}` : ''} (pid ${f.holder?.pid ?? '?'}) — run 'daimon doctor --auto-fix' to terminate the verified orphan`,
+        });
+      } else {
+        checks.push({
+          name: 'port-holder-no-lock',
+          ok: false,
+          detail: `apiPort ${config.apiPort} held by a non-daimon process${f.holder ? ` (pid ${f.holder.pid}${f.holder.name ? `, ${f.holder.name}` : ''})` : ''} — daimon will not kill it; free the port yourself or change apiPort`,
+        });
+      }
+    }
+  }
 
   if (config.history.enabled) {
     let ok = false;
@@ -201,6 +231,45 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
       if (!anyStorm) checks.push({ name: 'restart-storm', ok: true });
     } catch (err: any) {
       checks.push({ name: 'restart-storm', ok: true, detail: `skipped: ${err?.message || err}` });
+    }
+  }
+
+  // env-file-missing (M82): a convention file that existed at the last spawn
+  // snapshot but is gone now, or an envFiles.<app> config reference that never
+  // resolves on disk. Suggest-only — never fails doctor, never auto-fixed.
+  if (config.history.enabled) {
+    try {
+      const h = new History(config.history);
+      for (const a of apps) {
+        const row = h.queryEnvSnapshots({ app: a.name, limit: 1 })[0];
+        if (!row) continue;
+        try {
+          const snap = JSON.parse(row.json);
+          for (const f of snap.files ?? []) {
+            if (f?.exists && typeof f.file === 'string' && !fs.existsSync(resolveEnvFilePath(a.workspaceRoot, f.file))) {
+              checks.push({
+                name: `env-file-missing: ${a.name}`,
+                ok: true,
+                detail: `${f.file} existed at the last spawn but is missing now — the app may behave differently on its next start`,
+              });
+            }
+          }
+        } catch {}
+      }
+      h.close();
+    } catch {}
+  }
+  for (const [appName, files] of Object.entries(config.envFiles ?? {})) {
+    const app = apps.find(x => x.name === appName || (x.baseName ?? x.name) === appName);
+    if (!app) continue;
+    for (const f of files) {
+      if (!fs.existsSync(resolveEnvFilePath(app.workspaceRoot, f))) {
+        checks.push({
+          name: `env-file-missing: ${appName}`,
+          ok: true,
+          detail: `envFiles.${appName} references ${f}, which does not exist under ${app.workspaceRoot}`,
+        });
+      }
     }
   }
 

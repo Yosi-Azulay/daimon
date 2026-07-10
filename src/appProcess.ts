@@ -10,7 +10,12 @@ const LOG_BUFFER_MAX = 500;
 export interface AppProcessDeps {
   state: AppState;
   app: DiscoveredApp;
-  port: number;
+  // null = no port claimed (pool mode, profile doesn't declare injection).
+  port: number | null;
+  // Port injection (M81). undefined = legacy behavior (append `--port <port>`
+  // and set PORT). When present, EXACTLY what it says is injected — an empty
+  // object means "inject nothing" (explicit non-participation).
+  portInject?: { argSuffix?: string; env?: Record<string, string> };
   envOverride?: Record<string, string>;
   commandOverride?: string;
   onStateChange: () => void;
@@ -66,8 +71,10 @@ export class AppProcess {
     state.lastStatusMessage = undefined;
 
     const baseCmd = this.deps.commandOverride || app.command;
-    const fullCmd = `${baseCmd} --port ${port}`;
-    const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...(app.env || {}), ...(this.deps.envOverride || {}), PORT: String(port), FORCE_COLOR: '0' };
+    const inject = this.deps.portInject;
+    const fullCmd = inject ? `${baseCmd}${inject.argSuffix ?? ''}` : `${baseCmd} --port ${port}`;
+    const portEnv = inject ? (inject.env ?? {}) : { PORT: String(port) };
+    const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...(app.env || {}), ...(this.deps.envOverride || {}), ...portEnv, FORCE_COLOR: '0' };
     const child = spawn(fullCmd, [], {
       cwd: app.workspaceRoot,
       shell: true,

@@ -6,6 +6,10 @@
   "portRange": [4200, 4299],
   "apiPort": 4999,
 
+  "ports": {
+    "pool": null
+  },
+
   "autoStart": [],
   "profiles": {
     "fullstack": ["web-admin", "api"]
@@ -63,7 +67,10 @@
     "enabled": true,
     "onError": true,
     "onUnhealthy": true,
-    "tray": false
+    "tray": false,
+    "kinds": ["error", "unhealthy", "stale", "compile-regression", "bundle-regression", "task-fail"],
+    "quietHours": null,
+    "batchMs": 300000
   },
 
   "webhooks": [
@@ -71,7 +78,8 @@
       "url": "https://hooks.slack.com/services/T000/B000/XXXXXXXX",
       "events": ["error", "regression-detected", "status"],
       "headers": { "x-extra-header": "optional-value" },
-      "filter": { "app": ["web-admin"], "to": ["error", "unhealthy"], "from": [] }
+      "filter": { "app": ["web-admin"], "to": ["error", "unhealthy"], "from": [] },
+      "digest": "09:00"
     }
   ],
 

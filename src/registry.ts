@@ -13,14 +13,14 @@ import type {
 } from './types.js';
 import { isPathUnder } from './pathScope.js';
 import { AppProcess } from './appProcess.js';
-import { PortAllocator, isPortFree } from './ports.js';
+import { PortAllocator, isPortFree, parsePortPool } from './ports.js';
 import { DiskLogger } from './diskLogger.js';
 import type { History } from './history.js';
 import { dependants, topoLevels, transitiveClosure } from './depends.js';
 import { runOneShot, startWatch, type OneShotResult, type WatchTask } from './taskRunner.js';
 import { assertSafeCommandParts } from './shellSafe.js';
 import { describeHolder, findPortHolder } from './portDiag.js';
-import { existingEnvFiles, parseEnvFile, resolveEnvFilePath } from './envFiles.js';
+import { envFileCandidates as resolveEnvCandidates, existingEnvFiles, parseEnvFile, resolveEnvFilePath, snapshotEnvFiles } from './envFiles.js';
 import { readSecrets, substituteSecrets } from './secrets.js';
 import { SessionRecorder } from './session.js';
 import { detectBundleRegression, detectCompileRegression, detectErrorFlapRegression, suspectCommitForDir } from './regressions.js';
@@ -60,7 +60,7 @@ export class Registry extends EventEmitter {
     // cleaned up on every disconnect path.
     this.setMaxListeners(0);
     this.config = config;
-    this.portAlloc = portAlloc ?? new PortAllocator(config.portRange);
+    this.portAlloc = portAlloc ?? new PortAllocator(parsePortPool(config.ports?.pool) ?? config.portRange);
     for (const app of apps) {
       this.entries.set(app.name, {
         app,
@@ -91,6 +91,9 @@ export class Registry extends EventEmitter {
     try { e.logger?.close(); } catch {}
     this.entries.delete(name);
     this.lastStatusEventTs.delete(name);
+    // Pool assignments release with the app (M81) — a removed app must not
+    // hold a pool slot forever via the persisted state file.
+    this.portAlloc.release(name);
     this.recordEvent({ app: '__daemon__', type: 'self-warn', message: `orphaned app detached after config reload: ${name}` });
     this.emit('change');
     return true;
@@ -150,6 +153,80 @@ export class Registry extends EventEmitter {
 
   getPortAllocator(): PortAllocator {
     return this.portAlloc;
+  }
+
+  // Per-app notification mutes (M84). app → until-ts (null = indefinite).
+  // Persisted via onMutesChanged (main.ts wires it to the state file); the
+  // Notifier consults isMuted() before every OS notification.
+  private readonly mutes = new Map<string, number | null>();
+  onMutesChanged: ((snapshot: Record<string, number | null>) => void) | null = null;
+
+  restoreMutes(snapshot: Record<string, number | null> | undefined): void {
+    if (!snapshot) return;
+    for (const [app, until] of Object.entries(snapshot)) {
+      if (until === null || (typeof until === 'number' && until > Date.now())) this.mutes.set(app, until);
+    }
+  }
+
+  mutesSnapshot(): Record<string, number | null> {
+    return Object.fromEntries(this.mutes);
+  }
+
+  mute(name: string, forMs?: number | null): { app: string; muted: true; until: number | null } {
+    const until = forMs != null && forMs > 0 ? Date.now() + forMs : null;
+    this.mutes.set(name, until);
+    this.onMutesChanged?.(this.mutesSnapshot());
+    this.emit('change');
+    return { app: name, muted: true, until };
+  }
+
+  unmute(name: string): { app: string; muted: false } {
+    this.mutes.delete(name);
+    this.onMutesChanged?.(this.mutesSnapshot());
+    this.emit('change');
+    return { app: name, muted: false };
+  }
+
+  isMuted(name: string, now = Date.now()): boolean {
+    if (!this.mutes.has(name)) return false;
+    const until = this.mutes.get(name)!;
+    if (until !== null && until <= now) {
+      this.mutes.delete(name);
+      this.onMutesChanged?.(this.mutesSnapshot());
+      return false;
+    }
+    return true;
+  }
+
+  muteUntil(name: string): number | null | undefined {
+    return this.mutes.get(name);
+  }
+
+  // `daimon ports` (M81): app → port → how it got that port → pid. The port
+  // resolution mirrors what start() would do; `announced` means the app told
+  // us its own port via its startup banner (non-participating profiles).
+  portsReport(): { app: string; baseName: string; port: number | null; source: 'pinned' | 'pool' | 'announced' | null; pid: number | null; status: AppStatus; profile: string | null }[] {
+    return this.names().map(n => {
+      const e = this.entries.get(n)!;
+      const pinned = e.app.pinnedPort ?? null;
+      const assigned = this.portAlloc.getAssigned(n) ?? null;
+      let port: number | null = e.state.port ?? assigned ?? pinned;
+      let source: 'pinned' | 'pool' | 'announced' | null = null;
+      if (port != null && pinned != null && port === pinned) source = 'pinned';
+      else if (port != null && assigned != null && port === assigned) source = 'pool';
+      else if (port != null) source = 'pool';
+      if (port == null) {
+        const urlStr = e.resolvedUrl ?? e.state.announcedUrl;
+        if (urlStr) {
+          try {
+            const u = new URL(urlStr);
+            const p = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+            if (Number.isFinite(p) && p > 0) { port = p; source = 'announced'; }
+          } catch {}
+        }
+      }
+      return { app: n, baseName: e.state.baseName ?? n, port, source, pid: e.state.pid, status: e.state.status, profile: e.app.serverProfile ?? null };
+    });
   }
 
   setHistory(h: History | null): void {
@@ -235,6 +312,17 @@ export class Registry extends EventEmitter {
     return { kind: 'unique', key: matches[0].state.name, candidates };
   }
 
+  // Env-file conventions for an app (M82): explicit config wins, then the
+  // framework profile's documented list, then the generic ['.env'].
+  envCandidates(name: string): string[] | null {
+    const app = this.getApp(name);
+    if (!app) return null;
+    const profileRow = app.serverProfile
+      ? allProfiles(this.config.frameworks).find(p => p.id === app.serverProfile)
+      : undefined;
+    return resolveEnvCandidates(this.config.envFiles?.[name], profileRow?.envFiles);
+  }
+
   pruneOldErrors(now = Date.now()): number {
     const maxAgeMs = this.config.errorRetention?.maxAgeMs ?? 86400000;
     let removed = 0;
@@ -318,6 +406,8 @@ export class Registry extends EventEmitter {
       lastChangeMs,
       estimatedReadyAtMs,
       serverProfile: e.app.serverProfile ?? null,
+      muted: this.isMuted(name),
+      muteUntil: this.mutes.get(name) ?? null,
     };
   }
 
@@ -474,9 +564,36 @@ export class Registry extends EventEmitter {
     if (e.proc?.isRunning()) return { ok: true, status: e.state.status };
 
     const prevStatus = e.state.status;
-    let port: number;
+    // Registry row for this app's serverProfile — drives port injection (M81)
+    // and the per-profile parse context (M67).
+    const profileRow = e.app.serverProfile
+      ? allProfiles(this.config.frameworks).find(p => p.id === e.app.serverProfile)
+      : undefined;
+    // Port assignment (M81). No pool configured = legacy behavior: every app
+    // claims a portRange port and gets `--port <port>` + PORT appended. With a
+    // pool, only pinned apps and profiles that DECLARE injection claim a port,
+    // and injection uses exactly the declared portFlag/portEnv — never guessed.
+    const poolRange = parsePortPool(this.config.ports?.pool);
+    let port: number | null;
+    let portInject: { argSuffix?: string; env?: Record<string, string> } | undefined;
     try {
-      port = await this.portAlloc.allocate(name, e.app.pinnedPort);
+      if (!poolRange) {
+        port = await this.portAlloc.allocate(name, e.app.pinnedPort);
+      } else {
+        const declares = !!(profileRow?.portFlag || profileRow?.portEnv);
+        if (e.app.pinnedPort != null) {
+          port = await this.portAlloc.allocate(name, e.app.pinnedPort);
+        } else if (declares) {
+          port = await this.portAlloc.allocate(name);
+        } else {
+          port = null;
+        }
+        portInject = {};
+        if (port != null && declares) {
+          if (profileRow!.portFlag) portInject.argSuffix = ' ' + profileRow!.portFlag.split('{port}').join(String(port));
+          if (profileRow!.portEnv) portInject.env = { [profileRow!.portEnv]: String(port) };
+        }
+      }
     } catch (err: any) {
       e.state.status = 'error';
       e.state.lastStatusMessage = err.message;
@@ -485,16 +602,18 @@ export class Registry extends EventEmitter {
       return { ok: false, status: 'error', error: err.message };
     }
 
-    const free = await isPortFree(port);
-    if (!free) {
-      const holder = findPortHolder(port);
-      const msg = describeHolder(port, holder);
-      e.state.status = 'error';
-      e.state.port = port;
-      e.state.lastStatusMessage = msg;
-      this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'error', message: msg });
-      this.emit('change');
-      return { ok: false, status: 'error', error: msg };
+    if (port != null) {
+      const free = await isPortFree(port);
+      if (!free) {
+        const holder = findPortHolder(port);
+        const msg = describeHolder(port, holder);
+        e.state.status = 'error';
+        e.state.port = port;
+        e.state.lastStatusMessage = msg;
+        this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'error', message: msg });
+        this.emit('change');
+        return { ok: false, status: 'error', error: msg };
+      }
     }
 
     e.state.health = 'unknown';
@@ -525,15 +644,18 @@ export class Registry extends EventEmitter {
     const baseEnv = { ...envFromFile, ...(this.config.overrides?.[name]?.env ?? {}), ...(so?.env ?? {}) };
     const secrets = readSecrets();
     const mergedEnvOverride = substituteSecrets(baseEnv, secrets);
-    // Per-profile readiness/url/error-parser context (M67): the registry row
-    // for this app's serverProfile, compiled once per profile.
-    const profileRow = e.app.serverProfile
-      ? allProfiles(this.config.frameworks).find(p => p.id === e.app.serverProfile)
-      : undefined;
+    // Env fingerprint at spawn (M82): key names + per-key salted truncated
+    // hashes only — raw values are parsed and discarded inside
+    // snapshotEnvFiles in this same tick, before anything async runs.
+    try {
+      const candidates = resolveEnvCandidates(this.config.envFiles?.[name], profileRow?.envFiles);
+      this.history?.recordEnvSnapshot(name, snapshotEnvFiles(e.app.workspaceRoot, candidates));
+    } catch {}
     const proc = new AppProcess({
       state: e.state,
       app: e.app,
       port,
+      portInject,
       parseCtx: compileParseContext(profileRow),
       envOverride: Object.keys(mergedEnvOverride).length ? mergedEnvOverride : undefined,
       commandOverride: so?.command,

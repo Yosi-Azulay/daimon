@@ -285,6 +285,10 @@ interface Flags {
   flaky?: boolean;
   kind?: string;
   grep?: string;
+  from?: string;
+  to?: string;
+  md?: boolean;
+  forDur?: string;
   passthrough: string[];
 }
 
@@ -335,6 +339,10 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--level') f.level = args[++i];
     else if (a === '--label') f.label = args[++i];
     else if (a === '--kinds') f.kinds = args[++i];
+    else if (a === '--from') f.from = args[++i];
+    else if (a === '--to') f.to = args[++i];
+    else if (a === '--md') f.md = true;
+    else if (a === '--for') f.forDur = args[++i];
     else if (a === '--open') f.open = true;
     else if (a === '--steal') f.steal = true;
     else if (a === '--json') f.json = true;
@@ -1011,6 +1019,85 @@ async function main() {
       out(r.body);
       return;
     }
+    case 'mute':
+    case 'unmute': {
+      const name = f.positional[0];
+      if (!name) fail(JSON.stringify({ error: `usage: daimon ${cmd} <name>${cmd === 'mute' ? ' [--for <dur>]' : ''}` }));
+      let body: any = undefined;
+      if (cmd === 'mute' && f.forDur) {
+        const m = /^(\d+)(ms|s|m|h|d)?$/.exec(f.forDur.trim());
+        if (!m) failHint('invalid --for duration', 'use e.g. --for 30m, --for 2h, --for 1d');
+        const mult = { ms: 1, s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 }[m[2] ?? 'm'] ?? 60_000;
+        body = { forMs: Number(m[1]) * mult };
+      }
+      const r = body
+        ? await callJson(`/api/apps/${encodeURIComponent(name)}/${cmd}`, 'POST', body)
+        : await call(`/api/apps/${encodeURIComponent(name)}/${cmd}`, 'POST');
+      if (r.status === 404) await suggestUnknownApp(name);
+      out(r.body);
+      return;
+    }
+    case 'report': {
+      const params = new URLSearchParams();
+      if (f.since) params.set('since', f.since);
+      if (f.app) params.set('app', f.app);
+      if (f.workspace) params.set('workspace', f.workspace);
+      const qs = params.toString();
+      const r = await call(`/api/report${qs ? '?' + qs : ''}`);
+      if (f.md && r.body && typeof r.body === 'object') {
+        const { renderReportMd } = await import('./report.js');
+        process.stdout.write(renderReportMd(r.body as any) + '\n');
+        return;
+      }
+      out(r.body);
+      return;
+    }
+    case 'env': {
+      const first = f.positional[0];
+      if (first === 'diff') {
+        const name = f.positional[1];
+        if (!name) fail(JSON.stringify({ error: 'usage: daimon env diff <name> [--from <ts>] [--to <ts>]' }));
+        const params = new URLSearchParams();
+        if (f.from) params.set('from', f.from);
+        if (f.to) params.set('to', f.to);
+        const qs = params.toString();
+        const r = await call(`/api/env/${encodeURIComponent(name)}/diff${qs ? '?' + qs : ''}`);
+        if (r.status === 412) reportCollisionAndExit(r.body);
+        if (r.status === 404) await suggestUnknownApp(name);
+        out(r.body);
+        return;
+      }
+      const name = first;
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon env <name> [--use <file>] | daimon env diff <name> [--from <ts>] [--to <ts>]' }));
+      // Legacy behavior (pre-v0.13): --use activates an env file for injection.
+      if (f.use) {
+        const r = await callJson(`/api/apps/${encodeURIComponent(name)}/env`, 'POST', { use: f.use });
+        if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+        out(r.body);
+        return;
+      }
+      const r = await call(`/api/env/${encodeURIComponent(name)}`);
+      if (r.status === 412) reportCollisionAndExit(r.body);
+      if (r.status === 404) await suggestUnknownApp(name);
+      const b: any = r.body;
+      if (process.stdout.isTTY && isColorEnabled() && b && typeof b === 'object' && Array.isArray(b.candidates)) {
+        const dim = (s: string) => color.dim(s);
+        const L: string[] = [];
+        L.push(color.bold(`env ${b.app}`) + (b.snapshot ? dim(`  snapshot ${Math.round((b.snapshot.ageMs ?? 0) / 1000)}s old`) : dim('  (no snapshot yet — start the app once)')));
+        for (const c of b.candidates) {
+          L.push(`  ${String(c.file).padEnd(28)} ${c.exists ? 'found' : dim('missing')}`);
+        }
+        for (const fSnap of b.snapshot?.files ?? []) {
+          if (!fSnap.exists) continue;
+          L.push(dim(`  ${fSnap.file}: ${fSnap.keyNames.length} keys`) + (fSnap.keyNames.length ? ` ${fSnap.keyNames.join(', ')}` : ''));
+        }
+        L.push(dim('  values are never shown — open the file itself'));
+        process.stdout.write(L.join('\n') + '\n');
+        return;
+      }
+      out(b);
+      return;
+    }
     case 'why': {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: daimon why <name>' }));
@@ -1041,20 +1128,6 @@ async function main() {
         return;
       }
       out(b);
-      return;
-    }
-    case 'env': {
-      const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon env <name> [--use <file>]' }));
-      if (f.use) {
-        const r = await callJson(`/api/apps/${encodeURIComponent(name)}/env`, 'POST', { use: f.use });
-        if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
-        out(r.body);
-        return;
-      }
-      const r = await call(`/api/apps/${encodeURIComponent(name)}/env`);
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
-      out(r.body);
       return;
     }
     case 'clean': {
@@ -1131,6 +1204,29 @@ async function main() {
       if (warnings.length) result.ok = false;
       out(result);
       if (!result.ok) process.exit(1);
+      return;
+    }
+    case 'ports': {
+      const r = await call('/api/ports');
+      const b: any = r.body;
+      if (process.stdout.isTTY && isColorEnabled() && b && typeof b === 'object' && Array.isArray(b.apps)) {
+        const dim = (s: string) => color.dim(s);
+        const L: string[] = [];
+        L.push(color.bold('ports') + dim(b.pool ? `  pool=${b.pool}` : '  (no ports.pool configured — legacy portRange assignment)'));
+        for (const a of b.apps) {
+          const port = a.port != null ? String(a.port) : '—';
+          L.push(`  ${String(a.app).padEnd(26)} ${port.padStart(5)}  ${String(a.source ?? '—').padEnd(10)} pid=${a.pid ?? '—'} ${dim(String(a.status ?? ''))}`);
+        }
+        if (Array.isArray(b.foreign) && b.foreign.length) {
+          L.push(color.bold('foreign holders'));
+          for (const fh of b.foreign) {
+            L.push(`  ${String(fh.port).padStart(5)}  pid=${fh.pid}${fh.name ? ` ${fh.name}` : ''}${fh.cmd ? dim(`  ${fh.cmd}`) : ''}`);
+          }
+        }
+        process.stdout.write(L.join('\n') + '\n');
+        return;
+      }
+      out(b);
       return;
     }
     case 'free-port': {

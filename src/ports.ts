@@ -1,5 +1,17 @@
 import net from 'node:net';
 
+// "4200-4299" → [4200, 4299]; null on anything malformed. The pool config
+// (M81) is validated with this same parser so config and runtime agree.
+export function parsePortPool(pool: string | null | undefined): [number, number] | null {
+  if (typeof pool !== 'string') return null;
+  const m = pool.trim().match(/^(\d{1,5})\s*-\s*(\d{1,5})$/);
+  if (!m) return null;
+  const lo = Number(m[1]);
+  const hi = Number(m[2]);
+  if (lo < 1 || hi > 65535 || lo > hi) return null;
+  return [lo, hi];
+}
+
 export interface PortAllocatorOptions {
   initial?: Record<string, number>;
   onChange?: (snapshot: Record<string, number>) => void;
@@ -37,6 +49,13 @@ export class PortAllocator {
 
   pin(name: string, port: number): void {
     this.assigned.set(name, port);
+    this.onChange?.(this.snapshot());
+  }
+
+  // Pool assignments are stable across restarts (persisted via onChange) and
+  // released only when the app itself is removed (M81).
+  release(name: string): void {
+    if (!this.assigned.delete(name)) return;
     this.onChange?.(this.snapshot());
   }
 

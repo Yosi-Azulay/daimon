@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v0.12.0 — docs</title>
+<title>daimon v0.13.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -31,7 +31,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v0.12.0</span></h1>
+<h1>daimon <span class="badge">v0.13.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -74,6 +74,10 @@ npx daimon init --auto</code></pre>
 <dd>Start a profile (or autoStart). Waits for each to reach serving.</dd>
 <dt><code>daimon down [&lt;profile&gt;]</code></dt>
 <dd>Stop a profile (or all apps).</dd>
+<dt><code>daimon mute &lt;name&gt; [--for &lt;dur&gt;]</code></dt>
+<dd>Mute OS notifications for an app (optionally for a duration). Persisted; shown in status and the dashboard.</dd>
+<dt><code>daimon unmute &lt;name&gt;</code></dt>
+<dd>Lift a notification mute.</dd>
 <dt><code>daimon run &lt;name&gt; &lt;task&gt; [--watch] [-- args...]</code></dt>
 <dd>Run a discovered task.</dd>
 <dt><code>daimon clean &lt;name&gt; [--deep] [--yes]</code></dt>
@@ -129,6 +133,10 @@ npx daimon init --auto</code></pre>
 </dl>
 <h3>introspection</h3>
 <dl class="cli-grid">
+<dt><code>daimon report [--since 24h|7d] [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--md]</code></dt>
+<dd>The digest: per-app uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agent activity, env changes.</dd>
+<dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;] | diff &lt;name&gt; [--from &lt;ts&gt;] [--to &lt;ts&gt;]</code></dt>
+<dd>Env-file awareness: convention files (found/missing), key names, snapshot age; `env diff` shows files/keys added/removed/changed between spawns. --use sets the active env file (pre-v0.13 behavior). Values are NEVER shown.</dd>
 <dt><code>daimon why &lt;name&gt;</code></dt>
 <dd>One-shot forensics: status, last crash (exit code + final log lines), grouped 24h errors, regressions, restart-storm state, suspect commit, matching doctor findings.</dd>
 <dt><code>daimon why-empty </code></dt>
@@ -147,6 +155,8 @@ npx daimon init --auto</code></pre>
 <dd>Replay a recorded session.</dd>
 <dt><code>daimon doctor [--auto-fix] [--dry-run] [--self]</code></dt>
 <dd>Sanity-check config + env. --auto-fix repairs orphan daemon, stale lock, missing search root, corrupt history db. --self checks daimon's own metrics.</dd>
+<dt><code>daimon ports </code></dt>
+<dd>Port map: app → port → source (pinned|pool|announced) → pid, plus foreign holders of pool/pinned ports.</dd>
 <dt><code>daimon free-port &lt;port&gt; [--force]</code></dt>
 <dd>Diagnose / free a port.</dd>
 <dt><code>daimon self </code></dt>
@@ -162,8 +172,6 @@ npx daimon init --auto</code></pre>
 <dd>Show the auto-discovered health-probe path for an app; --accept persists it as overrides.&lt;name&gt;.healthProbePath in daimon.config.json and soft-reloads. Default behaviour is opt-in: nothing is written without --accept.</dd>
 <dt><code>daimon export-config [--redacted]</code></dt>
 <dd>Emit the active config to stdout. --redacted replaces apiToken with "&lt;redacted&gt;" and rewrites home paths to ~/...</dd>
-<dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;]</code></dt>
-<dd>List or set the active env file for an app.</dd>
 <dt><code>daimon init [--force] [--auto]</code></dt>
 <dd>Create a daimon config in cwd; --auto picks safe defaults (no prompts) for workspaces with nx/angular/vite markers.</dd>
 <dt><code>daimon completion &lt;bash|zsh|fish|powershell&gt;</code></dt>
@@ -208,6 +216,8 @@ npx daimon init --auto</code></pre>
 <dt><code>daimon_run_tests</code></dt><dd>Run the app's own test suite once; parsed failures with file:line + totals. Soft-lock gated.</dd>
 <dt><code>daimon_why</code></dt><dd>Crash forensics: last crash report, grouped errors, regressions, restart-storm state, suspect commit, doctor findings.</dd>
 <dt><code>daimon_search</code></dt><dd>Full-text search over log lines, errors, and events (FTS5 with LIKE fallback).</dd>
+<dt><code>daimon_report</code></dt><dd>The digest: uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agents, env changes.</dd>
+<dt><code>daimon_env</code></dt><dd>Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.</dd>
 </dl>
 
 <h2 id="config">Config reference</h2>

@@ -7,6 +7,29 @@
 //     two shells) so the Agents route shows ≥2 rows.
 
 import { test, expect, type Page } from '@playwright/test';
+import path from 'node:path';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+
+// The why-panel drive needs a crash row attached to a REAL registry app (the
+// /api/why route resolves registry names; seed.ts's default fake apps 404).
+// Same direct-insert approach as e2e/seed.ts, but via a plain-CJS child
+// process so it works under whichever module transform runs this spec.
+// WAL mode allows the insert while the daemon is live; the row is
+// ring-buffered (10/app) and retention-pruned like any crash.
+function seedCrashFor(app: string): void {
+  const dbPath = process.env.DAIMON_HISTORY_DB || path.join(os.homedir(), '.daimon', 'history.db');
+  const code = [
+    "const Database = require('better-sqlite3');",
+    'const db = new Database(process.argv[1]);',
+    "db.prepare('INSERT INTO crashes (ts, app, exitCode, signal, uptimeMs, lastLines, gitHead) VALUES (?, ?, ?, ?, ?, ?, ?)')",
+    "  .run(Date.now() - 60000, process.argv[2], 1, null, 340000, 'TypeError: Cannot read properties of undefined\\n    at gateway (src/index.ts:42:7)\\n[nodemon] app crashed', 'a1b2c3d');",
+    'db.close();',
+  ].join('\n');
+  // cwd = repo root so better-sqlite3 resolves from the root node_modules
+  // (playwright runs specs with cwd = dashboard/).
+  execFileSync(process.execPath, ['-e', code, dbPath, app], { cwd: path.resolve(process.cwd(), '..') });
+}
 
 // Landmark assertions are scoped to <main>: at 390px the nav-rail labels are
 // (correctly) hidden in the bottom bar, so an unscoped getByText would match
@@ -71,7 +94,15 @@ test.describe('routes (tour pre-dismissed)', () => {
     await expect(page.locator('h1, h2').first()).toBeVisible();
   });
 
-  test('Agents route shows at least 2 agent rows', async ({ page }) => {
+  test('Agents route shows at least 2 agent rows', async ({ page, request, baseURL }) => {
+    // Agent records are in-memory and prune after an inactivity window (see
+    // e2e/seed.ts's own note) — as the suite grows, whichever agent activity
+    // happened at seed time can age out before this spec runs. Re-register
+    // two agents through the real API right here so the assertion doesn't
+    // depend on suite ordering or how long earlier specs took.
+    await request.get(`${baseURL}/api/apps`, { headers: { 'x-daimon-agent': 'e2e-agent-1-abcd' } });
+    await request.get(`${baseURL}/api/apps`, { headers: { 'x-daimon-agent': 'e2e-agent-2-wxyz' } });
+
     await page.goto('/agents');
     // Wait for the first card to appear (data fetched via /api/agents).
     const cards = page.locator('mat-card');
@@ -148,6 +179,79 @@ test.describe('routes (tour pre-dismissed)', () => {
 
     const fatal = consoleErrors.filter(e => !/favicon|ResizeObserver|chunk-/.test(e));
     expect.soft(fatal, 'console errors during palette search mode').toEqual([]);
+  });
+
+  // M85 — Report page (M83 digest UI): every section renders as either data
+  // or a degraded note (never an error state), at whichever viewport this
+  // spec is currently running under (the chromium/mobile-390 project matrix
+  // drives this same test at both 1280px and 390px).
+  test('Report page renders every section (data or note)', async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+    await page.goto('/report');
+    await expect(page.locator('main h1', { hasText: 'Report' })).toBeVisible({ timeout: 10_000 });
+    for (const title of ['Uptime', 'Errors', 'Tests', 'Compiles', 'Agents']) {
+      await expect(page.locator('.dm-panel-title', { hasText: title }).first()).toBeVisible();
+    }
+    await expect(page.locator('.dm-panel-title', { hasText: /Crashes/ }).first()).toBeVisible();
+    await expect(page.locator('.dm-panel-title', { hasText: 'Env changes' }).first()).toBeVisible();
+    // Every section is either its data view or a `.dm-note` — assert none of
+    // the 7 panels are stuck empty (neither rendered).
+    const panelCount = await page.locator('.dm-panel').count();
+    expect(panelCount, 'report renders all 7 sections').toBeGreaterThanOrEqual(7);
+
+    const fatal = consoleErrors.filter(e => !/favicon|ResizeObserver|chunk-/.test(e));
+    expect.soft(fatal, 'console errors on /report').toEqual([]);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect.soft(overflow, 'horizontal overflow on /report').toBeLessThanOrEqual(0);
+  });
+
+  test('Report page period switcher accepts a custom since duration', async ({ page }) => {
+    await page.goto('/report');
+    await page.getByText('Custom', { exact: true }).click();
+    const input = page.locator('.dm-custom-input');
+    await expect(input).toBeVisible({ timeout: 10_000 });
+    await input.fill('3d');
+    // A fresh fetch fires on every valid keystroke — the meta line re-renders
+    // once the new report lands, proving the custom `since` round-tripped.
+    await expect(page.locator('.dm-meta')).toBeVisible({ timeout: 10_000 });
+  });
+
+  // M85 — app-detail "why" panel: GET /api/why/<app> composed into a tab.
+  // /api/why resolves REGISTRY names, so the crash is seeded onto a real app
+  // resolved at runtime rather than seed.ts's history-only fake names.
+  test('Why panel on app detail shows the seeded crash', async ({ page, request, baseURL }) => {
+    const apps: { name: string }[] = await (await request.get(`${baseURL}/api/apps`)).json();
+    test.skip(!apps.length, 'no registry apps in the driven workspace');
+    const target = apps[0].name;
+    seedCrashFor(target);
+    await page.goto(`/apps/${encodeURIComponent(target)}?tab=why`);
+    await expect(page.locator('.dm-panel-title', { hasText: 'Last crash' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.dm-panel-title', { hasText: 'Restart storm' })).toBeVisible();
+    // The seeded (or a real) crash card carries exit-code detail rows.
+    await expect(page.getByText(/exit/i).or(page.locator('dd', { hasText: '1' })).first()).toBeVisible();
+  });
+
+  // M85 — mute indicator (M84 mute): a muted app surfaces a badge on both the
+  // apps-list card and the app-detail header. Mutes via the real POST
+  // endpoint rather than faking the summary shape client-side.
+  test('Mute badge shows on a muted app card and its detail header', async ({ page, request, baseURL }) => {
+    // Mute a REAL registry app (the mute route 404s on history-only names).
+    const apps: { name: string }[] = await (await request.get(`${baseURL}/api/apps`)).json();
+    test.skip(!apps.length, 'no registry apps in the driven workspace');
+    const target = apps[0].name;
+    await request.post(`${baseURL}/api/apps/${target}/mute`, { data: { forMs: 3_600_000 } });
+    try {
+      await page.goto('/');
+      const card = page.locator('article.c', { hasText: target }).first();
+      await expect(card).toBeVisible({ timeout: 10_000 });
+      await expect(card.locator('.mb')).toBeVisible();
+
+      await page.goto(`/apps/${target}`);
+      await expect(page.locator('.dm-mute-chip')).toBeVisible({ timeout: 10_000 });
+    } finally {
+      await request.post(`${baseURL}/api/apps/${target}/unmute`, { data: {} });
+    }
   });
 });
 

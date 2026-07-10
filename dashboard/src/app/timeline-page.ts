@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { DaimonApi } from './daimon-api';
@@ -82,9 +82,10 @@ const SINCE_OPTS: { key: string; label: string }[] = [
         <dm-empty title="No events in window"
                   hint="Widen the window or pick different kinds. Status / error / lint / bundle / task all live here."></dm-empty>
       } @else {
-        <cdk-virtual-scroll-viewport itemSize="44" class="dm-tl-viewport">
+        <cdk-virtual-scroll-viewport #viewport itemSize="44" class="dm-tl-viewport">
           <div *cdkVirtualFor="let r of filtered(); trackBy: trackTs"
                class="dm-tl-row" [attr.data-kind]="r.kind"
+               [class.dm-tl-anchored]="anchoredTs() === r.ts"
                (click)="select(r)">
             <span class="dm-tl-ts" [title]="fullTs(r.ts)">{{ rel(r.ts) }}</span>
             <span class="dm-tl-kind dm-kind-chip" [attr.data-kind]="r.kind">{{ kindLabel[r.kind] || r.kind }}</span>
@@ -133,6 +134,9 @@ const SINCE_OPTS: { key: string; label: string }[] = [
     .dm-tl-kind { width: max-content; padding: 2px 8px; border-radius: 999px; font: 500 .6875rem/1rem Roboto; }
     .dm-tl-app { color: var(--mat-sys-primary); }
     .dm-tl-summary { color: var(--mat-sys-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* M85 search deep-link (?at=<ts>): highlights the row nearest the linked
+       timestamp so a palette hit lands somewhere findable, not just "in view". */
+    .dm-tl-row.dm-tl-anchored { background: color-mix(in oklch, var(--mat-sys-primary) 16%, transparent); outline: 2px solid var(--mat-sys-primary); outline-offset: -2px; }
     .dm-kind-chip[data-kind="status"]   { background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);   color: var(--mat-sys-primary); }
     .dm-kind-chip[data-kind="error"]    { background: color-mix(in oklch, var(--mat-sys-error) 18%, transparent);     color: var(--mat-sys-error); }
     .dm-kind-chip[data-kind="warning"]  { background: color-mix(in oklch, var(--mat-sys-tertiary) 18%, transparent);  color: var(--mat-sys-tertiary); }
@@ -154,6 +158,12 @@ const SINCE_OPTS: { key: string; label: string }[] = [
   `],
 })
 export class TimelinePageComponent implements OnInit {
+  // Search deep-link (M85): `/timeline?at=<ts>` from a palette "events" hit.
+  // Bound automatically by withComponentInputBinding() — no ActivatedRoute
+  // wiring needed. A window wide enough to contain the anchor is forced so
+  // the hit isn't filtered out of view by the default 24h window.
+  @Input() at?: string;
+
   readonly api = inject(DaimonApi);
   readonly allKinds = ALL_KINDS;
   readonly kindLabel = KIND_LABEL;
@@ -164,6 +174,9 @@ export class TimelinePageComponent implements OnInit {
   readonly app = signal('');
   readonly kinds = signal<Set<string>>(new Set(ALL_KINDS));
   readonly selected = signal<TimelineRow | null>(null);
+  readonly anchoredTs = signal<number | null>(null);
+
+  @ViewChild('viewport') viewport?: CdkVirtualScrollViewport;
 
   readonly filtered = computed(() => {
     const ks = this.kinds();
@@ -171,6 +184,14 @@ export class TimelinePageComponent implements OnInit {
   });
 
   ngOnInit(): void {
+    const anchorTs = Number(this.at);
+    if (this.at && Number.isFinite(anchorTs)) {
+      this.anchoredTs.set(anchorTs);
+      // Widen the window enough to include the anchor if it predates 24h —
+      // "7d" covers everything the search index itself can return a hit for.
+      const ageMs = Date.now() - anchorTs;
+      if (ageMs > 24 * 3600_000) this.since.set('7d');
+    }
     void this.refresh();
   }
 
@@ -184,9 +205,30 @@ export class TimelinePageComponent implements OnInit {
         // so toggling chips is instant. The 5000-row cap keeps 7d×5k under 300ms.
       });
       this.rows.set(rows as TimelineRow[]);
+      this.jumpToAnchor();
     } finally {
       this.loading.set(false);
     }
+  }
+
+  // Scrolls the virtual viewport to the row nearest the `?at=` anchor and
+  // opens its detail drawer. Runs after each load since `rows` is replaced
+  // wholesale (not appended), so the anchor row's index can move.
+  private jumpToAnchor(): void {
+    const anchor = this.anchoredTs();
+    if (anchor == null) return;
+    const rows = this.filtered();
+    if (!rows.length) return;
+    let nearestIdx = 0;
+    let nearestDiff = Infinity;
+    for (let i = 0; i < rows.length; i++) {
+      const diff = Math.abs(rows[i].ts - anchor);
+      if (diff < nearestDiff) { nearestDiff = diff; nearestIdx = i; }
+    }
+    const nearest = rows[nearestIdx];
+    this.anchoredTs.set(nearest.ts);
+    this.selected.set(nearest);
+    requestAnimationFrame(() => this.viewport?.scrollToIndex(Math.max(0, nearestIdx - 3), 'auto'));
   }
 
   setSince(k: string): void { this.since.set(k); void this.refresh(); }

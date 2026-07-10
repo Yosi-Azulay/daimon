@@ -4,7 +4,9 @@ import os from 'node:os';
 import { readLock, removeLock, lockPath, spawnDetached, waitForExit } from './daemon.js';
 import { configLookupPaths, loadConfig } from './config.js';
 import { History } from './history.js';
-import { isPortFree } from './ports.js';
+import { isPortFree, parsePortPool } from './ports.js';
+import { inspectApiPort, killHolder } from './portDiag.js';
+import { loadPersistedState } from './stateFile.js';
 import { discoverApps } from './discovery.js';
 import { profileProbePath } from './healthProfiles.js';
 import { generateAgentId } from './agents.js';
@@ -39,6 +41,7 @@ export type AutoFixName =
   | 'missing-search-root'
   | 'corrupt-history-db'
   | 'port-conflict-pred'
+  | 'port-holder-no-lock'
   | 'node-version-mismatch'
   | 'orphan-node-modules'
   | 'orphan-venv'
@@ -53,6 +56,7 @@ export const ALL_AUTO_FIX: AutoFixName[] = [
   'missing-search-root',
   'corrupt-history-db',
   'port-conflict-pred',
+  'port-holder-no-lock',
   'node-version-mismatch',
   'orphan-node-modules',
   'orphan-venv',
@@ -206,21 +210,67 @@ async function detectPortConflict(): Promise<{ detected: boolean; description: s
   const r = loadConfig();
   if (r.kind !== 'loaded') return { detected: false, description: 'no config loaded' };
   const [lo, hi] = r.config.portRange ?? [4200, 4299];
+  // Pool-aware (M81): with ports.pool configured, check the pool endpoints and
+  // every persisted pool assignment — those are the ports apps will actually
+  // claim on their next start.
+  const pool = parsePortPool(r.config.ports?.pool ?? null);
   const overrides = r.config.overrides ?? {};
   const pinned = Object.values(overrides).map(o => o.port).filter((p): p is number => typeof p === 'number');
-  const candidates = Array.from(new Set([...pinned, lo, hi]));
+  const inRange = (p: number): boolean => pool ? p >= pool[0] && p <= pool[1] : p >= lo && p <= hi;
+  const assigned = Object.values(loadPersistedState().ports ?? {}).filter(p => typeof p === 'number' && inRange(p));
+  const candidates = Array.from(new Set([...pinned, ...(pool ? [pool[0], pool[1]] : [lo, hi]), ...assigned]));
   const conflicts: number[] = [];
   for (const p of candidates) {
     if (!Number.isFinite(p) || p <= 0) continue;
     try { if (!(await isPortFree(p))) conflicts.push(p); } catch {}
   }
-  if (!conflicts.length) return { detected: false, description: `all checked ports free (range ${lo}-${hi} + pinned)` };
-  return { detected: true, description: `ports already LISTEN: ${conflicts.join(', ')} (range ${lo}-${hi} + pinned overrides)`, conflicts };
+  const scope = pool ? `pool ${pool[0]}-${pool[1]} + assignments + pinned` : `range ${lo}-${hi} + pinned`;
+  if (!conflicts.length) return { detected: false, description: `all checked ports free (${scope})` };
+  return { detected: true, description: `ports already LISTEN: ${conflicts.join(', ')} (${scope}; may be held by daimon-managed apps — check \`daimon ports\`)`, conflicts };
 }
 
 function fixPortConflict(): string {
   // Predictive rule: never kills a holder, just reports. Pair with `daimon free-port <p>` for action.
   return 'no automated fix — predictive rule only. Run `daimon free-port <port>` to inspect the holder, or pick a different port in daimon.config.json. To undo: nothing was changed.';
+}
+
+// port-holder-no-lock (M81). Verify-then-kill, PLAN-locked: the fix terminates
+// the apiPort holder ONLY when it answers on the daimon signature endpoint AND
+// no live daemon.lock exists. Any other holder: identify + advise, never kill.
+async function detectPortHolderNoLock(): Promise<{ detected: boolean; description: string; pid?: number }> {
+  const r = loadConfig();
+  if (r.kind !== 'loaded') return { detected: false, description: 'no config loaded' };
+  const port = r.config.apiPort;
+  if (await isPortFree(port)) return { detected: false, description: `apiPort ${port} is free` };
+  const lock = readLock();
+  if (lock && lock.apiPort === port) return { detected: false, description: `apiPort ${port} held by the running daemon (pid ${lock.pid})` };
+  const f = await inspectApiPort(port, lock !== null);
+  if (!f.holder) return { detected: false, description: `apiPort ${port} busy but the holder could not be identified — nothing safe to do` };
+  if (!f.signature?.daimon) {
+    return { detected: false, description: `apiPort ${port} held by a NON-daimon process (pid ${f.holder.pid}${f.holder.name ? `, ${f.holder.name}` : ''}) — refusing to kill; free it yourself or change apiPort` };
+  }
+  return {
+    detected: true,
+    description: `apiPort ${port} held by an unlocked daimon (pid ${f.holder.pid}${f.signature.version ? `, v${f.signature.version}` : ''}) — verified orphan`,
+    pid: f.holder.pid,
+  };
+}
+
+async function fixPortHolderNoLock(): Promise<string> {
+  const r = loadConfig();
+  if (r.kind !== 'loaded') return 'no config; nothing to do';
+  const port = r.config.apiPort;
+  // Re-verify at fix time — the world may have changed since detect().
+  const lock = readLock();
+  if (lock && lock.apiPort === port) return 'a locked daemon appeared — not touching it';
+  const f = await inspectApiPort(port, lock !== null);
+  if (!f.holder) return 'holder vanished; nothing to do';
+  if (!f.signature?.daimon) return `holder pid ${f.holder.pid}${f.holder.name ? ` (${f.holder.name})` : ''} does not answer as a daimon — refusing to kill (advise only)`;
+  if (f.holder.pid === process.pid) return 'refusing to kill self';
+  const ok = await killHolder(f.holder);
+  if (!ok) return `could not terminate pid ${f.holder.pid} — kill it manually`;
+  await waitForExit(f.holder.pid, 5000);
+  return `terminated verified orphan daimon pid ${f.holder.pid}; apiPort ${port} is free again. To undo: nothing to restore (the orphan had no lock and was unreachable via 'daimon daemon stop').`;
 }
 
 function detectNodeVersionMismatch(): { detected: boolean; description: string; expected?: string; actual?: string } {
@@ -507,6 +557,7 @@ const ROUTINES: Record<AutoFixName, { detect: () => any | Promise<any>; fix: () 
   'missing-search-root': { detect: detectMissingSearchRoot, fix: fixMissingSearchRoot },
   'corrupt-history-db': { detect: detectCorruptHistoryDb, fix: fixCorruptHistoryDb },
   'port-conflict-pred': { detect: detectPortConflict, fix: fixPortConflict },
+  'port-holder-no-lock': { detect: detectPortHolderNoLock, fix: fixPortHolderNoLock },
   'node-version-mismatch': { detect: detectNodeVersionMismatch, fix: fixNodeVersionMismatch },
   'orphan-node-modules': { detect: detectOrphanNodeModules, fix: fixOrphanNodeModules },
   'orphan-venv': { detect: detectOrphanVenv, fix: fixOrphanVenv },

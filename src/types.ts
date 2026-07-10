@@ -29,6 +29,15 @@ export interface NotificationsConfig {
   onError: boolean;
   onUnhealthy: boolean;
   tray: boolean;
+  // M84 polish — all optional; every field absent = pre-v0.13 behavior.
+  // Only these notification kinds fire (default: the current set).
+  kinds?: string[];
+  // "22:00-08:00": OS notifications suppressed in the window (events/webhooks
+  // unaffected); one summary fires when the window ends.
+  quietHours?: string | null;
+  // Same-fingerprint error notifications within this window collapse to one
+  // notification carrying a count.
+  batchMs?: number;
 }
 
 export interface StaleDetectConfig {
@@ -78,6 +87,9 @@ export interface WebhookEntry {
   filter?: { to?: string[]; from?: string[]; app?: string[] };
   // Per-app scoping (M72). Absent = all apps (pre-v0.11 behavior).
   apps?: string[];
+  // Scheduled digest (M84): "HH:MM" local time — sends the daily report
+  // (since the last digest) to this webhook via the normal delivery queue.
+  digest?: string;
 }
 
 export interface SearchConfig {
@@ -94,6 +106,13 @@ export interface RestartStormConfig {
 export interface TestsConfig {
   // Pass↔fail flips at the same gitHead before a test is flagged flaky (M75).
   flakyThreshold: number;
+}
+
+export interface PortsConfig {
+  // Auto-assignment pool "4200-4299" (M81). Absent = no pool auto-assignment:
+  // the legacy portRange allocator + blanket `--port` injection stay in force.
+  // When set, only profiles that declare portFlag/portEnv participate.
+  pool?: string | null;
 }
 
 export interface DashboardConfig {
@@ -144,6 +163,7 @@ export interface AppmanConfig {
   tests?: TestsConfig;
   restartStorm?: RestartStormConfig;
   search?: SearchConfig;
+  ports?: PortsConfig;
 }
 
 export interface SearchRoot {
@@ -267,6 +287,7 @@ export type AppEventType =
   | 'flaky-test-detected'
   | 'crash'
   | 'restart-storm'
+  | 'digest-sent'
   | 'self-warn';
 
 export interface AppEvent {
@@ -359,4 +380,7 @@ export interface AppSummary {
   // Framework registry profile id ('nextjs', 'django', custom id, ...) —
   // drives the dashboard/TUI badge + tone (M70).
   serverProfile?: string | null;
+  // Notification mute (M84): true while muted; muteUntil null = indefinite.
+  muted?: boolean;
+  muteUntil?: number | null;
 }

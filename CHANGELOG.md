@@ -4,6 +4,37 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-11
+
+"Daily Rhythm" — v0.12 gave daimon total recall; v0.13 makes it useful across the day: `daimon report` answers "what happened", env fingerprints answer "what changed", a port pool + forensics answer "who has what", and routed/batched/mutable notifications with a scheduled digest close the loop (M81–M86).
+
+### Added
+
+- **Port management (M81)** — optional `ports.pool` ("4200-4299") auto-assigns ports ONLY to frameworks whose registry row documents the mechanism: new `FrameworkProfile.portFlag` (template, e.g. `--port {port}`, `-p {port}`, django's positional `127.0.0.1:{port}`) and/or `portEnv` (e.g. `PORT`) on angular/nx/vite/next/nuxt/astro/sveltekit/remix-adjacent rows plus storybook/django/flask/fastapi/rails/laravel/rust-trunk/express-nest. Profiles without a documented flag never get a port injected — explicit non-participation, never guessed. Assignments persist in `~/.daimon/state.json` (stable across restarts, released when the app is removed). Custom config profiles may declare `portFlag`/`portEnv` (validated data). With no `ports.pool`, the legacy portRange + blanket `--port` behavior is unchanged.
+- **`daimon ports` (M81)** — app → port → source (`pinned|pool|announced`) → pid, plus foreign holders of pool/pinned ports (one `netstat -ano`/`ss` pass, per-holder enrichment). `GET /api/ports`.
+- **Daemon startup forensics (M81)** — `EADDRINUSE` on the api port now identifies the holder (pid, process name, start time), probes the new `GET /api/signature` endpoint to say whether it answers as a daimon, prints the remedy, writes a crash dump, and exits non-zero. `daimon daemon start`'s old "failed to start within 5s" now surfaces the crash-dump gist + path. The daemon writes `daemon.lock` only AFTER a successful bind — an EADDRINUSE loser can no longer clobber the winner's lock (the v0.12 orphan incident class).
+- **Doctor `port-holder-no-lock` (M81)** — apiPort held + no live lock: if the holder answers on the daimon signature endpoint it's a verified orphan and `--auto-fix` terminates it (verify-then-kill, re-checked at fix time); any other holder is identified and advised on, never killed. `port-conflict-pred` is pool-aware (pool endpoints + persisted assignments + pinned).
+- **Env awareness (M82)** — read-only, **redacted at the storage layer**. New `FrameworkProfile.envFiles` conventions (vite/next/astro/sveltekit/remix `.env*` order, nuxt `.env`, flask `.flaskenv`+`.env`; generic fallback `.env`). Every spawn fingerprints the convention files into the new `env_snapshots` history table: `{file, exists, mtime, size, keyNames[], keyHashes{}}` — per-key salted truncated HMAC hashes (per-install salt at `~/.daimon/salt`, created once, 0600); raw values are parsed and discarded in the same tick and never reach the DB, logs, webhooks, or notifications. There is no `--show-values` — open the file.
+- **`daimon env` (M82)** — `daimon env <app>`: convention files (found/missing), key names, snapshot age; `daimon env diff <app> [--from <ts>] [--to <ts>]`: files/keys added/removed/changed between spawns (default: last two). `GET /api/env/<app>[/diff]` (responses carry names only — hashes stay server-side). `daimon why` gains `envChanged` (diff vs the last snapshot preceding a healthy signal). New doctor rule `env-file-missing` (suggest-only). Redaction test suite asserts no raw value in the DB bytes, events, or webhook payload shapes.
+- **`daimon report` (M83)** — the digest: `daimon report [--since 24h|7d] [--app <a>] [--workspace <label>] [--md]` + `GET /api/report`. Closed section list, all composition over existing queries: per-app uptime % + restarts, error groups (new vs recurring vs resolved), test pass-rate + flakiest tests, compile p50/p95 + slowest + regressions, crashes/storms, agent activity, env changes (key names only). Every section degrades independently to a `note` — never an error. `--md` renders human-first markdown (Slack/PR-ready); `?md=1` on the API. New perf budget in-suite: report over the 100k-event corpus < 500ms. Dashboard Report page (lazy chunk, nav entry, `g p` chord, 24h/7d/custom period switcher).
+- **Notification polish (M84)** — `notifications.kinds` routes exactly the listed kinds (absent = the pre-v0.13 set; new opt-in kinds: `error-new`, `crash`, `restart-storm`, `test-failed`, `flaky-test-detected`); `notifications.batchMs` collapses same-fingerprint error notifications inside the window into ONE with a count; `notifications.quietHours` ("22:00-08:00") suppresses OS notifications in the window (events/webhooks unaffected) and fires one "while you were away: N" summary when it ends.
+- **`daimon mute <app> [--for <dur>]` / `daimon unmute` (M84)** — per-app notification mute, persisted in state.json, auto-expiring with `--for`, surfaced as `muted`/`muteUntil` in summaries, `daimon status`, and the dashboard app card.
+- **Scheduled digest (M84)** — `webhooks[].digest: "HH:MM"` sends the M83 report (since the last digest) daily through the existing queue/rate-limit/retry path, Slack-shaped (`text` = markdown) when the host is detected. One 1-minute interval check — not a cron engine; if the daemon was down at the scheduled time, ONE catch-up fires on the next tick (never more than one per day per webhook, tracked in state.json). `digest-sent` self-event on the timeline.
+- **TUI (M85)** — `T` chord runs the selected app's test suite with an inline pass/fail summary (`t` was already the tag filter).
+- **Dashboard (M85)** — app-detail "why" panel (crash card, env-changed hint, storm state, suspect commit); palette search results deep-link to the timeline position / error group / log context; Trends adds test pass-rate and flaky-count series; mute badge on app cards.
+- **MCP (M86)** — `daimon_report`, `daimon_env` (27-tool surface); contract tests extended; `daimon claude` templates teach the report/env-diff patterns.
+
+### Changed
+
+- New event kind `digest-sent` (webhook-eligible like everything else).
+- `~/.daimon/state.json` now also persists `mutes` and `digests` (merged writes — additive, older files load unchanged).
+- History DB migration is additive as always: new `env_snapshots` table; retention prunes it.
+- Suite: **529 tests** (from 471), including the ports/forensics kit, the env redaction suite, report correctness + bench, and notification batching/quiet-hours/digest semantics.
+
+### Migration
+
+See `RELEASE-v0.13.0.md` — additive `env_snapshots` table, `~/.daimon/salt` created on first spawn, all new config keys optional (absent = v0.12 behavior), pool-port injection is opt-in via `ports.pool`, doctor auto-fix can now kill a VERIFIED orphan daimon (signature-checked; non-daimon holders never touched).
+
 ## [0.12.0] — 2026-07-10
 
 "The Whole Loop" — v0.11 finished the serving story; v0.12 covers everything around it: tests as pipeline citizens (M74–M75), crash forensics (M76), full-text search over everything daimon has seen (M77), a one-call agent context pack (M78), and a small wave of runtime profiles + DX (M79).

@@ -4,6 +4,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { AppmanConfig } from './types.js';
 import { validateCustomProfiles } from './frameworks.js';
+import { parsePortPool } from './ports.js';
 import { daimonDir } from './daemon.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,7 +56,7 @@ function defaultConfig(): AppmanConfig {
     editor: { scheme: 'vscode' },
     apiToken: null,
     output: { format: 'compact', ndjson: false },
-    doctor: { autoFix: { onInit: false, permitted: ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db', 'port-conflict-pred', 'node-version-mismatch', 'orphan-node-modules', 'orphan-venv', 'orphan-bundler-cache', 'orphan-cargo-target', 'dead-search-root'] } },
+    doctor: { autoFix: { onInit: false, permitted: ['orphan-daemon', 'stale-lock', 'missing-search-root', 'corrupt-history-db', 'port-conflict-pred', 'port-holder-no-lock', 'node-version-mismatch', 'orphan-node-modules', 'orphan-venv', 'orphan-bundler-cache', 'orphan-cargo-target', 'dead-search-root'] } },
     dashboard: { theme: 'auto', density: 'comfortable' },
     errorRetention: { maxAgeMs: 86400000 },
     plugins: { dir: null },
@@ -198,7 +199,34 @@ function validate(raw: unknown, source: string): AppmanConfig {
     cfg.history.path = expandTilde(cfg.history.path);
   }
   if (obj.notifications && typeof obj.notifications === 'object') {
-    cfg.notifications = { ...cfg.notifications, ...(obj.notifications as Partial<AppmanConfig['notifications']>) };
+    const n = obj.notifications as any;
+    cfg.notifications = { ...cfg.notifications, ...n };
+    // M84 fields are validated individually; a broken one falls back to
+    // "absent" (= pre-v0.13 behavior) rather than poisoning the object.
+    if (n.kinds !== undefined) {
+      if (Array.isArray(n.kinds) && n.kinds.every((k: unknown) => typeof k === 'string')) {
+        cfg.notifications.kinds = n.kinds;
+      } else {
+        delete cfg.notifications.kinds;
+        warn(`"notifications.kinds" must be an array of strings (${source})`);
+      }
+    }
+    if (n.quietHours !== undefined && n.quietHours !== null) {
+      if (typeof n.quietHours === 'string' && /^\d{2}:\d{2}-\d{2}:\d{2}$/.test(n.quietHours)) {
+        cfg.notifications.quietHours = n.quietHours;
+      } else {
+        delete cfg.notifications.quietHours;
+        warn(`"notifications.quietHours" must look like "22:00-08:00" (${source})`);
+      }
+    }
+    if (n.batchMs !== undefined) {
+      if (typeof n.batchMs === 'number' && n.batchMs > 0) {
+        cfg.notifications.batchMs = Math.floor(n.batchMs);
+      } else {
+        delete cfg.notifications.batchMs;
+        warn(`"notifications.batchMs" must be a positive number (${source})`);
+      }
+    }
   }
   if (obj.staleDetect && typeof obj.staleDetect === 'object') {
     cfg.staleDetect = { ...cfg.staleDetect, ...(obj.staleDetect as Partial<AppmanConfig['staleDetect']>) };
@@ -267,6 +295,13 @@ function validate(raw: unknown, source: string): AppmanConfig {
         w.filter = f;
       }
       if (Array.isArray(e.apps)) w.apps = e.apps.filter((s: any) => typeof s === 'string');
+      if (e.digest !== undefined) {
+        if (typeof e.digest === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(e.digest)) {
+          w.digest = e.digest;
+        } else {
+          warn(`"webhooks[].digest" must be "HH:MM" 24h local time (${source})`);
+        }
+      }
       out.push(w);
     }
     cfg.webhooks = out;
@@ -305,6 +340,21 @@ function validate(raw: unknown, source: string): AppmanConfig {
       else if (s.logIndex !== undefined) warn(`"search.logIndex" must be a boolean (${source})`);
     } else {
       warn(`"search" must be an object (${source})`);
+    }
+  }
+
+  if (obj.ports !== undefined) {
+    const p = obj.ports as any;
+    if (p && typeof p === 'object' && !Array.isArray(p)) {
+      if (p.pool === undefined || p.pool === null) {
+        cfg.ports = {};
+      } else if (typeof p.pool === 'string' && parsePortPool(p.pool)) {
+        cfg.ports = { pool: p.pool };
+      } else {
+        warn(`"ports.pool" must be a "min-max" port range like "4200-4299" (${source})`);
+      }
+    } else {
+      warn(`"ports" must be an object (${source})`);
     }
   }
 

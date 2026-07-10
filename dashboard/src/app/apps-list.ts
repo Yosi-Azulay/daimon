@@ -53,6 +53,11 @@ const TAGS_KEY = 'daimon.apps.tags';
           </div>
           <div class="h">
             <dm-status-pill [status]="a.status" [health]="a.health" [eta]="eta(a)"></dm-status-pill>
+            @if (a.muted) {
+              <span class="mb" [matTooltip]="a.muteUntil ? ('muted until ' + fmtMuteUntil(a.muteUntil)) : 'muted indefinitely'">
+                <span class="material-symbols-outlined">notifications_off</span>
+              </span>
+            }
             @if (a.errorCount > 0) {
               <span class="eb" [matTooltip]="a.errorCount + ' errors'">
                 <span class="material-symbols-outlined">error</span>{{ a.errorCount }}
@@ -151,6 +156,8 @@ const TAGS_KEY = 'daimon.apps.tags';
     .ib .material-symbols-outlined{font-size:18px}
     .eb{display:inline-flex;align-items:center;gap:.25rem;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem var(--dm-mono);background:color-mix(in oklch,var(--mat-sys-error) 14%,transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent)}
     .eb .material-symbols-outlined{font-size:14px}
+    .mb{display:inline-flex;align-items:center;padding:3px;border-radius:999px;background:color-mix(in oklch,var(--mat-sys-outline) 16%,transparent);color:var(--mat-sys-on-surface-variant)}
+    .mb .material-symbols-outlined{font-size:14px}
   `],
 })
 export class AppsCardsViewComponent {
@@ -210,6 +217,9 @@ export class AppsCardsViewComponent {
     if (s < 86400) return Math.floor(s / 3600) + 'h ago';
     return Math.floor(s / 86400) + 'd ago';
   }
+  fmtMuteUntil(ts: number): string {
+    return new Date(ts).toLocaleString();
+  }
 }
 
 @Component({
@@ -229,7 +239,14 @@ export class AppsCardsViewComponent {
           [style.--dm-tone]="tone(a.workspaceLabel)"
           (click)="open.emit(a.name)" (mouseenter)="focus.emit(i)"
           tabindex="0" (keydown.enter)="open.emit(a.name)">
-          <div><dm-status-pill [status]="a.status" [health]="a.health"></dm-status-pill></div>
+          <div class="stc">
+            <dm-status-pill [status]="a.status" [health]="a.health"></dm-status-pill>
+            @if (a.muted) {
+              <span class="mb" [matTooltip]="a.muteUntil ? ('muted until ' + fmtMuteUntil(a.muteUntil)) : 'muted indefinitely'">
+                <span class="material-symbols-outlined">notifications_off</span>
+              </span>
+            }
+          </div>
           <div class="nm"><span class="tn"></span><dm-mono>{{ a.name }}</dm-mono></div>
           <div class="ws">{{ a.workspaceLabel || '—' }}</div>
           <div class="sm"><dm-mono>{{ a.port ?? '—' }}</dm-mono></div>
@@ -276,6 +293,9 @@ export class AppsCardsViewComponent {
     .rw.f::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mat-sys-primary)}
     .rh{min-height:30px;background:var(--mat-sys-surface-container);cursor:default;font:500 .6875rem/1rem Roboto;text-transform:uppercase;letter-spacing:.04rem;color:var(--mat-sys-on-surface-variant)}
     .rh:hover{background:var(--mat-sys-surface-container)}
+    .stc{display:flex;align-items:center;gap:.35rem;min-width:0}
+    .mb{display:inline-flex;align-items:center;padding:2px;border-radius:999px;background:color-mix(in oklch,var(--mat-sys-outline) 16%,transparent);color:var(--mat-sys-on-surface-variant)}
+    .mb .material-symbols-outlined{font-size:12px}
     .nm{display:flex;align-items:center;gap:.5rem;min-width:0;overflow:hidden}
     .nm .dm-mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .tn{width:3px;height:18px;border-radius:2px;background:var(--dm-tone,var(--mat-sys-surface-container));flex-shrink:0}
@@ -301,6 +321,7 @@ export class AppsListViewComponent {
   @Output() act = new EventEmitter<{ name: string; kind: ActionKind }>();
   readonly tone = workspaceTone;
   isBusy(name: string, kind: string): boolean { return !!this.busy[name]?.[kind]; }
+  fmtMuteUntil(ts: number): string { return new Date(ts).toLocaleString(); }
   fmtUptime(ms: number | null | undefined): string {
     if (!ms || ms < 0) return '—';
     const s = Math.floor(ms / 1000);

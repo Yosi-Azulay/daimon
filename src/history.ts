@@ -302,6 +302,13 @@ export class History {
       );
       CREATE INDEX IF NOT EXISTS test_failures_run ON test_failures(runId);
       CREATE INDEX IF NOT EXISTS test_failures_fp ON test_failures(fingerprint);
+      CREATE TABLE IF NOT EXISTS env_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        app TEXT NOT NULL,
+        json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS env_snapshots_app_ts ON env_snapshots(app, ts);
       CREATE TABLE IF NOT EXISTS self_metrics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,
@@ -637,6 +644,7 @@ export class History {
       this.db.prepare('DELETE FROM test_failures WHERE runId IN (SELECT id FROM test_runs WHERE ts < ?)').run(cutoff);
       this.db.prepare('DELETE FROM test_runs WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM crashes WHERE ts < ?').run(cutoff);
+      this.db.prepare('DELETE FROM env_snapshots WHERE ts < ?').run(cutoff);
       // FTS shadows cascade via the AFTER DELETE triggers.
       this.db.prepare('DELETE FROM log_lines WHERE ts < ?').run(cutoff);
     } catch (err: any) {
@@ -829,6 +837,31 @@ export class History {
     const sql = `SELECT * FROM crashes ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
     args.push(opts.limit ?? 10);
     try { return this.prepared(sql).all(...args) as CrashRow[]; } catch { return []; }
+  }
+
+  // Env snapshots (M82). The payload is REDACTED BY CONSTRUCTION: envFiles.ts
+  // hands over key names + salted truncated hashes only — raw values were
+  // discarded before this is ever called. Synchronous like crashes: one row
+  // per app spawn, far off the log-line hot path.
+  recordEnvSnapshot(app: string, snapshot: unknown, ts = Date.now()): void {
+    if (!this.db) return;
+    try {
+      this.prepared('INSERT INTO env_snapshots (ts,app,json) VALUES (?,?,?)').run(ts, app, JSON.stringify(snapshot));
+    } catch (err: any) {
+      this.warnOnce(`env_snapshots write failed: ${err?.message || err}`);
+    }
+  }
+
+  queryEnvSnapshots(opts: { app?: string; since?: number; until?: number; limit?: number } = {}): { id: number; ts: number; app: string; json: string }[] {
+    if (!this.db) return [];
+    const wh: string[] = [];
+    const args: any[] = [];
+    if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+    if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+    if (opts.until != null) { wh.push('ts <= ?'); args.push(opts.until); }
+    const sql = `SELECT * FROM env_snapshots ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
+    args.push(opts.limit ?? 10);
+    try { return this.prepared(sql).all(...args) as any[]; } catch { return []; }
   }
 
   // Test runs (M74) insert synchronously (not via the flush queue) because the

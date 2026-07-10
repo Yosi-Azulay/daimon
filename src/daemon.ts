@@ -84,7 +84,43 @@ export async function spawnDetached(opts: { port?: number } = {}): Promise<LockI
     if (info && (!opts.port || info.apiPort === opts.port)) return info;
     await new Promise(r => setTimeout(r, 100));
   }
+  // The detached child's stderr is discarded, but its startup forensics
+  // (M81: EADDRINUSE holder identity + remedy) land in a crash dump — surface
+  // that instead of the bare v0.12-era "failed to start within 5s".
+  const dump = newestCrashDumpSince(start - 2000);
+  if (dump) {
+    const gist = crashDumpGist(dump);
+    throw new Error(`daemon failed to start within 5s${gist ? ` — ${gist}` : ''}; crash dump: ${dump}`);
+  }
   throw new Error('daemon failed to start within 5s');
+}
+
+function newestCrashDumpSince(sinceMs: number): string | null {
+  try {
+    const dir = path.join(daimonDir(), 'crashes');
+    let best: { file: string; mtime: number } | null = null;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.txt')) continue;
+      const full = path.join(dir, f);
+      const mtime = fs.statSync(full).mtimeMs;
+      if (mtime >= sinceMs && (!best || mtime > best.mtime)) best = { file: full, mtime };
+    }
+    return best?.file ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Pull the human-relevant forensic lines (bind failure, holder identity,
+// remedy) out of a crash dump so the CLI error names the pid directly.
+function crashDumpGist(file: string): string | null {
+  try {
+    const head = fs.readFileSync(file, 'utf8').slice(0, 4000).split(/\r?\n/);
+    const hits = head.filter(l => /EADDRINUSE|holder:|remedy:/i.test(l)).map(l => l.trim());
+    return hits.length ? hits.slice(0, 3).join(' · ') : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {

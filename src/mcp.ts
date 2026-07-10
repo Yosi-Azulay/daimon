@@ -406,6 +406,41 @@ export function buildServer(): McpServer {
     return ok(r.body);
   });
 
+  server.registerTool('daimon_report', {
+    description: 'The digest (M83): what happened over a window — per-app uptime %, error groups (new/recurring/resolved), test pass-rate + flakiest tests, compile p50/p95 + regressions, crashes/storms, agent activity, env changes (key names only, never values). Sections with no data degrade to { note }. Use for "summarize the last day/week" questions.',
+    inputSchema: {
+      since: z.string().optional().describe('Window like 24h or 7d (default 24h)'),
+      app: z.string().optional(),
+      workspace: z.string().optional(),
+    },
+  }, async ({ since, app, workspace }) => {
+    const qs = new URLSearchParams();
+    if (since) qs.set('since', since);
+    if (app) qs.set('app', app);
+    if (workspace) qs.set('workspace', workspace);
+    const q = qs.toString();
+    const r = await callJson('/api/report' + (q ? '?' + q : ''));
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_env', {
+    description: 'Read-only env-file awareness (M82): the app\'s convention env files (found/missing), key NAMES from the latest spawn snapshot, and snapshot age — or, with diff=true, files/keys added/removed/changed between the last two spawns. Values are NEVER included (redacted at the storage layer); open the file itself to see one.',
+    inputSchema: {
+      name: z.string(),
+      diff: z.boolean().optional().describe('Compare the last two spawn snapshots instead of showing the latest'),
+      cwd: cwdField,
+    },
+  }, async ({ name, diff, cwd }) => {
+    const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
+    const path = `/api/env/${encodeURIComponent(name)}${diff ? '/diff' : ''}`;
+    const r = await callJson(`${path}?${qs.toString()}`);
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    if (r.status === 412) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
   server.registerTool('daimon_context', {
     description: 'The agent context pack: one call assembling status/url/framework/uptime, top error groups, last crash, last test run + failures, compile stats, suspect commits, and active locks/agents for an app. Pass budget (chars) to cap the payload — sections drop lowest-priority-first and are listed in truncated[]. Call this FIRST when debugging an app, then follow up with targeted calls.',
     inputSchema: {

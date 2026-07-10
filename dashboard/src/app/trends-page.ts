@@ -17,6 +17,7 @@ import { FormsModule } from '@angular/forms';
 import { Chart, registerables, type ChartConfiguration, type ChartType } from 'chart.js';
 import { DaimonApi } from './daimon-api';
 import { EmptyStateComponent, SkeletonComponent, MonoComponent } from './ui-primitives';
+import type { TestRun } from './tests-page-helpers';
 
 Chart.register(...registerables);
 
@@ -150,7 +151,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     <div class="dm-page-header">
       <div>
         <h1>Trends</h1>
-        <div class="dm-page-sub">Historical compile Â· bundle Â· error Â· restart trends</div>
+        <div class="dm-page-sub">Historical compile · bundle · error · restart · test pass-rate · flaky trends</div>
       </div>
       <div class="dm-controls">
         <mat-button-toggle-group [value]="window()" (change)="onWindowChange($event.value)" hideSingleSelectionIndicator aria-label="Time window">
@@ -176,6 +177,8 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
       <dm-trend-chart #bundleChart></dm-trend-chart>
       <dm-trend-chart #errorChart></dm-trend-chart>
       <dm-trend-chart #restartChart></dm-trend-chart>
+      <dm-trend-chart #testPassRateChart></dm-trend-chart>
+      <dm-trend-chart #flakyChart></dm-trend-chart>
       @if (showSelf()) {
         <dm-trend-chart #selfChart></dm-trend-chart>
       }
@@ -203,6 +206,8 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
   @ViewChild('bundleChart') bundleChart?: TrendChartComponent;
   @ViewChild('errorChart') errorChart?: TrendChartComponent;
   @ViewChild('restartChart') restartChart?: TrendChartComponent;
+  @ViewChild('testPassRateChart') testPassRateChart?: TrendChartComponent;
+  @ViewChild('flakyChart') flakyChart?: TrendChartComponent;
   @ViewChild('selfChart') selfChart?: TrendChartComponent;
 
   private timer?: ReturnType<typeof setInterval>;
@@ -230,6 +235,8 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       this.bundleChart?.setLoading();
       this.errorChart?.setLoading();
       this.restartChart?.setLoading();
+      this.testPassRateChart?.setLoading();
+      this.flakyChart?.setLoading();
     }
 
     const primary = readToken('--mat-sys-primary') || '#6750a4';
@@ -324,6 +331,66 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       yLabel: 'count',
     });
 
+    // Test pass-rate over time (M85): buckets the run history client-side
+    // (the server has no bucketed test-trend endpoint, unlike compile/bundle/
+    // error/restart which pull already-aggregated points from
+    // /api/history/trends). Pass rate per bucket = sum(passed)/sum(total)
+    // across that bucket's runs, per app; buckets with no totals are skipped
+    // rather than shown as 0% (a run with no parsed totals isn't a 0% run).
+    const testRuns = await this.api.getTestRuns({ since: win, limit: 500 });
+    const passRateByApp = new Map<string, SeriesPoint[]>();
+    for (const app of apps) {
+      const appRuns = testRuns.filter(r => r.app === app);
+      const buckets = new Map<number, { passed: number; total: number }>();
+      for (const r of appRuns) {
+        if (typeof r.total !== 'number' || r.total <= 0) continue;
+        const key = this.bucketKey(r.ts, win);
+        const b = buckets.get(key) ?? { passed: 0, total: 0 };
+        b.passed += r.passed ?? 0;
+        b.total += r.total;
+        buckets.set(key, b);
+      }
+      const points = [...buckets.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([t, b]) => ({ t, v: Math.round((b.passed / b.total) * 1000) / 10 }));
+      if (points.length) passRateByApp.set(app, points);
+    }
+    const passRateSeries: Series[] = [...passRateByApp.entries()].map(([app, points]) => ({ app, points }));
+    const passRateLabels = this.unionLabels([passRateSeries], win);
+    this.testPassRateChart?.setData({
+      title: 'Test pass rate',
+      subtitle: 'passed/total per ' + (win === '24h' ? 'hour' : 'day') + ', from daimon test runs',
+      chartType: 'line',
+      labels: passRateLabels.labels,
+      datasets: passRateSeries.map((s, i) => ({
+        label: s.app,
+        data: this.align(s.points, passRateLabels.buckets, 'v'),
+        borderColor: palette[i % palette.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.4, tension: 0.3, pointRadius: 0,
+      })),
+      yLabel: '%',
+    });
+
+    // Flaky test count (M85): daimon only ever tracks the CURRENT flaky set
+    // (flips at the latest gitHead, per M75) — there's no historical flaky
+    // count to bucket over time without fabricating data. Rendered honestly
+    // as a per-app snapshot bar, not a time series.
+    const flakyResults = await Promise.all(apps.map(app => this.api.getFlakyTests(app)));
+    const flakyLabels = apps;
+    this.flakyChart?.setData({
+      title: 'Flaky tests',
+      subtitle: 'current count per app (not a time series — daimon tracks flakiness at the latest gitHead only)',
+      chartType: 'bar',
+      labels: flakyLabels,
+      datasets: [{
+        label: 'flaky tests',
+        data: flakyResults.map(r => r.flaky.length),
+        backgroundColor: tertiary,
+      }],
+      yLabel: 'count',
+    });
+
     if (this.showSelf()) {
       const rows = await this.api.getSelfHistory(win === '24h' ? '24h' : '7d');
       const sorted = [...rows].sort((a, b) => a.ts - b.ts);
@@ -350,6 +417,16 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       return { app, points: (r?.points ?? []) as SeriesPoint[] };
     }));
     return results.filter(r => r.points.length > 0);
+  }
+
+  // Bucket boundary for client-side test-run aggregation (M85): hourly under
+  // a 24h window, daily otherwise — matches the granularity implied by
+  // fmtBucketLabel so axis labels and bucket width agree.
+  private bucketKey(ts: number, win: Window): number {
+    const d = new Date(ts);
+    if (win === '24h') { d.setMinutes(0, 0, 0); return d.getTime(); }
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
   }
 
   private unionLabels(seriesGroups: Series[][], win: Window): { buckets: number[]; labels: string[] } {

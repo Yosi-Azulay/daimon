@@ -67,6 +67,8 @@ const MCP_TOOLS = [
   ['daimon_run_tests', 'Run the app\'s own test suite once; parsed failures with file:line + totals. Soft-lock gated.'],
   ['daimon_why', 'Crash forensics: last crash report, grouped errors, regressions, restart-storm state, suspect commit, doctor findings.'],
   ['daimon_search', 'Full-text search over log lines, errors, and events (FTS5 with LIKE fallback).'],
+  ['daimon_report', 'The digest: uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agents, env changes.'],
+  ['daimon_env', 'Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.'],
 ];
 
 function renderMcp() {
