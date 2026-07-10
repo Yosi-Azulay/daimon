@@ -23,6 +23,7 @@ const EXPECTED_TOOLS = [
   'try_fix', 'focus', 'ensure',
   'orchestrate', 'ensure_up', 'wait_for_app',
   'daimon_who_owns', 'daimon_subscribe_events', 'daimon_notify_on_error',
+  'daimon_frameworks',
 ].sort();
 
 async function connectedClient() {
@@ -53,7 +54,7 @@ function minimalArgs(schema) {
 const client = await connectedClient();
 const { tools } = await client.listTools();
 
-test('mcp surface: tools/list returns exactly the expected 20 tools', () => {
+test('mcp surface: tools/list returns exactly the expected 21 tools', () => {
   assert.deepEqual(tools.map(t => t.name).sort(), EXPECTED_TOOLS);
 });
 

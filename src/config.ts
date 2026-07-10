@@ -262,6 +262,7 @@ function validate(raw: unknown, source: string): AppmanConfig {
         }
         w.filter = f;
       }
+      if (Array.isArray(e.apps)) w.apps = e.apps.filter((s: any) => typeof s === 'string');
       out.push(w);
     }
     cfg.webhooks = out;

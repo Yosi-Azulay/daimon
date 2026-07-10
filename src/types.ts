@@ -76,6 +76,8 @@ export interface WebhookEntry {
   events?: string[];
   headers?: Record<string, string>;
   filter?: { to?: string[]; from?: string[]; app?: string[] };
+  // Per-app scoping (M72). Absent = all apps (pre-v0.11 behavior).
+  apps?: string[];
 }
 
 export interface DashboardConfig {
@@ -139,6 +141,9 @@ export interface AppOverride {
   healthProbePath?: string;
   // Compile-regression threshold as a multiple of the rolling median; default 2.0.
   compileRegressionFactor?: number;
+  // Per-app webhooks (M72), merged with the global `webhooks` list and scoped
+  // to this app's events.
+  webhooks?: WebhookEntry[];
 }
 
 // Built-in profile ids. DiscoveredApp.serverProfile is a plain string because

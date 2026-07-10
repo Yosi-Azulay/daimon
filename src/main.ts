@@ -23,7 +23,7 @@ import { consumeHandoff } from './stateHandoff.js';
 import { loadSessionState, saveSessionState } from './sessionState.js';
 import { SelfMetricsCollector } from './selfMetrics.js';
 import { loadPlugins, pluginsDir, runPluginScans, buildContext, type LoadedPlugin } from './plugins.js';
-import { WebhookDispatcher } from './webhooks.js';
+import { WebhookDispatcher, effectiveWebhooks } from './webhooks.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -143,8 +143,10 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     }
   } catch {}
 
-  const webhookDispatcher = (config.webhooks && config.webhooks.length)
-    ? new WebhookDispatcher(registry, config.webhooks, {
+  // Global webhooks + per-app overrides.<app>.webhooks blocks (M72).
+  const allWebhooks = effectiveWebhooks(config);
+  const webhookDispatcher = allWebhooks.length
+    ? new WebhookDispatcher(registry, allWebhooks, {
         onLog: msg => process.stderr.write(`[daimon] ${msg}\n`),
       })
     : null;

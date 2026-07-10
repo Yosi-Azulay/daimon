@@ -346,6 +346,15 @@ export function buildServer(): McpServer {
     return ok(r.body);
   });
 
+  server.registerTool('daimon_frameworks', {
+    description: 'List the framework adapter registry (M65): built-in + custom profiles with detection markers, command, readiness/url patterns, badge/tone, per-profile match counts and which apps each matched. Use to understand what frameworks daimon recognises in the configured workspaces.',
+    inputSchema: {},
+  }, async () => {
+    const r = await callJson('/api/frameworks');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    return ok(r.body);
+  });
+
   server.registerTool('daimon_who_owns', {
     description: 'Return the current soft-lock holder for an app (if any) and the last 3 agents who interacted with it. Use before start/stop/restart to avoid stepping on another agent.',
     inputSchema: { name: z.string(), cwd: cwdField },

@@ -240,6 +240,7 @@ interface Flags {
   tail?: number;
   since?: string;
   sinceLast?: boolean;
+  group?: boolean;
   client?: string;
   structured?: boolean;
   until?: string;
@@ -294,6 +295,7 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--since') f.since = args[++i];
     else if (a === '--min' || a === '--min-occurrences') f.min = Number(args[++i]);
     else if (a === '--since-last') f.sinceLast = true;
+    else if (a === '--group') f.group = true;
     else if (a === '--client') f.client = args[++i];
     else if (a === '--structured') f.structured = true;
     else if (a === '--until') f.until = args[++i];
@@ -1075,7 +1077,15 @@ async function main() {
     }
     case 'errors': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact] [--level error|warning|lint|all]' }));
+      // Global grouped view (M72): `daimon errors --group` needs no app name.
+      if (!name && f.group) {
+        const params = new URLSearchParams({ group: 'fingerprint' });
+        if (f.level) params.set('level', f.level);
+        const r = await call('/api/errors?' + params.toString());
+        out(r.body);
+        return;
+      }
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured] [--group] [--full|--compact] [--level error|warning|lint|all]' }));
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
       let endpoint = `/api/apps/${encodeURIComponent(name)}/errors`;

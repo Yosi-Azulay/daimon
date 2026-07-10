@@ -122,6 +122,7 @@ function compactStatus(s: AppSummary): Record<string, unknown> {
     uptime: s.uptimeMs,
   };
   if (s.estimatedReadyAtMs != null) out.estimatedReadyAtMs = s.estimatedReadyAtMs;
+  if (s.serverProfile) out.serverProfile = s.serverProfile;
   return out;
 }
 
@@ -822,6 +823,31 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           customCount: profiles.filter(p => !p.builtin).length,
           stats: { scanned: stats.scanned, rejected: stats.rejected },
         });
+        return;
+      }
+
+      // Global errors across all apps (M72). ?group=fingerprint folds entries
+      // with the same source location / normalized message into groups with
+      // count, first/last-seen and affected apps.
+      if (parts[0] === 'api' && parts[1] === 'errors' && !parts[2] && method === 'GET') {
+        const levelFilter = (url.searchParams.get('level') || 'error').toLowerCase();
+        const matchesLevel = (e: ErrorEntry) => {
+          const lvl = e.level ?? 'error';
+          if (levelFilter === 'all') return true;
+          if (levelFilter === 'warning') return lvl === 'warning';
+          if (levelFilter === 'lint') return lvl === 'lint';
+          return lvl === 'error';
+        };
+        const perApp = registry.list().map(s => ({
+          app: s.name,
+          errors: (registry.errors(s.name) ?? []).filter(matchesLevel),
+        }));
+        if ((url.searchParams.get('group') || '') === 'fingerprint') {
+          const { groupErrors } = await import('./errorGroups.js');
+          sendJson(res, 200, { groups: groupErrors(perApp) });
+          return;
+        }
+        sendJson(res, 200, perApp.flatMap(({ app, errors }) => errors.map(e => ({ app, ...e }))));
         return;
       }
 

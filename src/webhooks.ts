@@ -15,6 +15,27 @@ export interface WebhookConfig {
   events?: string[];
   headers?: Record<string, string>;
   filter?: { to?: string[]; from?: string[]; app?: string[] };
+  // Per-app scoping (M72): when present, only events from these apps fire.
+  // Absent = all apps (the pre-v0.11 behavior).
+  apps?: string[];
+}
+
+// Merge the global webhook list with per-app override blocks (M72):
+// `overrides.<app>.webhooks` entries fire only for that app's events. The
+// config stays backward compatible — with no overrides this returns the
+// global list unchanged.
+export function effectiveWebhooks(config: {
+  webhooks?: WebhookConfig[];
+  overrides?: Record<string, { webhooks?: WebhookConfig[] } | undefined>;
+}): WebhookConfig[] {
+  const out: WebhookConfig[] = [...(config.webhooks ?? [])];
+  for (const [app, ov] of Object.entries(config.overrides ?? {})) {
+    for (const w of ov?.webhooks ?? []) {
+      if (!w || typeof w.url !== 'string' || !w.url.trim()) continue;
+      out.push({ ...w, apps: [app] });
+    }
+  }
+  return out;
 }
 
 interface QueueItem {
@@ -78,6 +99,7 @@ export class WebhookDispatcher {
       const kindAlias = aliasKind(ev.type);
       if (!cfg.events.includes(ev.type) && !cfg.events.includes(kindAlias)) return false;
     }
+    if (cfg.apps && cfg.apps.length && !cfg.apps.includes(ev.app)) return false;
     if (cfg.filter) {
       if (cfg.filter.app && cfg.filter.app.length && !cfg.filter.app.includes(ev.app)) return false;
       if (cfg.filter.to && cfg.filter.to.length && (!ev.to || !cfg.filter.to.includes(ev.to))) return false;

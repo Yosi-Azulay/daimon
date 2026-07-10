@@ -9,6 +9,14 @@ import type { Registry } from '../registry.js';
 import type { AppEvent, AppHealth, AppSummary, AppStatus } from '../types.js';
 import LogPane from './LogPane.js';
 import { computeRibbon, renderRibbon } from './ribbon.js';
+import { allProfiles, profileBadge } from '../frameworks.js';
+
+// Framework badge tags for TUI rows (M72): [next], [flask], ...
+const BADGE_BY_ID = new Map(allProfiles(undefined).map(p => [p.id, profileBadge(p)]));
+function badgeFor(id: string | null | undefined): string {
+  if (!id) return '';
+  return BADGE_BY_ID.get(id) ?? id.slice(0, 5);
+}
 
 function openUrl(url: string): void {
   try {
@@ -341,6 +349,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
                   <Text color={STATUS_COLORS[a.status]}> {a.status.padEnd(9)}</Text>
                   <Text color={HEALTH_COLORS[a.health]}>{a.status === 'serving' ? '●' : ' '}</Text>
                   <Text dimColor>{a.port ? ` :${a.port}` : ''}</Text>
+                  {a.serverProfile ? <Text dimColor> [{badgeFor(a.serverProfile)}]</Text> : null}
                   {cols >= 100 && a.cpu != null ? <Text dimColor>  {String(a.cpu).padStart(5)}% {String(a.memMB ?? 0).padStart(5)}MB</Text> : null}
                 </Box>
                 <Box>

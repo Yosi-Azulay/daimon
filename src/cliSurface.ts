@@ -94,11 +94,12 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'errors',
-    args: '<name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact]',
-    summary: 'Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}).',
-    description: 'Deduplicated parsed errors for an app. Compact JSON by default.',
+    args: '<name> [--since 2m] [--since-last] [--client <id>] [--structured] [--full|--compact] | --group',
+    summary: 'Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}). --group (no name) groups all apps\' errors by stack fingerprint.',
+    description: 'Deduplicated parsed errors for an app. Compact JSON by default. With --group and no app name, returns all apps\' errors grouped by stack fingerprint (source location or normalized message) with count, first/last-seen and affected apps.',
     example: 'daimon errors web-admin --since 5m',
     options: [
+      { flag: '--group', description: 'Group all apps\' errors by stack fingerprint (omit <name>).' },
       { flag: '--since', arg: '<duration>', description: 'Time window (e.g. 30s, 5m, 1h).' },
       { flag: '--since-last', description: 'Only errors since the previous --since-last call (per --client).' },
       { flag: '--client', arg: '<id>', description: 'Cursor identity for --since-last.' },

@@ -45,10 +45,12 @@ interface FlatError {
   count: number;
   tool: string;
   level: Level;
+  firstSeen: number | null;
+  lastSeen: number | null;
 }
 
 type Severity = 'errors' | 'warnings' | 'lint' | 'all';
-type GroupBy = 'app' | 'file' | 'code' | 'tool';
+type GroupBy = 'app' | 'file' | 'code' | 'tool' | 'fingerprint';
 
 const WS_KEY = 'daimon.workspace';
 
@@ -265,6 +267,39 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                 </mat-expansion-panel>
               }
             }
+            @case ('fingerprint') {
+              @for (g of byFingerprint(); track g.key) {
+                <mat-expansion-panel class="dm-panel">
+                  <mat-expansion-panel-header>
+                    <mat-panel-title>
+                      <span class="ttl"><dm-mono>{{ g.title }}</dm-mono></span>
+                      <span class="eb">×{{ g.count }}</span>
+                    </mat-panel-title>
+                    <mat-panel-description>
+                      <span class="fp-meta">{{ g.apps.length }} {{ g.apps.length === 1 ? 'app' : 'apps' }} · first {{ fmtAgo(g.firstSeen) }} · last {{ fmtAgo(g.lastSeen) }}</span>
+                    </mat-panel-description>
+                  </mat-expansion-panel-header>
+                  <div class="rows">
+                    @for (e of g.errors; track $index) {
+                      <div class="row" [class.is-warning]="e.level === 'warning'" [class.is-lint]="e.level === 'lint'">
+                        <a class="loc" [routerLink]="['/apps', e.app]" (click)="$event.stopPropagation()">
+                          <dm-mono>{{ e.app }}</dm-mono>
+                        </a>
+                        @if (e.file) {
+                          <a class="loc" [href]="editorUrl(e)" (click)="openEditor($event, e)" [matTooltip]="e.file">
+                            <dm-mono>{{ shortPath(e.file) }}@if (e.line) {<span class="dim">:{{ e.line }}</span>}</dm-mono>
+                          </a>
+                        } @else {
+                          <span class="loc dim"><dm-mono>—</dm-mono></span>
+                        }
+                        <span class="msg" [matTooltip]="e.message">{{ e.message }}</span>
+                        @if (e.count > 1) { <span class="cnt">×{{ e.count }}</span> }
+                      </div>
+                    }
+                  </div>
+                </mat-expansion-panel>
+              }
+            }
             @case ('tool') {
               @for (g of byTool(); track g.key) {
                 <mat-expansion-panel class="dm-panel" expanded>
@@ -344,6 +379,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .ac{width:4px;height:24px;border-radius:2px;margin-right:.5rem}
     .ttl{font:500 .9375rem/1.25rem Roboto;display:inline-flex;align-items:center;gap:.5rem}
     .hint{font:400 .75rem/1rem Roboto;color:var(--mat-sys-on-surface-variant);margin-left:.5rem}
+    .fp-meta{font:400 .75rem/1rem Roboto;color:var(--mat-sys-on-surface-variant);white-space:nowrap}
     mat-panel-title{display:flex;align-items:center;gap:.5rem;flex:1;min-width:0}
     mat-panel-description{justify-content:flex-end;color:var(--mat-sys-on-surface-variant)}
     .eb{display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem Roboto;background:color-mix(in oklch,var(--mat-sys-error) 14%,transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent);margin-left:.25rem}
@@ -404,6 +440,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
     { key: 'file', label: 'file' },
     { key: 'code', label: 'code' },
     { key: 'tool', label: 'tool' },
+    { key: 'fingerprint', label: 'fingerprint' },
   ];
   readonly tone = workspaceTone;
 
@@ -435,6 +472,8 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
           count: e.count ?? 1,
           tool: e.parsed?.tool ?? '',
           level: e.level ?? 'error',
+          firstSeen: e.firstSeen ?? null,
+          lastSeen: e.lastSeen ?? null,
         });
       }
     }
@@ -486,6 +525,39 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
       }))
       .sort((a, b) => b.errors.length - a.errors.length);
   });
+
+  // Fingerprint grouping (M72): same source location (file:line[:code]) —
+  // or, unparsed, the same number-normalized message — folds into one group
+  // with total count, first/last-seen and the affected apps. Mirrors the
+  // server's GET /api/errors?group=fingerprint semantics.
+  readonly byFingerprint = computed(() => {
+    const groups = new Map<string, { key: string; title: string; message: string; errors: FlatError[]; count: number; apps: string[]; firstSeen: number | null; lastSeen: number | null }>();
+    for (const e of this.filteredFlat()) {
+      const key = e.file && e.line != null
+        ? `${e.file}:${e.line}${e.code ? ':' + e.code : ''}`
+        : 'msg:' + e.message.replace(/0x[0-9a-fA-F]+/g, '#').replace(/\d+/g, '#').trim().toLowerCase();
+      let g = groups.get(key);
+      if (!g) {
+        g = { key, title: e.file && e.line != null ? `${this.shortPath(e.file)}:${e.line}${e.code ? ' ' + e.code : ''}` : e.message, message: e.message, errors: [], count: 0, apps: [], firstSeen: e.firstSeen, lastSeen: e.lastSeen };
+        groups.set(key, g);
+      }
+      g.errors.push(e);
+      g.count += e.count;
+      if (!g.apps.includes(e.app)) g.apps.push(e.app);
+      if (e.firstSeen != null && (g.firstSeen == null || e.firstSeen < g.firstSeen)) g.firstSeen = e.firstSeen;
+      if (e.lastSeen != null && (g.lastSeen == null || e.lastSeen > g.lastSeen)) g.lastSeen = e.lastSeen;
+    }
+    return Array.from(groups.values()).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
+  });
+
+  fmtAgo(ts: number | null): string {
+    if (!ts) return '—';
+    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
 
   readonly byFile = computed(() => {
     const groups = new Map<string, FlatError[]>();
