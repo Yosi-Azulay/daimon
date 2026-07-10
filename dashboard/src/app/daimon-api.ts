@@ -1,6 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+import type { FlakyTest, TestRun } from './tests-page-helpers';
+import type { SearchHit } from './command-palette-helpers';
 
 export type StatusKind = 'stopped' | 'starting' | 'compiling' | 'serving' | 'error';
 export type HealthKind = 'unknown' | 'healthy' | 'unhealthy';
@@ -359,6 +361,42 @@ export class DaimonApi {
   async getHistoryWhy(name: string): Promise<any | null> {
     try { return await firstValueFrom(this.http.get<any>(`/api/history/why/${encodeURIComponent(name)}`)); }
     catch { return null; }
+  }
+
+  // Test run history (M74/M75). Omitting `app` returns the most recent runs
+  // across every app, newest first — the Tests page groups client-side.
+  async getTestRuns(opts: { app?: string; limit?: number; since?: string } = {}): Promise<TestRun[]> {
+    try {
+      const qs = new URLSearchParams();
+      if (opts.app) qs.set('app', opts.app);
+      if (opts.limit) qs.set('limit', String(opts.limit));
+      if (opts.since) qs.set('since', opts.since);
+      const q = qs.toString();
+      const r = await firstValueFrom(this.http.get<{ runs: TestRun[] }>('/api/tests' + (q ? '?' + q : '')));
+      return Array.isArray(r?.runs) ? r.runs : [];
+    } catch { return []; }
+  }
+
+  async getFlakyTests(app?: string): Promise<{ flaky: FlakyTest[]; threshold: number }> {
+    try {
+      const q = app ? `?app=${encodeURIComponent(app)}` : '';
+      const r = await firstValueFrom(this.http.get<{ flaky: FlakyTest[]; threshold: number }>('/api/tests/flaky' + q));
+      return { flaky: Array.isArray(r?.flaky) ? r.flaky : [], threshold: r?.threshold ?? 3 };
+    } catch { return { flaky: [], threshold: 3 }; }
+  }
+
+  // Full-text search (M77) — command palette's `>` search mode.
+  async search(opts: { q: string; app?: string; kind?: 'logs' | 'errors' | 'events'; limit?: number }): Promise<{ hits: SearchHit[]; fallback: boolean }> {
+    if (!opts.q.trim()) return { hits: [], fallback: false };
+    try {
+      const qs = new URLSearchParams();
+      qs.set('q', opts.q);
+      if (opts.app) qs.set('app', opts.app);
+      if (opts.kind) qs.set('kind', opts.kind);
+      qs.set('limit', String(opts.limit ?? 30));
+      const r = await firstValueFrom(this.http.get<{ hits: SearchHit[]; fallback: boolean }>('/api/search?' + qs.toString()));
+      return { hits: Array.isArray(r?.hits) ? r.hits : [], fallback: !!r?.fallback };
+    } catch { return { hits: [], fallback: false }; }
   }
 
   async getAgents(): Promise<{ agents: AgentRecord[]; locks: Record<string, LockSnapshot>; self: string | null }> {

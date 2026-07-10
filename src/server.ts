@@ -856,6 +856,230 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // `daimon context <app>` (M78): the agent context pack. Pure composition
+      // of existing queries — no new state. ?budget=<chars> drops sections
+      // lowest-priority-first (compile → agents → crashes → tests → errors;
+      // status is never dropped) and reports what fell in truncated[].
+      if (parts[0] === 'api' && parts[1] === 'context' && parts[2] && method === 'GET') {
+        const ctxName0 = decodeURIComponent(parts[2]);
+        const resolvedCtx = registry.resolveByCwd(ctxName0, url.searchParams.get('cwd') || null);
+        if (resolvedCtx.kind === 'collision') {
+          sendJson(res, 412, { error: 'name-collision', candidates: resolvedCtx.candidates });
+          return;
+        }
+        const ctxName = resolvedCtx.kind === 'unique' && resolvedCtx.key ? resolvedCtx.key : ctxName0;
+        const s = registry.summary(ctxName);
+        if (!s) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const appRow = registry.getApp(ctxName);
+        const h = registry.getHistory();
+        const dayAgo = Date.now() - 24 * 3600_000;
+
+        const { groupErrors } = await import('./errorGroups.js');
+        const recentErrors = (registry.errors(ctxName) ?? []).filter(e => e.lastSeen >= dayAgo);
+        const errors = groupErrors([{ app: ctxName, errors: recentErrors }]).slice(0, 5)
+          .map(g => ({ fingerprint: g.fingerprint, message: g.message.slice(0, 300), count: g.count, lastSeen: g.lastSeen, parsed: g.parsed ?? null }));
+
+        const lastRun = h?.queryTestRuns({ app: ctxName, limit: 1 })[0] ?? null;
+        const tests = lastRun ? {
+          ...lastRun,
+          failures: h!.queryTestFailures([lastRun.id]).map(f => ({ suite: f.suite, test: f.test, file: f.file, line: f.line, message: f.message?.slice(0, 200) ?? null, fingerprint: f.fingerprint })),
+        } : null;
+
+        const crash = h?.queryCrashes({ app: ctxName, limit: 1 })[0] ?? null;
+        const crashes = crash ? {
+          ts: crash.ts, exitCode: crash.exitCode, signal: crash.signal, uptimeMs: crash.uptimeMs,
+          gitHead: crash.gitHead, lastLines: (crash.lastLines ?? '').split('\n').filter(Boolean).slice(-15),
+        } : null;
+
+        const hist = h ? h.summary(ctxName) : null;
+        const regressionEvents = (h?.queryEvents({ app: ctxName, since: Date.now() - 7 * 86400_000, type: 'regression-detected', limit: 5 }) ?? [])
+          .map(r => { try { return { ts: r.ts, ...JSON.parse(r.message ?? '{}') }; } catch { return { ts: r.ts }; } });
+        const compile = {
+          p50: hist?.compileP50 ?? null,
+          p95: hist?.compileP95 ?? null,
+          lastCompileMs: s.lastCompileMs,
+          lastRegression: regressionEvents[0] ?? null,
+        };
+
+        const { suspectCommitForDir } = await import('./regressions.js');
+        const head = await suspectCommitForDir(appRow?.workspaceRoot ?? null);
+        const suspectCommits = [...new Set([
+          ...regressionEvents.map((r: any) => r.suspectCommit).filter(Boolean),
+          ...(head ? [head] : []),
+        ])].slice(0, 5);
+
+        const lock = locks.current(ctxName);
+        const agentsSection = {
+          lock: lock ? { agent: lock.agent, expiresAt: lock.expiresAt } : null,
+          recent: locks.recentInteractions(ctxName, 3),
+          active: agents.list().map(a => ({ id: a.id, lastSeen: a.lastSeen })).slice(0, 5),
+        };
+
+        const out: Record<string, any> = {
+          app: ctxName,
+          status: {
+            ...compactStatus(s),
+            framework: s.serverProfile ?? null,
+            workspaceRoot: appRow?.workspaceRoot ?? null,
+            stale: s.stale,
+            restartAttempts: s.restartAttempts,
+          },
+          errors,
+          tests,
+          crashes,
+          suspectCommits,
+          agents: agentsSection,
+          compile,
+          truncated: [] as string[],
+        };
+        const budgetRaw = url.searchParams.get('budget');
+        const budget = budgetRaw ? Math.max(256, Number(budgetRaw) | 0) : null;
+        if (budget) {
+          const dropOrder = ['compile', 'agents', 'crashes', 'tests', 'errors'];
+          for (const section of dropOrder) {
+            if (JSON.stringify(out).length <= budget) break;
+            delete out[section];
+            out.truncated.push(section);
+          }
+        }
+        sendJson(res, 200, out);
+        return;
+      }
+
+      // Full-text search (M77): everything daimon has seen, greppable.
+      // ?q=&app=&since=&kind=logs|errors|events&limit=. Falls back to LIKE
+      // (fallback:true) when FTS is unavailable — never errors the daemon.
+      if (parts[0] === 'api' && parts[1] === 'search' && method === 'GET') {
+        const q = url.searchParams.get('q') || '';
+        if (!q.trim()) { sendJson(res, 400, { error: 'q query param required' }); return; }
+        const h = registry.getHistory();
+        if (!h) { sendJson(res, 200, { hits: [], fallback: false, note: 'history disabled' }); return; }
+        const kindRaw = (url.searchParams.get('kind') || '').toLowerCase();
+        if (kindRaw && !['logs', 'errors', 'events'].includes(kindRaw)) {
+          sendJson(res, 400, { error: 'kind must be logs|errors|events' });
+          return;
+        }
+        const sinceP = parseSinceParam(url.searchParams.get('since'));
+        const since = sinceP.sinceTs ?? (sinceP.sinceMs != null ? Date.now() - sinceP.sinceMs : undefined);
+        const limitRaw = Number(url.searchParams.get('limit') || 50);
+        const r = h.search({
+          q,
+          app: url.searchParams.get('app') || undefined,
+          since,
+          kind: (kindRaw || undefined) as any,
+          limit: Number.isFinite(limitRaw) ? limitRaw : 50,
+        });
+        sendJson(res, 200, r);
+        return;
+      }
+
+      // `daimon why <app>` (M76): one-shot composition of everything relevant
+      // to "why is this app broken" — status, last crash, grouped errors,
+      // regressions, storm state, suspect commit, matching doctor findings.
+      if (parts[0] === 'api' && parts[1] === 'why' && parts[2] && method === 'GET') {
+        const whyName0 = decodeURIComponent(parts[2]);
+        const resolvedWhy = registry.resolveByCwd(whyName0, url.searchParams.get('cwd') || null);
+        if (resolvedWhy.kind === 'collision') {
+          sendJson(res, 412, { error: 'name-collision', candidates: resolvedWhy.candidates });
+          return;
+        }
+        const whyName = resolvedWhy.kind === 'unique' && resolvedWhy.key ? resolvedWhy.key : whyName0;
+        const s = registry.summary(whyName);
+        if (!s) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const appRow = registry.getApp(whyName);
+        const h = registry.getHistory();
+        const dayAgo = Date.now() - 24 * 3600_000;
+
+        const crash = h?.queryCrashes({ app: whyName, limit: 1 })[0] ?? null;
+        const lastCrash = crash ? {
+          ts: crash.ts,
+          exitCode: crash.exitCode,
+          signal: crash.signal,
+          uptimeMs: crash.uptimeMs,
+          gitHead: crash.gitHead,
+          lastLines: (crash.lastLines ?? '').split('\n').filter(Boolean),
+        } : null;
+
+        const { groupErrors } = await import('./errorGroups.js');
+        const recentErrors = (registry.errors(whyName) ?? []).filter(e => e.lastSeen >= dayAgo);
+        const errorGroups = groupErrors([{ app: whyName, errors: recentErrors }]).slice(0, 5)
+          .map(g => ({ fingerprint: g.fingerprint, message: g.message, count: g.count, lastSeen: g.lastSeen, parsed: g.parsed ?? null }));
+
+        const regressions = (h?.queryEvents({ app: whyName, since: Date.now() - 7 * 86400_000, type: 'regression-detected', limit: 10 }) ?? [])
+          .map(r => { try { return { ts: r.ts, ...JSON.parse(r.message ?? '{}') }; } catch { return { ts: r.ts, message: r.message }; } });
+
+        const storm = registry.stormState(whyName);
+
+        const { suspectCommitForDir } = await import('./regressions.js');
+        const suspectCommit = await suspectCommitForDir(appRow?.workspaceRoot ?? null);
+
+        // Doctor findings scoped to this app: per-app rules (restart-storm,
+        // smart-restart-tune), plus hygiene findings covering its workspace.
+        let doctorFindings: { name: string; ok: boolean; detail?: string }[] = [];
+        try {
+          const cfg = opts.getConfig?.();
+          if (cfg) {
+            const { runDoctor } = await import('./doctor.js');
+            const allApps = registry.names().map(n => registry.getApp(n)!).filter(Boolean);
+            const result = await runDoctor(cfg, allApps);
+            const root = (appRow?.workspaceRoot ?? '').toLowerCase();
+            doctorFindings = result.checks.filter(c =>
+              c.name.includes(whyName)
+              || (root && c.name.toLowerCase().includes(root))
+              || (c.name.startsWith('searchroot-hygiene') && root && isPathUnder(appRow!.workspaceRoot, c.name.slice('searchroot-hygiene: '.length))),
+            );
+          }
+        } catch {}
+
+        sendJson(res, 200, {
+          app: whyName,
+          status: compactStatus(s),
+          lastCrash,
+          errorGroups,
+          regressions,
+          storm,
+          suspectCommit,
+          doctor: doctorFindings,
+        });
+        return;
+      }
+
+      // Flaky tests (M75): query-derived from run history — a fingerprint that
+      // flipped pass↔fail >= tests.flakyThreshold times at the same gitHead.
+      if (parts[0] === 'api' && parts[1] === 'tests' && parts[2] === 'flaky' && method === 'GET') {
+        const h = registry.getHistory();
+        if (!h) { sendJson(res, 200, { flaky: [] }); return; }
+        const app = url.searchParams.get('app') || undefined;
+        const { findFlakyTests } = await import('./testRunners.js');
+        const threshold = opts.getConfig?.().tests?.flakyThreshold ?? 3;
+        const runs = h.queryTestRuns({ app, limit: 200 });
+        const heads = [...new Set(runs.map(r => r.gitHead).filter((g): g is string => !!g))];
+        const flaky = heads.flatMap(head => findFlakyTests(runs, ids => h.queryTestFailures(ids), head, threshold));
+        sendJson(res, 200, { flaky, threshold });
+        return;
+      }
+
+      // Test-run history (M74). ?app=&limit=&since=; failures attached per run.
+      if (parts[0] === 'api' && parts[1] === 'tests' && !parts[2] && method === 'GET') {
+        const h = registry.getHistory();
+        if (!h) { sendJson(res, 200, { runs: [] }); return; }
+        const app = url.searchParams.get('app') || undefined;
+        const limitRaw = Number(url.searchParams.get('limit') || 50);
+        const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 50;
+        const sinceP = parseSinceParam(url.searchParams.get('since'));
+        const since = sinceP.sinceTs ?? (sinceP.sinceMs != null ? Date.now() - sinceP.sinceMs : undefined);
+        const runs = h.queryTestRuns({ app, since, limit });
+        const failures = h.queryTestFailures(runs.map(r => r.id));
+        const byRun = new Map<number, any[]>();
+        for (const f of failures) {
+          const arr = byRun.get(f.runId) ?? [];
+          arr.push({ suite: f.suite, test: f.test, file: f.file, line: f.line, message: f.message, fingerprint: f.fingerprint });
+          byRun.set(f.runId, arr);
+        }
+        sendJson(res, 200, { runs: runs.map(r => ({ ...r, failures: byRun.get(r.id) ?? [] })) });
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'doctor' && parts[2] === 'auto-fix' && method === 'POST') {
         if (!requireAuth()) return;
         const body: any = await readJsonBody(req);
@@ -1151,12 +1375,21 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (sub === 'logs' && parts[4] === 'stream' && method === 'GET') {
         if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        // ?grep= (M79): server-side regex filter on the live tail. Length-
+        // capped and compiled case-insensitively, like custom-profile patterns.
+        const grepRaw = url.searchParams.get('grep');
+        let grepRx: RegExp | null = null;
+        if (grepRaw) {
+          if (grepRaw.length > 512) { sendJson(res, 400, { error: 'grep pattern too long (max 512 chars)' }); return; }
+          try { grepRx = new RegExp(grepRaw, 'i'); }
+          catch (e: any) { sendJson(res, 400, { error: `invalid grep regex: ${e?.message || e}` }); return; }
+        }
         res.writeHead(200, {
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
         });
-        const initial = registry.logs(name, { tail: 50 }) ?? [];
+        const initial = (registry.logs(name, { tail: 50 }) ?? []).filter(l => !grepRx || grepRx.test(l));
         for (const line of initial) {
           res.write(`data: ${JSON.stringify({ ts: Date.now(), line })}\n\n`);
         }
@@ -1177,6 +1410,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         };
         const onLog = (ev: { name: string; ts: number; line: string }) => {
           if (ev.name !== name) return;
+          if (grepRx && !grepRx.test(ev.line)) return;
           if (buffer.length >= 200) { dropped++; buffer.shift(); }
           buffer.push(`data: ${JSON.stringify({ ts: ev.ts, line: ev.line })}\n\n`);
           flush();
@@ -1191,11 +1425,22 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       if (sub === 'logs' && method === 'GET') {
         const tail = url.searchParams.get('tail');
         const since = url.searchParams.get('since');
-        const lines = registry.logs(name, {
+        let lines = registry.logs(name, {
           tail: tail ? Number(tail) : undefined,
           sinceMs: parseDuration(since),
         });
         if (lines == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        const grepRaw = url.searchParams.get('grep');
+        if (grepRaw) {
+          if (grepRaw.length > 512) { sendJson(res, 400, { error: 'grep pattern too long (max 512 chars)' }); return; }
+          try {
+            const rx = new RegExp(grepRaw, 'i');
+            lines = lines.filter(l => rx.test(l));
+          } catch (e: any) {
+            sendJson(res, 400, { error: `invalid grep regex: ${e?.message || e}` });
+            return;
+          }
+        }
         sendJson(res, 200, { lines });
         return;
       }
@@ -1462,6 +1707,28 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (!tryLock('start-with-deps')) return;
         const r = await registry.startWithDeps(name);
         sendJson(res, r.ok ? 200 : 400, r);
+        return;
+      }
+
+      // Run the app's test suite once (M74). Soft-lock gated like start/stop —
+      // two agents can't run the same suite concurrently unaware; ?steal=1
+      // applies. Audit-logged like other lifecycle calls.
+      if (sub === 'test' && method === 'POST') {
+        if (!tryLock('test')) return;
+        const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
+        let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 300_000;
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 300_000;
+        timeoutMs = Math.min(timeoutMs, 600_000);
+        try {
+          const remote = (req.socket as any).remoteAddress || '127.0.0.1';
+          appendAuditEntry(remote, { action: 'test', app: name }, { action: 'test', app: name }, [`test:${name}`], cwdHdr, agentId === 'unknown' ? null : agentId);
+        } catch {}
+        const r = await registry.runTests(name, { timeoutMs });
+        if ('error' in r) {
+          sendJson(res, r.error === 'unknown app' ? 404 : 422, r);
+          return;
+        }
+        sendJson(res, 200, r);
         return;
       }
 

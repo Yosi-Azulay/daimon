@@ -1,0 +1,109 @@
+{
+  "runner": "vitest-jest",
+  "resolve": {
+    "app": { "serverProfile": "vite", "workspaceType": "vite" },
+    "expectCommand": "npx vitest run",
+    "expectRunner": "vitest-jest"
+  },
+  "cases": [
+    {
+      "name": "vitest-pass",
+      "exitCode": 0,
+      "output": [
+        " RUN  v1.6.0 /repo/fixture",
+        "",
+        " ✓ src/math.test.ts (3 tests) 5ms",
+        "",
+        " Test Files  1 passed (1)",
+        "      Tests  3 passed (3)",
+        "   Start at  10:00:01",
+        "   Duration  1.02s (transform 35ms, setup 0ms, collect 40ms, tests 5ms)"
+      ],
+      "expectTotals": { "total": 3, "passed": 3, "failed": 0, "skipped": 0, "durationMs": 1020 },
+      "expectFailures": []
+    },
+    {
+      "name": "vitest-fail",
+      "exitCode": 1,
+      "output": [
+        " RUN  v1.6.0 /repo/fixture",
+        "",
+        " ❯ src/math.test.ts (3 tests | 1 failed) 12ms",
+        "   × math > adds numbers 5ms",
+        "     → expected 4 to be 3 // Object.is equality",
+        "",
+        " Test Files  1 failed (1)",
+        "      Tests  1 failed | 2 passed (3)",
+        "   Start at  10:00:02",
+        "   Duration  1.23s (transform 35ms, setup 0ms, collect 40ms, tests 12ms)",
+        "",
+        " FAIL  src/math.test.ts > math > adds numbers",
+        "AssertionError: expected 4 to be 3 // Object.is equality",
+        " ❯ src/math.test.ts:11:23",
+        "     11|     expect(add(1, 2)).toBe(3)"
+      ],
+      "expectTotals": { "total": 3, "passed": 2, "failed": 1, "skipped": 0, "durationMs": 1230 },
+      "expectFailures": [
+        { "suite": "math", "test": "adds numbers", "file": "src/math.test.ts", "line": 11, "messageIncludes": "expected 4 to be 3" }
+      ]
+    },
+    {
+      "name": "jest-fail",
+      "exitCode": 1,
+      "output": [
+        "FAIL src/calc.test.ts",
+        "  calc",
+        "    ✕ multiplies (4 ms)",
+        "    ✓ divides (1 ms)",
+        "",
+        "  ● calc › multiplies",
+        "",
+        "    expect(received).toBe(expected) // Object.is equality",
+        "",
+        "    Expected: 10",
+        "    Received: 8",
+        "",
+        "      at Object.<anonymous> (src/calc.test.ts:7:19)",
+        "",
+        "Test Suites: 1 failed, 1 total",
+        "Tests:       1 failed, 1 passed, 2 total",
+        "Snapshots:   0 total",
+        "Time:        1.5 s",
+        "Ran all test suites."
+      ],
+      "expectTotals": { "total": 2, "passed": 1, "failed": 1, "skipped": 0, "durationMs": 1500 },
+      "expectFailures": [
+        { "suite": "calc", "test": "multiplies", "file": "src/calc.test.ts", "line": 7, "messageIncludes": "expect(received).toBe(expected)" }
+      ]
+    },
+    {
+      "name": "jest-mixed-skipped",
+      "exitCode": 1,
+      "output": [
+        "FAIL src/api.test.ts",
+        "  ● api › fetches › returns rows",
+        "",
+        "    TypeError: Cannot read properties of undefined (reading 'rows')",
+        "",
+        "      at Object.<anonymous> (src/api.test.ts:22:31)",
+        "",
+        "Test Suites: 1 failed, 2 passed, 3 total",
+        "Tests:       1 failed, 2 skipped, 9 passed, 12 total",
+        "Time:        3.25 s"
+      ],
+      "expectTotals": { "total": 12, "passed": 9, "failed": 1, "skipped": 2, "durationMs": 3250 },
+      "expectFailures": [
+        { "suite": "api › fetches", "test": "returns rows", "file": "src/api.test.ts", "line": 22, "messageIncludes": "TypeError" }
+      ]
+    },
+    {
+      "name": "unparsed-garbage",
+      "exitCode": 1,
+      "output": [
+        "sh: vitest: command not found"
+      ],
+      "expectTotals": null,
+      "expectFailures": []
+    }
+  ]
+}

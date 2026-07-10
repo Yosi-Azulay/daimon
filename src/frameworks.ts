@@ -70,6 +70,10 @@ export interface FrameworkProfile {
   // a deterministic accent hue (0–360) for the framework tone (M70).
   badge?: string;
   tone?: number;
+  // Test-runner hint (M74). One of KNOWN_TEST_RUNNER_IDS in testRunners.ts:
+  // 'vitest-jest' rows resolve the concrete runner (and command) per app via
+  // a lockfile-aware dependency check; the polyglot ids map 1:1 to a command.
+  testRunner?: string;
   builtin: boolean;
 }
 
@@ -248,6 +252,33 @@ const BUILTINS: FrameworkProfile[] = [
     url: { pattern: '(?:is available at|is being served at):?\\s*(https?:\\/\\/\\S+)' },
     workspaceType: 'polyglot',
     healthProbe: 'http',
+    builtin: true,
+  },
+  // --- Runtime profiles (M79): deno / bun apps that aren't otherwise a known
+  // framework. Suppressed by every framework row so they only catch plain
+  // runtime projects.
+  {
+    id: 'deno',
+    family: 'js',
+    detect: { anyFiles: ['deno.json', 'deno.jsonc'] },
+    command: 'deno task dev',
+    readiness: { pattern: 'Listening on|Local:\\s+https?:\\/\\/' },
+    url: { pattern: '(?:Listening on|Local:)\\s+(https?:\\/\\/\\S+)' },
+    workspaceType: 'polyglot',
+    healthProbe: 'http',
+    suppressedBy: ['nx', 'angular', 'tauri', 'nextjs', 'nuxt', 'sveltekit', 'astro', 'remix'],
+    builtin: true,
+  },
+  {
+    id: 'bun',
+    family: 'js',
+    detect: { anyFiles: ['bunfig.toml', 'bun.lock', 'bun.lockb'], packageJson: { script: ['dev'] } },
+    command: 'bun run {script}',
+    url: { pattern: '(?:listening|running|Local:?)\\s+(?:on|at)?:?\\s+.*?(https?:\\/\\/\\S+)' },
+    workspaceType: 'polyglot',
+    // Plain bun servers rarely announce readiness — TCP flip like express-nest.
+    healthProbe: 'tcp',
+    suppressedBy: ['nx', 'angular', 'tauri', 'nextjs', 'nuxt', 'sveltekit', 'astro', 'remix', 'vite', 'storybook', 'expo'],
     builtin: true,
   },
   {
@@ -489,6 +520,8 @@ const BADGES: Record<string, { badge: string; tone: number }> = {
   'express-nest': { badge: 'node', tone: 340 },
   expo: { badge: 'expo', tone: 250 },
   flutter: { badge: 'flut', tone: 205 },
+  deno: { badge: 'deno', tone: 160 },
+  bun: { badge: 'bun', tone: 30 },
   'pnpm-workspace': { badge: 'pnpm', tone: 35 },
   turbo: { badge: 'turbo', tone: 315 },
   'package-json': { badge: 'npm', tone: 355 },
@@ -496,6 +529,36 @@ const BADGES: Record<string, { badge: string; tone: number }> = {
 for (const p of BUILTINS) {
   const b = BADGES[p.id];
   if (b) { p.badge = b.badge; p.tone = b.tone; }
+}
+
+// Test-runner hints (M74). JS rows share 'vitest-jest' — the concrete runner
+// (vitest vs jest vs plain `test` script) is resolved per app by a
+// lockfile-aware dependency check in testRunners.ts. Rows without a hint
+// (rails/laravel/spring-boot/expo/flutter) resolve only via an explicit
+// overrides.<app>.testCommand — their runners' output has no built-in parser.
+const TEST_RUNNERS: Record<string, string> = {
+  nx: 'vitest-jest',
+  angular: 'vitest-jest',
+  nextjs: 'vitest-jest',
+  nuxt: 'vitest-jest',
+  sveltekit: 'vitest-jest',
+  astro: 'vitest-jest',
+  remix: 'vitest-jest',
+  vite: 'vitest-jest',
+  'express-nest': 'vitest-jest',
+  'package-json': 'vitest-jest',
+  bun: 'vitest-jest',
+  django: 'pytest',
+  fastapi: 'pytest',
+  flask: 'pytest',
+  'go-air': 'go-test',
+  'rust-trunk': 'cargo-test',
+  tauri: 'cargo-test',
+  dotnet: 'dotnet-test',
+};
+for (const p of BUILTINS) {
+  const t = TEST_RUNNERS[p.id];
+  if (t) p.testRunner = t;
 }
 
 export function builtinProfiles(): FrameworkProfile[] {

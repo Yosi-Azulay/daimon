@@ -4,6 +4,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { AppmanConfig } from './types.js';
 import { validateCustomProfiles } from './frameworks.js';
+import { daimonDir } from './daemon.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,10 +42,10 @@ function defaultConfig(): AppmanConfig {
       rejectUnauthorized: false,
       fallbackHosts: ['127.0.0.1', '::1'],
     },
-    logs: { enabled: false, dir: path.join(os.homedir(), '.daimon', 'logs'), maxFiles: 5, maxBytesPerFile: 10000000 },
+    logs: { enabled: false, dir: path.join(daimonDir(), 'logs'), maxFiles: 5, maxBytesPerFile: 10000000 },
     depends: {},
     cascadeRestart: false,
-    history: { enabled: true, path: path.join(os.homedir(), '.daimon', 'history.db'), retentionDays: 30 },
+    history: { enabled: true, path: path.join(daimonDir(), 'history.db'), retentionDays: 30 },
     notifications: { enabled: true, onError: true, onUnhealthy: true, tray: false },
     staleDetect: { enabled: true, silentMs: 30000 },
     headless: false,
@@ -60,6 +61,9 @@ function defaultConfig(): AppmanConfig {
     plugins: { dir: null },
     webhooks: [],
     frameworks: [],
+    tests: { flakyThreshold: 3 },
+    restartStorm: { perHour: 20 },
+    search: { logIndex: true },
   };
 }
 
@@ -268,6 +272,42 @@ function validate(raw: unknown, source: string): AppmanConfig {
     cfg.webhooks = out;
   }
 
+  if (obj.tests !== undefined) {
+    const t = obj.tests as any;
+    if (t && typeof t === 'object' && !Array.isArray(t)) {
+      if (typeof t.flakyThreshold === 'number' && t.flakyThreshold >= 1) {
+        cfg.tests = { ...cfg.tests!, flakyThreshold: Math.floor(t.flakyThreshold) };
+      } else if (t.flakyThreshold !== undefined) {
+        warn(`"tests.flakyThreshold" must be a number >= 1 (${source})`);
+      }
+    } else {
+      warn(`"tests" must be an object (${source})`);
+    }
+  }
+
+  if (obj.restartStorm !== undefined) {
+    const r = obj.restartStorm as any;
+    if (r && typeof r === 'object' && !Array.isArray(r)) {
+      if (typeof r.perHour === 'number' && r.perHour >= 1) {
+        cfg.restartStorm = { perHour: Math.floor(r.perHour) };
+      } else if (r.perHour !== undefined) {
+        warn(`"restartStorm.perHour" must be a number >= 1 (${source})`);
+      }
+    } else {
+      warn(`"restartStorm" must be an object (${source})`);
+    }
+  }
+
+  if (obj.search !== undefined) {
+    const s = obj.search as any;
+    if (s && typeof s === 'object' && !Array.isArray(s)) {
+      if (typeof s.logIndex === 'boolean') cfg.search = { logIndex: s.logIndex };
+      else if (s.logIndex !== undefined) warn(`"search.logIndex" must be a boolean (${source})`);
+    } else {
+      warn(`"search" must be an object (${source})`);
+    }
+  }
+
   if (obj.frameworks !== undefined) {
     // Custom framework profiles (M65): data-only rows. Invalid entries are
     // skipped with a warning (doctor surfaces them); valid ones survive.
@@ -280,7 +320,7 @@ function validate(raw: unknown, source: string): AppmanConfig {
 export function configLookupPaths(): { local: string; user: string } {
   return {
     local: path.join(process.cwd(), 'daimon.config.json'),
-    user: path.join(os.homedir(), '.daimon', 'config.json'),
+    user: path.join(daimonDir(), 'config.json'),
   };
 }
 

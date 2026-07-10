@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { AppmanConfig, DiscoveredApp } from './types.js';
 import { findCycle } from './depends.js';
@@ -7,6 +8,7 @@ import { History } from './history.js';
 import { analyseRestartCadence } from './profiles.js';
 import { configValidationWarnings } from './config.js';
 import { allProfiles, matchDetect, RootFs } from './frameworks.js';
+import { daimonDir } from './daemon.js';
 
 export interface Check {
   name: string;
@@ -17,6 +19,13 @@ export interface Check {
 export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Promise<{ ok: boolean; checks: Check[] }> {
   const checks: Check[] = [];
   const appNames = new Set(apps.map(a => a.name));
+
+  // Active state directory (M79): relocatable via DAIMON_HOME.
+  checks.push({
+    name: 'daimon-home',
+    ok: true,
+    detail: `${daimonDir()}${process.env.DAIMON_HOME ? ' (from DAIMON_HOME)' : ''}`,
+  });
 
   // Field-level validation problems collected when this process loaded the
   // config (M55 malformed-config softening — broken fields ran on defaults).
@@ -162,10 +171,75 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
     }
   }
 
+  // restart-storm (M76): apps whose unrequested exits exceeded
+  // restartStorm.perHour within the last hour, from the crashes table.
+  if (config.history.enabled) {
+    try {
+      const h = new History(config.history);
+      const crashes = h.queryCrashes({ since: Date.now() - 3600_000, limit: 1000 });
+      h.close();
+      const threshold = config.restartStorm?.perHour ?? 20;
+      const byApp = new Map<string, { count: number; exits: Map<string, number> }>();
+      for (const c of crashes) {
+        const cur = byApp.get(c.app) ?? { count: 0, exits: new Map() };
+        cur.count++;
+        const key = String(c.exitCode ?? c.signal ?? 'unknown');
+        cur.exits.set(key, (cur.exits.get(key) ?? 0) + 1);
+        byApp.set(c.app, cur);
+      }
+      let anyStorm = false;
+      for (const [app, v] of byApp) {
+        if (v.count <= threshold) continue;
+        anyStorm = true;
+        const topExit = [...v.exits.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown';
+        checks.push({
+          name: `restart-storm: ${app}`,
+          ok: false,
+          detail: `${v.count} unrequested exits in the last hour (top exit code ${topExit}, threshold ${threshold}/h) — run 'daimon why ${app}'`,
+        });
+      }
+      if (!anyStorm) checks.push({ name: 'restart-storm', ok: true });
+    } catch (err: any) {
+      checks.push({ name: 'restart-storm', ok: true, detail: `skipped: ${err?.message || err}` });
+    }
+  }
+
+  // searchroot-hygiene (M76): suspicious roots (drive roots, system dirs, the
+  // home dir itself) scan slowly and match junk. Suggest-only — never fails
+  // doctor, never auto-applied.
+  for (const sr of config.searchRoots) {
+    const root = typeof sr === 'string' ? sr : sr.path;
+    const reason = suspiciousRootReason(root);
+    if (reason) {
+      checks.push({
+        name: `searchroot-hygiene: ${root}`,
+        ok: true,
+        detail: `${reason} — consider narrowing to your projects folder (edit searchRoots or run 'daimon workspaces rm ${root}')`,
+      });
+    }
+  }
+
   checks.push({ name: 'agent token footprint', ok: true, detail: tokenFootprint(apps) });
 
   const ok = checks.every(c => c.ok);
   return { ok, checks };
+}
+
+// Exported for `daimon why` (server-side) and tests.
+export function suspiciousRootReason(root: string): string | null {
+  const abs = path.resolve(root);
+  const norm = abs.replace(/[\\/]+$/, '').toLowerCase();
+  const parsedRoot = path.parse(abs).root.replace(/[\\/]+$/, '').toLowerCase();
+  if (norm === parsedRoot) return 'drive/filesystem root';
+  const home = os.homedir().replace(/[\\/]+$/, '').toLowerCase();
+  if (norm === home) return 'home directory root';
+  const systemDirs = process.platform === 'win32'
+    ? ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)', 'c:\\programdata']
+    : ['/usr', '/etc', '/bin', '/sbin', '/var', '/system', '/library', '/opt/homebrew'];
+  for (const sys of systemDirs) {
+    if (norm === sys || norm.startsWith(sys + path.sep)) return 'system directory';
+  }
+  return null;
 }
 
 function tokenFootprint(apps: DiscoveredApp[]): string {

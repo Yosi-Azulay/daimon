@@ -1,0 +1,65 @@
+{
+  "runner": "go-test",
+  "resolve": {
+    "app": { "serverProfile": "go-air", "workspaceType": "polyglot" },
+    "expectCommand": "go test ./...",
+    "expectRunner": "go-test"
+  },
+  "cases": [
+    {
+      "name": "pass",
+      "exitCode": 0,
+      "output": [
+        "=== RUN   TestAdd",
+        "--- PASS: TestAdd (0.00s)",
+        "=== RUN   TestSub",
+        "--- PASS: TestSub (0.00s)",
+        "PASS",
+        "ok      example.com/mathx       0.012s"
+      ],
+      "expectTotals": { "total": 2, "passed": 2, "failed": 0, "skipped": 0, "durationMs": 12 },
+      "expectFailures": []
+    },
+    {
+      "name": "fail-verbose",
+      "exitCode": 1,
+      "output": [
+        "=== RUN   TestAdd",
+        "    math_test.go:12: got 3, want 4",
+        "--- FAIL: TestAdd (0.00s)",
+        "=== RUN   TestSub",
+        "--- PASS: TestSub (0.00s)",
+        "FAIL",
+        "FAIL    example.com/mathx       0.005s"
+      ],
+      "expectTotals": { "total": 2, "passed": 1, "failed": 1, "skipped": 0, "durationMs": 5 },
+      "expectFailures": [
+        { "suite": "example.com/mathx", "test": "TestAdd", "file": "math_test.go", "line": 12, "messageIncludes": "got 3, want 4" }
+      ]
+    },
+    {
+      "name": "fail-quiet-with-skip",
+      "exitCode": 1,
+      "output": [
+        "--- FAIL: TestParse (0.01s)",
+        "    parse_test.go:44: unexpected token",
+        "--- SKIP: TestWindowsOnly (0.00s)",
+        "FAIL",
+        "FAIL    example.com/mathx/parser        0.031s"
+      ],
+      "expectTotals": { "total": 2, "passed": 0, "failed": 1, "skipped": 1, "durationMs": 31 },
+      "expectFailures": [
+        { "suite": "example.com/mathx/parser", "test": "TestParse", "file": "parse_test.go", "line": 44, "messageIncludes": "unexpected token" }
+      ]
+    },
+    {
+      "name": "unparsed-garbage",
+      "exitCode": 1,
+      "output": [
+        "go: cannot find main module"
+      ],
+      "expectTotals": null,
+      "expectFailures": []
+    }
+  ]
+}

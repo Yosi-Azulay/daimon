@@ -13,11 +13,13 @@ You manage local dev servers through the `daimon` CLI. Loopback only (`http://12
 1. Discover state: `daimon list` (auto-spawns daemon on first call).
 2. Start a target: prefer `daimon up <profile>` (cascades deps, blocks until healthy) over `daimon start`.
 3. Block until ready: `daimon wait <name> --until healthy --timeout 60s` instead of polling `daimon status`.
-4. On failure, ALWAYS gather:
-   - `daimon why <name>` — last transition + preceding events
+4. On failure, start with ONE call: `daimon context <name>` — status, top error groups, last crash, last test run, suspect commits in a single payload. Then, only if needed:
+   - `daimon why <name>` — crash forensics (exit code, final log lines, restart storms)
    - `daimon errors <name> --structured` — file:line:col, code, message
+   - `daimon search "<needle>" --app <name> --since 24h` — full-text over logs/errors/events
    - `daimon logs <name> --tail 200`
-5. Stop the app cleanly when done: `daimon stop <name>` or `daimon down <profile>`.
+5. To run the project's tests: `daimon test <name>` (exit 0 pass / 1 failures / 2 timeout). Parsed failures carry file:line.
+6. Stop the app cleanly when done: `daimon stop <name>` or `daimon down <profile>`.
 
 ## Constraints
 

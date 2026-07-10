@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Registry } from './registry.js';
+import { daimonDir } from './daemon.js';
 
 const SECRET_RX = /key|secret|token|password|api[-_]?key/i;
 
@@ -62,7 +63,7 @@ export function buildSnapshot(registry: Registry, name: string): SnapshotPayload
 export function writeSnapshot(registry: Registry, name: string): { path: string; payload: SnapshotPayload } | null {
   const payload = buildSnapshot(registry, name);
   if (!payload) return null;
-  const dir = path.join(os.homedir(), '.daimon', 'snapshots');
+  const dir = path.join(daimonDir(), 'snapshots');
   fs.mkdirSync(dir, { recursive: true });
   const ts = payload.takenAt.replace(/[:.]/g, '-');
   // Sanitize the app name before using it as a filename component so a name

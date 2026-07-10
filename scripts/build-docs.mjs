@@ -63,6 +63,10 @@ const MCP_TOOLS = [
   ['daimon_subscribe_events', 'Long-poll new events filtered by kind.'],
   ['daimon_notify_on_error', 'Block until next error-new event (or timeout).'],
   ['daimon_frameworks', 'List the framework adapter registry: built-in + custom profiles, match counts, badges.'],
+  ['daimon_context', 'The agent context pack: status, error groups, last crash, last test run, compile stats, suspect commits, locks — one call. Budgetable.'],
+  ['daimon_run_tests', 'Run the app\'s own test suite once; parsed failures with file:line + totals. Soft-lock gated.'],
+  ['daimon_why', 'Crash forensics: last crash report, grouped errors, regressions, restart-storm state, suspect commit, doctor findings.'],
+  ['daimon_search', 'Full-text search over log lines, errors, and events (FTS5 with LIKE fallback).'],
 ];
 
 function renderMcp() {
@@ -151,8 +155,11 @@ ${renderMcp()}
   <li><code>healthProbe</code> — toggle and shape the per-app health probe.</li>
   <li><code>webhooks</code> — outbound notifications: <code>[{url, events?, headers?, filter?, apps?}]</code> with Slack/Discord shaping; <code>apps</code> scopes an entry to specific apps (v0.11).</li>
   <li><code>frameworks</code> — custom framework profiles (v0.11): data-only rows <code>[{id, detect, command, readiness?, url?, errorParser?}]</code> checked after the built-in registry. Detection markers and regex strings only — never loaded code.</li>
-  <li><code>overrides.&lt;app&gt;</code> — per-app port / command / env / webhooks, plus tuning knobs like <code>compileRegressionFactor</code> (multiplier over the compile-time baseline before a regression fires).</li>
-  <li><code>history</code> — SQLite retention controls.</li>
+  <li><code>overrides.&lt;app&gt;</code> — per-app port / command / env / webhooks / <code>testCommand</code> (v0.12: explicit test runner, always wins) / <code>logIndex</code> (v0.12: opt this app's log lines out of search indexing), plus tuning knobs like <code>compileRegressionFactor</code>.</li>
+  <li><code>history</code> — SQLite retention controls (also prunes v0.12 test runs, crash reports, and the search index).</li>
+  <li><code>tests</code> — <code>{ flakyThreshold: 3 }</code> (v0.12): pass↔fail flips at the same git head before a test is flagged flaky.</li>
+  <li><code>restartStorm</code> — <code>{ perHour: 20 }</code> (v0.12): unrequested exits per hour before a single <code>restart-storm</code> event fires.</li>
+  <li><code>search</code> — <code>{ logIndex: true }</code> (v0.12): global default for per-app log-line indexing; errors/events are always indexed.</li>
 </ul>
 
 <h2 id="faq">FAQ</h2>

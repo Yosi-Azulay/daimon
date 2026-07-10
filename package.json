@@ -1,7 +1,7 @@
 {
   "name": "daimon",
-  "version": "0.11.0",
-  "description": "Local dev-server manager for 20+ frameworks (Angular/Nx/Next.js/Vite/Django/Rails/.NET/Flutter…) — TUI, loopback HTTP API, JSON CLI, and MCP server for Claude Code",
+  "version": "0.12.0",
+  "description": "Local dev-server manager for 20+ frameworks (Angular/Nx/Next.js/Vite/Django/Rails/.NET/Flutter/Deno/Bun…) — dev servers, tests, crash forensics, and full-text search behind a TUI, loopback HTTP API, JSON CLI, and MCP server for Claude Code",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Yosi Azulay (https://flycotech.com)",
   "homepage": "https://github.com/Yosi-Azulay/daimon#readme",
@@ -41,7 +41,7 @@
     "start": "npm run build && node dist/main.js",
     "cli": "node dist/cli.js",
     "mcp": "node dist/mcp.js",
-    "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs test/parser-corpus.test.mjs test/overview-budget.test.mjs test/autofix-rules.test.mjs test/history-trends.test.mjs test/orchestrate.test.mjs test/polyglot-discovery.test.mjs test/tui-ribbon.test.mjs test/cli-surface.test.mjs test/parser-fuzz.test.mjs test/history-stress.test.mjs test/lock-contention.test.mjs test/reliability.test.mjs test/self-metrics.test.mjs test/plugins.test.mjs test/task-summary.test.mjs test/path-scope.test.mjs test/health-profiles.test.mjs test/timeline.test.mjs test/agents.test.mjs test/audit.test.mjs test/regressions.test.mjs test/webhooks.test.mjs test/recovery.test.mjs test/perf-50apps.test.mjs test/history-property.test.mjs test/scope-property.test.mjs test/mcp-contract.test.mjs test/profiles.test.mjs test/review-hardening.test.mjs test/frameworks-registry.test.mjs test/js-wave.test.mjs test/frameworks.test.mjs test/backend-wave.test.mjs test/deferred-debt.test.mjs",
+    "test": "node --test test/depends.test.mjs test/bundle.test.mjs test/notifier.test.mjs test/regression.test.mjs test/parser-corpus.test.mjs test/overview-budget.test.mjs test/autofix-rules.test.mjs test/history-trends.test.mjs test/orchestrate.test.mjs test/polyglot-discovery.test.mjs test/tui-ribbon.test.mjs test/cli-surface.test.mjs test/parser-fuzz.test.mjs test/history-stress.test.mjs test/lock-contention.test.mjs test/reliability.test.mjs test/self-metrics.test.mjs test/plugins.test.mjs test/task-summary.test.mjs test/path-scope.test.mjs test/health-profiles.test.mjs test/timeline.test.mjs test/agents.test.mjs test/audit.test.mjs test/regressions.test.mjs test/webhooks.test.mjs test/recovery.test.mjs test/perf-50apps.test.mjs test/history-property.test.mjs test/scope-property.test.mjs test/mcp-contract.test.mjs test/profiles.test.mjs test/review-hardening.test.mjs test/frameworks-registry.test.mjs test/js-wave.test.mjs test/frameworks.test.mjs test/backend-wave.test.mjs test/deferred-debt.test.mjs test/testrunners.test.mjs test/test-verb-http.test.mjs test/crash-forensics.test.mjs test/fts-search.test.mjs test/context-pack.test.mjs test/small-wave.test.mjs",
     "clean:dist": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:bundle": "npm run clean:dist && esbuild src/cli.ts src/main.ts src/mcp.ts --bundle --platform=node --target=node20 --format=esm --minify --legal-comments=none --outdir=dist --packages=external",
     "build:dashboard": "node -e \"const fs=require('fs');if(fs.existsSync('dashboard/node_modules')){require('child_process').execSync('npm run build',{cwd:'dashboard',stdio:'inherit'});}else{console.log('[daimon] dashboard/node_modules missing — skipping ng build. Run: (cd dashboard && npm install) to enable the Angular SPA bundle.');}\"",

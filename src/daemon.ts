@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+﻿import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
@@ -15,15 +15,17 @@ export interface LockInfo {
   configPath?: string;
 }
 
-const DAIMON_DIR = path.join(os.homedir(), '.daimon');
-const LOCK_PATH = path.join(DAIMON_DIR, 'daemon.lock');
-
+// DAIMON_HOME (M79): first-class relocation of daimon's entire state dir --
+// lock, config, history DB, logs, plugins, snapshots, sessions. Read per call
+// (not cached at module load) so test harnesses can isolate ~/.daimon without
+// HOME/USERPROFILE games.
 export function daimonDir(): string {
-  return DAIMON_DIR;
+  const env = process.env.DAIMON_HOME?.trim();
+  return env ? path.resolve(env) : path.join(os.homedir(), '.daimon');
 }
 
 export function lockPath(): string {
-  return LOCK_PATH;
+  return path.join(daimonDir(), 'daemon.lock');
 }
 
 function isPidAlive(pid: number): boolean {
@@ -37,11 +39,11 @@ function isPidAlive(pid: number): boolean {
 
 export function readLock(): LockInfo | null {
   try {
-    const raw = fs.readFileSync(LOCK_PATH, 'utf8');
+    const raw = fs.readFileSync(lockPath(), 'utf8');
     const info = JSON.parse(raw) as LockInfo;
     if (!info || typeof info.pid !== 'number') return null;
     if (!isPidAlive(info.pid)) {
-      try { fs.unlinkSync(LOCK_PATH); } catch {}
+      try { fs.unlinkSync(lockPath()); } catch {}
       return null;
     }
     return info;
@@ -51,14 +53,14 @@ export function readLock(): LockInfo | null {
 }
 
 export function writeLock(info: LockInfo): void {
-  fs.mkdirSync(DAIMON_DIR, { recursive: true });
-  const tmp = LOCK_PATH + '.' + process.pid + '.tmp';
+  fs.mkdirSync(daimonDir(), { recursive: true });
+  const tmp = lockPath() + '.' + process.pid + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(info));
-  fs.renameSync(tmp, LOCK_PATH);
+  fs.renameSync(tmp, lockPath());
 }
 
 export function removeLock(): void {
-  try { fs.unlinkSync(LOCK_PATH); } catch {}
+  try { fs.unlinkSync(lockPath()); } catch {}
 }
 
 function resolveMainJs(): string {
@@ -105,3 +107,4 @@ export function buildLockInfo(apiPort: number, headless: boolean, configPath?: s
     configPath,
   };
 }
+

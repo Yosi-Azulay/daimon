@@ -1,7 +1,7 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { daimonDir } from './daemon.js';
 
 const MARKERS = ['nx.json', 'angular.json', 'vite.config.ts', 'vite.config.js', 'vite.config.mjs', '.storybook'];
 
@@ -82,7 +82,7 @@ export async function runInit(opts: InitOpts = {}): Promise<InitResult> {
     const apiPort = Number(apiPortRaw) || 4999;
 
     const targetAns = (await ask(rl, 'Write to (1) ./daimon.config.json or (2) ~/.daimon/config.json? [1] ')) || '1';
-    const target = targetAns.trim() === '2' ? path.join(os.homedir(), '.daimon', 'config.json') : path.join(cwd, 'daimon.config.json');
+    const target = targetAns.trim() === '2' ? path.join(daimonDir(), 'config.json') : path.join(cwd, 'daimon.config.json');
 
     if (fs.existsSync(target) && !opts.force) {
       throw new Error(`refusing to overwrite ${target} (pass --force to overwrite)`);

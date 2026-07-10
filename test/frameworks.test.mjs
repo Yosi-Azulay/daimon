@@ -118,7 +118,9 @@ for (const id of fixtureIds) {
       }
     });
 
-    test(`framework ${id}: ≥1 parsed error with file:line`, () => {
+    // Runtime profiles (deno/bun, M79) ship no error parser — their fixtures
+    // exercise detection + readiness/url only.
+    if (fx.parse.errors) test(`framework ${id}: ≥1 parsed error with file:line`, () => {
       const state = freshState();
       state.status = 'serving';
       const before = fx.parse.startup.length;

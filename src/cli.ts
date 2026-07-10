@@ -6,7 +6,7 @@ import { discoverApps } from './discovery.js';
 import { runDoctor } from './doctor.js';
 import { findPortHolder, killHolder } from './portDiag.js';
 import { readSession } from './session.js';
-import { readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
+import { daimonDir, readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
 import { DAIMON_VERSION } from './version.js';
 import { generateAgentId } from './agents.js';
 
@@ -281,6 +281,10 @@ interface Flags {
   steal?: boolean;
   json?: boolean;
   min?: number;
+  limit?: number;
+  flaky?: boolean;
+  kind?: string;
+  grep?: string;
   passthrough: string[];
 }
 
@@ -334,6 +338,10 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--open') f.open = true;
     else if (a === '--steal') f.steal = true;
     else if (a === '--json') f.json = true;
+    else if (a === '--limit') f.limit = Number(args[++i]);
+    else if (a === '--flaky') f.flaky = true;
+    else if (a === '--kind') f.kind = args[++i];
+    else if (a === '--grep') f.grep = args[++i];
     else f.positional.push(a);
   }
   return f;
@@ -401,7 +409,7 @@ function printAbout(): void {
     const r = loadConfig();
     if (r.kind === 'loaded') configPath = r.path;
   } catch {}
-  const lockPath = path.join(os.homedir(), '.daimon', 'lock.json');
+  const lockPath = path.join(daimonDir(), 'lock.json');
   const claudeArtifacts: string[] = [];
   try {
     const m = readClaudeManifest(defaultClaudeDir());
@@ -903,6 +911,74 @@ async function main() {
       out(r.body);
       return;
     }
+    case 'test': {
+      const name = f.positional[0];
+      if (!name) failHint('missing app name', 'usage: daimon test <name> [--timeout <dur>] [--steal]');
+      if (!f.all) await ensureCurrentWorkspace();
+      const params = scopeQs(f);
+      if (f.steal) params.set('steal', '1');
+      let timeoutSec = 300;
+      if (f.timeout) {
+        const t = durationToSeconds(f.timeout);
+        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        timeoutSec = Math.min(t, 600);
+      }
+      params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
+      const r = await call(`/api/apps/${encodeURIComponent(name)}/test?${params.toString()}`, 'POST');
+      if (r.status === 412) reportCollisionAndExit(r.body);
+      if (r.status === 409 && r.body?.error === 'locked-by-other-agent') {
+        process.stderr.write(`error: app '${name}' is locked by agent ${r.body.agent} (expires ${new Date(r.body.expiresAt).toISOString()})\n`);
+        process.stderr.write(`hint: pass --steal to override, or wait\n`);
+        process.exit(5);
+      }
+      if (r.status === 404) await suggestUnknownApp(name);
+      out(r.body);
+      if (r.status === 422 || r.body?.error) process.exit(1);
+      if (r.body?.timedOut) process.exit(2);
+      const failed = r.body?.totals?.failed ?? null;
+      if ((failed != null && failed > 0) || (failed == null && r.body?.exitCode !== 0)) process.exit(1);
+      return;
+    }
+    case 'context': {
+      const name = f.positional[0];
+      if (!name) failHint('missing app name', 'usage: daimon context <name> [--budget <chars>]');
+      if (!f.all) await ensureCurrentWorkspace();
+      const params = scopeQs(f);
+      if (f.budget && Number.isFinite(f.budget) && f.budget > 0) params.set('budget', String(Math.floor(f.budget)));
+      const r = await call(`/api/context/${encodeURIComponent(name)}?${params.toString()}`);
+      if (r.status === 412) reportCollisionAndExit(r.body);
+      if (r.status === 404) await suggestUnknownApp(name);
+      out(r.body);
+      return;
+    }
+    case 'search': {
+      const q = f.positional.join(' ').trim();
+      if (!q) failHint('missing query', 'usage: daimon search <query> [--app <a>] [--since <dur>] [--kind logs|errors|events]');
+      const params = new URLSearchParams({ q });
+      if (f.app) params.set('app', f.app);
+      if (f.since) params.set('since', f.since);
+      if (f.kind) params.set('kind', f.kind);
+      if (f.limit != null && Number.isFinite(f.limit)) params.set('limit', String(Math.floor(f.limit)));
+      const r = await call('/api/search?' + params.toString());
+      if (r.status === 400) fail(JSON.stringify(r.body));
+      out(r.body);
+      return;
+    }
+    case 'test-history': {
+      const name = f.positional[0];
+      if (!name) failHint('missing app name', 'usage: daimon test-history <name> [--flaky] [--limit N]');
+      const params = new URLSearchParams({ app: name });
+      if (f.flaky) {
+        const r = await call('/api/tests/flaky?' + params.toString());
+        out(r.body);
+        return;
+      }
+      if (f.limit != null && Number.isFinite(f.limit)) params.set('limit', String(Math.floor(f.limit)));
+      else params.set('limit', '20');
+      const r = await call('/api/tests?' + params.toString());
+      out(r.body);
+      return;
+    }
     case 'frameworks': {
       const r = await call('/api/frameworks');
       out(r.body);
@@ -938,8 +1014,33 @@ async function main() {
     case 'why': {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: daimon why <name>' }));
-      const r = await call(`/api/history/why/${encodeURIComponent(name)}`);
-      out(r.body);
+      if (!f.all) await ensureCurrentWorkspace();
+      const params = scopeQs(f);
+      const qs = params.toString();
+      const r = await call(`/api/why/${encodeURIComponent(name)}${qs ? '?' + qs : ''}`);
+      if (r.status === 412) reportCollisionAndExit(r.body);
+      if (r.status === 404) await suggestUnknownApp(name);
+      const b = r.body;
+      if (process.stdout.isTTY && isColorEnabled() && b && typeof b === 'object') {
+        const dim = (s: string) => color.dim(s);
+        const head = (s: string) => color.bold(s);
+        const L: string[] = [];
+        L.push(head(`why ${b.app}`) + dim(`  status=${b.status?.status ?? '?'} health=${b.status?.health ?? '?'} errors=${b.status?.errCount ?? 0}`));
+        if (b.lastCrash) {
+          L.push(head('last crash') + `  code=${b.lastCrash.exitCode ?? 'null'}${b.lastCrash.signal ? ` signal=${b.lastCrash.signal}` : ''} uptime=${Math.round((b.lastCrash.uptimeMs ?? 0) / 1000)}s ${dim(new Date(b.lastCrash.ts).toISOString())}`);
+          for (const ln of (b.lastCrash.lastLines ?? []).slice(-5)) L.push(dim('  | ' + ln));
+        } else {
+          L.push(dim('no recorded crashes'));
+        }
+        if (b.storm?.active) L.push(head('restart storm') + `  ${b.storm.countLastHour} exits in the last hour (threshold ${b.storm.threshold})`);
+        for (const g of b.errorGroups ?? []) L.push(head('error') + ` ×${g.count}  ${g.message.slice(0, 120)}`);
+        for (const rg of (b.regressions ?? []).slice(0, 3)) L.push(head('regression') + `  ${rg.kind ?? '?'} ×${rg.factor ?? '?'}${rg.suspectCommit ? dim('  suspect ' + rg.suspectCommit) : ''}`);
+        if (b.suspectCommit) L.push(head('suspect commit') + `  ${b.suspectCommit}`);
+        for (const d of b.doctor ?? []) L.push(head(d.ok ? 'note' : 'doctor') + `  ${d.name}${d.detail ? dim(' — ' + d.detail) : ''}`);
+        process.stdout.write(L.join('\n') + '\n');
+        return;
+      }
+      out(b);
       return;
     }
     case 'env': {
@@ -1376,14 +1477,42 @@ async function main() {
     }
     case 'logs': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon logs <name> [--tail N] [--since 30s]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon logs <name> [--tail N] [--since 30s] [--grep <regex>] [--stream]' }));
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
       if (f.tail != null && !Number.isNaN(f.tail)) params.set('tail', String(f.tail));
       if (f.since) params.set('since', f.since);
+      if (f.grep) params.set('grep', f.grep);
+      if (f.stream) {
+        // Live tail (SSE) with the server-side --grep filter applied; emits
+        // NDJSON {ts,line} until SIGINT.
+        try {
+          const res = await fetch(getBaseUrl() + `/api/apps/${encodeURIComponent(name)}/logs/stream?${params.toString()}`, { headers: authHeaders() });
+          if (res.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+          if (!res.ok || !res.body) fail(JSON.stringify({ error: `stream failed: HTTP ${res.status}` }));
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const chunks = buf.split('\n\n');
+            buf = chunks.pop() ?? '';
+            for (const chunk of chunks) {
+              const data = chunk.split('\n').find(l => l.startsWith('data: '));
+              if (data) process.stdout.write(data.slice(6) + '\n');
+            }
+          }
+        } catch (err: any) {
+          fail(JSON.stringify({ error: err?.message || String(err) }));
+        }
+        return;
+      }
       const qs = params.toString();
       const r = await call(`/api/apps/${encodeURIComponent(name)}/logs${qs ? '?' + qs : ''}`);
       if (r.status === 412) reportCollisionAndExit(r.body);
+      if (r.status === 400) fail(JSON.stringify(r.body));
       if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
       out(r.body);
       return;

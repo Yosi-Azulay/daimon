@@ -80,6 +80,18 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   if (archivedDb) {
     registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `history.db was corrupt and was rebuilt; previous db archived at ${archivedDb}` });
   }
+  const ftsDegraded = history.ftsDegradedReason();
+  if (ftsDegraded) {
+    registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `full-text search degraded to LIKE fallback: ${ftsDegraded}` });
+  }
+  // Per-app log-line FTS ingestion (M77). Errors/events are always indexed via
+  // the events table; log lines default on with global/per-app opt-out.
+  registry.on('log', ({ name, ts, line }: { name: string; ts: number; line: string }) => {
+    const cfg2 = registry.getConfig();
+    if (cfg2.search?.logIndex === false) return;
+    if (cfg2.overrides?.[name]?.logIndex === false) return;
+    history.recordLogLine(name, line, ts);
+  });
 
   // Session preservation (M55): restore error history / log tails from the
   // last snapshot (survives kill -9), then keep snapshotting every 30s.

@@ -3,6 +3,7 @@ import { RouterOutlet } from '@angular/router';
 import { NavRailComponent } from './nav-rail';
 import { TopbarComponent } from './topbar';
 import { CommandPaletteComponent } from './command-palette';
+import { OnboardingTourComponent } from './onboarding-tour';
 import { KeyboardShortcutsService } from './keyboard-shortcuts';
 import { DaimonApi } from './daimon-api';
 
@@ -12,7 +13,7 @@ const WS_KEY = 'daimon.workspace';
   selector: 'dm-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent],
+  imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent, OnboardingTourComponent],
   template: `
     <div class="dm-shell">
       <dm-nav-rail></dm-nav-rail>
@@ -34,6 +35,7 @@ const WS_KEY = 'daimon.workspace';
     @defer (when paletteActivated()) {
       <dm-command-palette></dm-command-palette>
     }
+    <dm-onboarding-tour></dm-onboarding-tour>
   `,
   styles: [`
     :host { display: block; height: 100vh; }

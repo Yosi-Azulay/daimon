@@ -1,9 +1,9 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { Registry } from './registry.js';
 import type { NotificationsConfig } from './types.js';
+import { daimonDir } from './daemon.js';
 
 const requireCjs = createRequire(import.meta.url);
 
@@ -17,7 +17,7 @@ export class Notifier {
   private logFile: string;
 
   constructor(private readonly registry: Registry, private readonly cfg: NotificationsConfig) {
-    this.logFile = path.join(os.homedir(), '.daimon', 'notifications.log');
+    this.logFile = path.join(daimonDir(), 'notifications.log');
     try { fs.mkdirSync(path.dirname(this.logFile), { recursive: true }); } catch {}
     if (!cfg.enabled) {
       this.audit('init', 'disabled by config');

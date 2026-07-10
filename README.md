@@ -4,7 +4,7 @@
 
 # Daimon
 
-A local manager for dev servers, polyglot since v0.11: Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri — plus a generic `package.json` fallback and custom profiles from config. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server.
+A local manager for dev servers, polyglot since v0.11: Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri, Deno / Bun — plus a generic `package.json` fallback and custom profiles from config. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server. Since v0.12 it also closes **the whole loop**: `daimon test` with parsed failures and flaky detection, crash forensics with `daimon why`, full-text search over everything it has seen, and a one-call `daimon context` pack for agents.
 
 Daimon is built for the **single machine with several agents on it**: you in one terminal, a Claude Code session in another repo, a second Claude in a third. All of them talk to the same daemon, see only their own workspace by default, carry distinct agent identities, and coordinate through per-app soft-locks instead of stepping on each other's dev servers.
 
@@ -56,6 +56,8 @@ Every framework is a declarative row in the adapter registry (`src/frameworks.ts
 | `expo` | `app.json` + `expo` dep | `expo start` (pm-aware) | `Metro waiting on` · web-preview URL | generic |
 | `flutter` | `pubspec.yaml` (flutter sdk) | `flutter run -d web-server` | `is being served at` · web URL | dart file:line |
 | `tauri` | `src-tauri/tauri.conf.json` | `npm run tauri dev` (pm-aware) | via underlying vite/next | rust-cargo |
+| `deno` (v0.12) | `deno.json` / `deno.jsonc` | `deno task dev` | `Listening on` · announced URL | generic |
+| `bun` (v0.12) | `bunfig.toml` / `bun.lock*` + `dev` script | `bun run dev` | TCP port-listen fallback · announced URL | generic |
 | `pnpm-workspace` / `turbo` | `pnpm-workspace.yaml` / `turbo.json` | enumerate member packages | per-member profile | per-member |
 | `package-json` (fallback) | `package.json` with `dev`/`serve`/`start` script | `npm run <script>` (pm-aware) | announced URL when printed | generic |
 
@@ -89,6 +91,71 @@ Add your own framework as **data** (validated at config load — regex strings a
 ```
 
 `detect` supports `files` (all must exist), `anyFiles` (any), `fileContains` (any file+regex pair), and `packageJson` (`dependsOn` / `script`). Custom profiles are checked after built-ins; invalid entries are skipped with a doctor-surfaced warning. Known `errorParser` ids: `python-traceback`, `go-build`, `rust-cargo`, `dotnet`, `jvm-gradle`, `php`, plus the classic tool ids (`vite`, `webpack`, …).
+
+## The whole loop (v0.12)
+
+v0.11 finished the *serving* story; v0.12 covers everything around it.
+
+### `daimon test` — tests as pipeline citizens
+
+Daimon **wraps the project's own runner** (it never installs or replaces one) and parses the result:
+
+```bash
+daimon test web-admin                 # exit 0 all pass · 1 failures · 2 timeout · 5 locked
+daimon test api --timeout 120s
+daimon test-history web-admin         # recent runs: totals, exit codes, gitHead, failures
+daimon test-history web-admin --flaky # tests that flipped pass↔fail ≥3× at the same commit
+```
+
+- **Runner resolution**: `overrides.<app>.testCommand` always wins; otherwise the app's framework profile hints the runner — JS profiles pick vitest vs jest by dependency check, `django`/`fastapi`/`flask` → pytest, `go-air` → `go test ./...`, `rust-trunk`/`tauri` → `cargo test`, `dotnet` → `dotnet test`. No resolvable runner → `{ error, hint }`.
+- **Parsed failures**: `{suite, test, file, line, message}` + totals, fail-soft (unparsed output still lands in the run log; totals fall back to the exit code). Every parser is gated by a fixture in `test/fixtures/testrunners/` — same convention as framework profiles.
+- **History**: runs land in `test_runs`/`test_failures` (`GET /api/tests`), failures carry the same fingerprint scheme as errors, and a test that flips pass↔fail ≥3 times at the same `gitHead` fires a `flaky-test-detected` event (threshold: `tests.flakyThreshold`). Failing runs fire `test-failed` — both are webhook-eligible.
+- **Concurrency-safe**: `test` takes the same per-app soft lock as start/stop — a second agent gets exit 5 (`--steal` applies).
+- The dashboard **Tests page** shows run history with pass/fail sparklines, failure drill-down with VS Code links, run-to-run diffs (newly failing / newly passing), and flaky badges.
+
+### Crash forensics — `daimon why`
+
+When an app dies, the *why* no longer evaporates. Every child exit daimon didn't request persists a crash report — exit code, signal, uptime, the last 50 log lines, and the git head — ring-buffered to the last 10 per app:
+
+```bash
+daimon why web-admin
+# → status, last crash (code/signal/uptime + final log lines), grouped 24h errors,
+#   regressions, restart-storm state, suspect commit, matching doctor findings
+```
+
+Restart storms (default: >20 unrequested exits/hour, `restartStorm.perHour`) fire a single `restart-storm` event per storm and a doctor finding pointing at `daimon why`. Doctor also gained `searchroot-hygiene` (flags drive roots / system dirs / bare home as search roots — suggest-only).
+
+### Full-text search
+
+Everything daimon has seen, greppable — per-app log lines (indexed by default, opt out via `search.logIndex` or `overrides.<app>.logIndex`), plus all errors and events:
+
+```bash
+daimon search "ECONNREFUSED" --app api --since 24h
+daimon search "unicor*"                      # trailing * = prefix search
+daimon search "hydration" --kind logs
+```
+
+Hits are `{kind, app, ts, snippet, ref}`. FTS5 (built into the bundled better-sqlite3) with deferred indexing that stays off the write path; if FTS is unavailable the daemon self-warns once and search degrades to a LIKE scan (`fallback: true`) — it never blocks. The dashboard command palette gets a search mode (`>` prefix). Filtered live tails work too: `daimon logs api --grep "ERROR|refused" --stream`.
+
+### `daimon context` — the agent context pack
+
+Six round-trips become one. Pure composition of existing queries — no new state:
+
+```bash
+daimon context web-admin --budget 4000
+```
+
+Returns status/framework/uptime, top 5 error fingerprint groups (24h), the last crash report, the last test run with failures, compile p50/p95 + last regression, suspect commits, and active locks/agents. `--budget <chars>` drops sections lowest-priority-first (`compile → agents → crashes → tests → errors`; `status` never drops) and lists what fell in `truncated[]`.
+
+### For agents
+
+The context-first workflow, in order:
+
+1. `daimon overview` — what's going on across the workspace (first call of a session).
+2. `daimon context <app>` — the full picture for the app you're debugging, one call.
+3. Targeted follow-ups only as needed: `daimon why` (crashes), `daimon errors --since-last` (new compile errors after an edit), `daimon search` (where did I see that string?), `daimon test` (did my change break the suite?).
+
+Everything is compact JSON, budgetable, and soft-lock aware — two agents on one machine coordinate instead of colliding. The same verbs are exposed over MCP (`daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`), and `daimon claude install` teaches the workflow to Claude Code.
 
 ## Multi-agent on one machine (v0.9 + v0.10)
 
@@ -271,6 +338,7 @@ Generated from `src/cliSurface.ts` — the single source of truth that also rend
 daimon start <name> [--with-deps] [--steal]
 daimon stop <name> [--steal]
 daimon restart <name> [--steal]
+daimon test <name> [--timeout <dur>] [--steal]   # run the app's own test suite; exit 0/1/2/5 (v0.12)
 daimon up [<profile>]              # topological start; waits for each to reach serving
 daimon down [<profile>]
 daimon run <name> <task> [--watch] [-- args...]
@@ -282,14 +350,17 @@ daimon list [--tag <name>] [--workspace <label>] [--full|--compact] [--stream] [
 daimon status <name> [--full|--compact]
 daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]
 daimon events [--since 1h] [--app <name>] [--stream]
-daimon logs <name> [--tail N] [--since 30s]
+daimon logs <name> [--tail N] [--since 30s] [--grep <regex>] [--stream]   # --grep/--stream: filtered live tail (v0.12)
 daimon history <name>              # uptime%, restart count, compile p50/p95, top errors
+daimon search <query> [--app <a>] [--since <dur>] [--kind logs|errors|events]   # full-text search (v0.12)
+daimon test-history <name> [--flaky] [--limit N]   # recent test runs / flaky tests (v0.12)
 
 # agent verbs
 daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]
 daimon ensure <name> [--until serving|healthy] [--timeout 180s]
 daimon ensure-up <profile> [--until serving|healthy] [--timeout 300s]
 daimon overview [--workspace <label>] [--profile <name>] [--budget <tokens>]   # decision-ready snapshot
+daimon context <name> [--budget <chars>]   # agent context pack: 6 round-trips in 1 (v0.12)
 daimon focus <name> [--until serving|healthy|stable] [--timeout 180s]          # one-shot subscribe-then-act
 daimon try-fix <name> [--until serving|healthy] [--timeout 180s]               # doctor + restart + wait
 daimon orchestrate <profile> [--goal serving|healthy|stable] [--dry-run] [--budget <tokens>]
@@ -299,7 +370,7 @@ daimon profiles suggest [--since 30d] [--min 5]   # profile candidates from co-s
 daimon ci start <profile> [--until ready|healthy] [--timeout 5m] [--json]      # CI helper (v0.10)
 
 # introspection
-daimon why <name>                  # last transition + 5 preceding events
+daimon why <name>                  # crash forensics: last crash + errors + storms + suspect commit (v0.12)
 daimon why-empty                   # explain an empty `daimon list`
 daimon discover [--dry-run]        # what daimon would (or did) detect
 daimon timeline [--since 7d] [--app <name>] [--kinds status,error,warning,lint,bundle,task]
@@ -335,8 +406,8 @@ GET  /api/apps                                  # compact by default; ?format=fu
 GET  /api/apps/:name
 GET  /api/apps/:name/errors[?since=2m]
 GET  /api/apps/:name/errors/since-last?client=<id>
-GET  /api/apps/:name/logs?tail=N&since=30s
-GET  /api/apps/:name/logs/stream                # Server-Sent Events
+GET  /api/apps/:name/logs?tail=N&since=30s&grep=<regex>
+GET  /api/apps/:name/logs/stream[?grep=<regex>] # Server-Sent Events, filtered live tail (v0.12)
 GET  /api/apps/:name/wait?until=serving&timeout=60
 GET  /api/events[?since=5m&app=<name>&stream=ndjson]
 GET  /api/agents                                # active agents + soft-locks (v0.10)
@@ -346,8 +417,14 @@ GET  /api/discovery/explain
 GET  /api/history/{events,compile-times,tasks,summary/:name,why/:name}
 GET  /api/history/trends?app=&metric=&since=
 GET  /api/history/bundles?app=
+GET  /api/tests?app=&limit=&since=              # test-run history + failures (v0.12)
+GET  /api/tests/flaky?app=                      # flaky tests at each gitHead (v0.12)
+GET  /api/search?q=&app=&since=&kind=           # full-text search (v0.12)
+GET  /api/why/:name                             # crash forensics composition (v0.12)
+GET  /api/context/:name?budget=                 # agent context pack (v0.12)
 GET  /api/config                                # current config (env redacted)
 POST /api/apps/:name/(start|stop|restart|snapshot|clean|run/:task)[?steal=1]
+POST /api/apps/:name/test?timeoutMs=[&steal=1]  # run the test suite, soft-lock gated (v0.12)
 POST /api/apps/:name/handoff                    # transfer soft-lock (v0.10)
 POST /api/apps/:name/focus?until=…              # NDJSON event stream
 POST /api/apps/:name/try-fix?until=…
@@ -385,9 +462,11 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, plus the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, and `daimon_notify_on_error`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview` (compact-by-default, token-budgetable); the recommended one-call workspace bring-up is `orchestrate <profile> goal=stable`.
+The MCP server exposes: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, plus the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, and `daimon_search`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
 
 ## State files (in `~/.daimon/`)
+
+Relocatable since v0.12: set `DAIMON_HOME=<dir>` to move the entire state directory (lock, config, history DB, logs, plugins, snapshots, sessions) — handy for test harnesses and side-by-side setups. `daimon doctor` prints the active home.
 
 - `config.json` — your config (above)
 - `daemon.lock` — `{ pid, apiPort, version, startedAt, headless }`

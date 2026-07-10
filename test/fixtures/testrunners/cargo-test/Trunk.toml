@@ -1,0 +1,3 @@
+# trunk fixture marker
+[build]
+target = "index.html"

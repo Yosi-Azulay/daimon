@@ -4,6 +4,35 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-10
+
+"The Whole Loop" — v0.11 finished the serving story; v0.12 covers everything around it: tests as pipeline citizens (M74–M75), crash forensics (M76), full-text search over everything daimon has seen (M77), a one-call agent context pack (M78), and a small wave of runtime profiles + DX (M79).
+
+### Added
+
+- **`daimon test` (M74)** — run the project's own test runner once (daimon wraps, never installs or replaces): runner resolution via registry `testRunner` hints (JS profiles pick vitest vs jest by dependency check; pytest / `go test ./...` / `cargo test` / `dotnet test` for the polyglot rows), with `overrides.<app>.testCommand` always winning. Failures parsed to `{suite, test, file, line, message}` + totals (fail-soft), recorded in new `test_runs`/`test_failures` history tables. `POST /api/apps/<name>/test` (soft-lock gated, `?steal=1`, audit-logged), `GET /api/tests`, exit codes 0/1/2/5. Five runner parsers (`vitest-jest`, `pytest`, `go-test`, `cargo-test`, `dotnet-test`), each gated by a fixture in `test/fixtures/testrunners/<id>/` + parameterized `test/testrunners.test.mjs` — a runner without a fixture doesn't ship.
+- **Flaky detection + Tests page (M75)** — a test fingerprint that flips pass↔fail ≥3 times at the same `gitHead` fires `flaky-test-detected` (once per fingerprint; threshold `tests.flakyThreshold`); failing runs fire `test-failed` — both webhook-eligible. `daimon test-history <app> [--flaky]`, `GET /api/tests/flaky`. Dashboard Tests page becomes run history: pass/fail sparklines, drill-down with VS Code links, run-to-run diff (newly failing / newly passing), flaky badges.
+- **Crash forensics (M76)** — every child exit daimon didn't request persists a crash report (`exitCode`, `signal`, `uptimeMs`, last 50 log lines, `gitHead`), ring-buffered to 10 per app in the history DB; `crash` event on the feed. Restart storms (> `restartStorm.perHour`, default 20) fire ONE `restart-storm` event per storm + a doctor rule pointing at `daimon why`. New doctor rules: `restart-storm`, `searchroot-hygiene` (drive roots / system dirs / bare home as searchRoots — suggest-only), `daimon-home`.
+- **`daimon why <app>` (M76)** — one-shot forensics composition (`GET /api/why/<app>`): status/health, last crash report, fingerprint-grouped 24h errors, regression events, active storm state, suspect commit, matching doctor findings. Readable panel on a TTY, compact JSON when piped.
+- **Full-text search (M77)** — FTS5 (built into the bundled better-sqlite3 — no new dependency) over events, errors, and per-app log lines (log indexing default-on, opt out via `search.logIndex` / `overrides.<app>.logIndex`). Deferred high-water-mark indexing keeps the write path clean (measured <10% insert overhead; trigger-per-insert costs 4–10× and was rejected); retention pruning cascades into the index; FTS failure degrades to a LIKE scan with a one-time self-warn — never blocks the daemon. `daimon search <q> [--app --since --kind logs|errors|events]`, `GET /api/search`, MCP `daimon_search`, dashboard palette search mode (`>` prefix). Perf budgets in-suite: search <300ms on a 100k corpus.
+- **`daimon context <app>` (M78)** — the agent context pack (`GET /api/context/<app>?budget=`): status/url/framework/uptime, top 5 error fingerprint groups, last crash, last test run + failures, compile p50/p95 + last regression, suspect commits, active locks/agents — composition of existing queries only, no new state. `--budget <chars>` drops sections lowest-priority-first (`compile → agents → crashes → tests → errors`; `status` never drops), reporting drops in `truncated[]`.
+- **MCP wave (M78)** — `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search` (25-tool surface); contract tests extended; `daimon claude` templates teach the context-first workflow.
+- **Runtime profiles (M79)** — `deno` (`deno.json[c]` → `deno task dev`) and `bun` (`bunfig.toml`/`bun.lock*` + dev script → `bun run dev`), fixtures per the M65 convention.
+- **`DAIMON_HOME` (M79)** — first-class env override relocating the entire `~/.daimon` state dir (lock, config, history, logs, plugins, snapshots, sessions); `daimon doctor` prints the active home; daimon's own e2e suites use it instead of HOME/USERPROFILE games.
+- **`daimon logs --grep` (M79)** — server-side case-insensitive regex filter (length-capped at 512 chars) on both the one-shot tail and the SSE live stream; `--stream` follows the filtered live tail as NDJSON.
+- **Dashboard (M79)** — first-run onboarding tour (dismiss-once, persisted) and a PWA manifest + icons (installable, loopback-only, static assets only).
+
+### Changed
+
+- New event kinds on the feed (all webhook-eligible via the existing filter): `test-run`, `test-failed`, `flaky-test-detected`, `crash`, `restart-storm`.
+- History DB migrations are additive (`CREATE TABLE IF NOT EXISTS`): `test_runs`, `test_failures`, `crashes`, `log_lines`, `fts_state` + `events_fts`/`log_fts` virtual tables. Retention prunes all of them.
+- History book-keeping timers are `unref`'d — history can never be what keeps a process alive.
+- Suite: **471+ tests** (from 387), including the test-runner kit, crash forensics, FTS budgets, and the context-pack contract.
+
+### Migration
+
+See `RELEASE-v0.12.0.md` — additive history-DB migration (auto-created on startup), `daimon test` is soft-lock gated, new event kinds for webhook filters, `DAIMON_HOME`.
+
 ## [0.11.0] — 2026-07-10
 
 "Polyglot & Polished" — framework support becomes a declarative adapter registry with three new waves of profiles (M65–M69), every profile becomes a full pipeline citizen (readiness / URL / error parsing), and the dashboard gets its long-deferred redesign (M70–M71). M72 pays the v0.10 debt; 20 single-app built-in profiles + 2 monorepo enumerators + the generic fallback ship with fixtures.

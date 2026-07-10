@@ -12,6 +12,9 @@ Loopback CLI at `http://127.0.0.1:{{api_port}}`. Compact JSON on stdout, errors 
 ## Verbs
 
 - `daimon overview` → workspace snapshot (totals, needs-attention, recently-changed). **Start here.**
+- `daimon context <name> [--budget <chars>]` → the whole picture for ONE app in one call: status/framework, top error groups, last crash, last test run + failures, compile stats, suspect commits, locks. **Call this first when debugging an app**, then make targeted calls. `--budget` drops sections lowest-priority-first (listed in `truncated[]`).
+- `daimon test <name> [--timeout <dur>]` → run the project's own test suite once (vitest/jest/pytest/go/cargo/dotnet, or `overrides.<name>.testCommand`). Parsed failures `{suite,test,file,line,message}` + totals; exit 0 pass / 1 failures / 2 timeout / 5 locked by another agent (`--steal` overrides). `daimon test-history <name> [--flaky]` → recent runs / flaky tests.
+- `daimon search <query> [--app <a>] [--since 24h] [--kind logs|errors|events]` → full-text search over everything daimon has seen (log lines, errors, events). Hits are `{kind,app,ts,snippet,ref}`; trailing `*` = prefix search.
 - `daimon list` → `{name,status,port,health,errCount,lastChangeMs}` per app. `--full` for v0.4 form.
 - `daimon status <name>` → compact `{name,status,port,url,health,errCount,lastChangeMs,uptime}`. `--full` for events/metrics.
 - `daimon ensure <name> [--until serving|healthy] [--timeout 180]` → one call: starts if stopped, blocks to target, returns terminal state.
@@ -20,7 +23,7 @@ Loopback CLI at `http://127.0.0.1:{{api_port}}`. Compact JSON on stdout, errors 
 - `daimon frameworks` → the framework adapter registry: built-in + custom profiles, which apps each matched, rejection stats.
 - `daimon logs <name> [--tail N] [--since 30s]` → recent log lines.
 - `daimon start|stop|restart <name>` · `daimon up|down [<profile>]` · `daimon wait <name> --until healthy --timeout 60s`.
-- `daimon why <name>` → last status transition + 5 events. `daimon why-empty` → explain an empty `list`.
+- `daimon why <name>` → one-shot forensics: status, last crash (exit code + final log lines), grouped 24h errors, regressions, restart-storm state, suspect commit, doctor findings. `daimon why-empty` → explain an empty `list`.
 - `daimon doctor [--auto-fix] [--dry-run] [--self]` → config + env sanity check; `--auto-fix` repairs orphan daemon, stale lock, missing search root, corrupt history DB; `--self` runs daimon's own heap / event-loop-lag / history-db query checks.
 - `daimon self` → daimon's own runtime metrics (pid, version, uptime, rss, heap, event-loop lag, history-db p95). Useful in bug reports.
 - `daimon plugin list|show <name>|validate <path>` → manage doctor plug-ins. Plug-ins live at `~/.daimon/plugins/doctor-*.mjs` and are inert until their `name` is added to `doctor.autoFix.permitted` — the same opt-in gate built-in rules use. If a plug-in is enabled in this workspace it will appear in `daimon plugin list` with `status:"ok"` and a `findings` array.
@@ -29,6 +32,10 @@ Loopback CLI at `http://127.0.0.1:{{api_port}}`. Compact JSON on stdout, errors 
 ## Patterns
 
 - **First call in a session:** `daimon overview`. If `totals.apps === 0`, the response includes `_meta.suggestion` — follow it.
+- **Debugging one app:** `daimon context <name>` first (one call replaces status+errors+logs+history), then targeted calls for whatever it surfaces.
+- **App keeps dying:** `daimon why <name>` — the last crash's exit code and final log lines are already there; don't tail logs hoping to catch it.
+- **After editing code:** `daimon test <name>`, then `daimon errors <name> --since-last --client claude` for compile errors.
+- **"Where did I see that string?":** `daimon search "<needle>" --since 24h`.
 - **Bring up one app idempotently:** `daimon ensure <name>`. Replaces the old `status → start → wait → status` sequence.
 - **Diff-style error checks:** `daimon errors <name> --since-last --client claude` returns only what's new since the last call.
 

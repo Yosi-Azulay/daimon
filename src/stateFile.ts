@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { daimonDir } from './daemon.js';
 
-const STATE_PATH = path.join(os.homedir(), '.daimon', 'state.json');
+const STATE_PATH = () => path.join(daimonDir(), 'state.json');
 
 export interface PersistedState {
   ports: Record<string, number>;
@@ -10,7 +10,7 @@ export interface PersistedState {
 
 export function loadPersistedState(): PersistedState {
   try {
-    const raw = fs.readFileSync(STATE_PATH, 'utf8');
+    const raw = fs.readFileSync(STATE_PATH(), 'utf8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && parsed.ports && typeof parsed.ports === 'object') {
       return { ports: parsed.ports };
@@ -24,13 +24,13 @@ let pending: PersistedState | null = null;
 
 function writeNow(state: PersistedState): void {
   try {
-    fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
+    fs.mkdirSync(path.dirname(STATE_PATH()), { recursive: true });
     // Atomic temp+rename so a crash mid-write can't leave a truncated
     // state.json — a half-written file fails JSON.parse on load and silently
     // resets every persisted port assignment.
-    const tmp = STATE_PATH + '.' + process.pid + '.tmp';
+    const tmp = STATE_PATH() + '.' + process.pid + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
-    fs.renameSync(tmp, STATE_PATH);
+    fs.renameSync(tmp, STATE_PATH());
   } catch (err: any) {
     process.stderr.write(`[daimon] warning: state write failed: ${err.message}\n`);
   }

@@ -27,6 +27,41 @@ export interface BundleRow {
   fileCount: number;
 }
 
+export interface CrashRow {
+  id: number;
+  ts: number;
+  app: string;
+  exitCode: number | null;
+  signal: string | null;
+  uptimeMs: number | null;
+  lastLines: string | null; // '\n'-joined tail of the log ring buffer
+  gitHead: string | null;
+}
+
+export interface TestRunRow {
+  id: number;
+  ts: number;
+  app: string;
+  runner: string | null;
+  durationMs: number | null;
+  total: number | null;
+  passed: number | null;
+  failed: number | null;
+  skipped: number | null;
+  exitCode: number | null;
+  gitHead: string | null;
+}
+
+export interface TestFailureRow {
+  runId: number;
+  suite: string | null;
+  test: string | null;
+  file: string | null;
+  line: number | null;
+  message: string | null;
+  fingerprint: string | null;
+}
+
 export interface TaskRunRow {
   id: number;
   ts: number;
@@ -45,7 +80,44 @@ type Op =
   | { kind: 'event'; row: { ts: number; app: string; type: string; from_state: string | null; to_state: string | null; message: string | null } }
   | { kind: 'compile'; row: { ts: number; app: string; ms: number } }
   | { kind: 'bundle'; row: { ts: number; app: string; initialKB: number; lazyKB: number; fileCount: number } }
-  | { kind: 'task'; row: { ts: number; app: string; task: string; exit_code: number | null; duration_ms: number | null; summary: string | null } };
+  | { kind: 'task'; row: { ts: number; app: string; task: string; exit_code: number | null; duration_ms: number | null; summary: string | null } }
+  | { kind: 'log'; row: { ts: number; app: string; line: string } };
+
+export interface SearchHit {
+  kind: 'logs' | 'errors' | 'events';
+  app: string;
+  ts: number;
+  snippet: string;
+  // Stable pointer back into history: "event:<id>" or "log:<id>".
+  ref: string;
+}
+
+// Event types the 'errors' search kind covers (everything issue-shaped).
+const ERROR_EVENT_TYPES = ['error-new', 'error-recur', 'warning-new', 'warning-recur', 'lint-new', 'lint-recur', 'crash'];
+
+// FTS5 MATCH has its own query syntax — quote every user token so `foo-bar`,
+// `a"b` or `NEAR` can't inject operators. A trailing `*` keeps prefix search.
+export function ftsQuery(q: string): string {
+  const terms = q.split(/\s+/).filter(Boolean).slice(0, 8);
+  return terms.map(t => {
+    const prefix = t.length > 1 && t.endsWith('*');
+    const body = (prefix ? t.slice(0, -1) : t).replace(/"/g, '""');
+    return `"${body}"${prefix ? '*' : ''}`;
+  }).join(' ');
+}
+
+function likePattern(q: string): string {
+  return '%' + q.replace(/([%_\\])/g, '\\$1') + '%';
+}
+
+// JS-side snippet for the LIKE fallback (FTS provides its own).
+function fallbackSnippet(text: string, q: string, span = 90): string {
+  const idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return text.slice(0, span);
+  const start = Math.max(0, idx - Math.floor(span / 3));
+  const end = Math.min(text.length, idx + q.length + span);
+  return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
+}
 
 export class History {
   private db: Database.Database | null = null;
@@ -121,9 +193,15 @@ export class History {
       if (!this.db) return; // unreachable: we returned early on any archive failure
       this.db.pragma('journal_mode = WAL');
       this.migrate();
+      this.setupFts();
+      // unref: history book-keeping must never be the thing keeping the
+      // process alive (the daemon's server handles do that; close() flushes).
       this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
+      this.flushTimer.unref?.();
       this.retentionStart = setTimeout(() => this.runRetention(), RETENTION_DEBOUNCE_MS);
+      this.retentionStart.unref?.();
       this.retentionTimer = setInterval(() => this.runRetention(), RETENTION_PASS_MS);
+      this.retentionTimer.unref?.();
     } catch (err: any) {
       this.warnOnce(`failed to open history db: ${err?.message || err}`);
       this.db = null;
@@ -180,6 +258,50 @@ export class History {
         fileCount INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS bundles_app_ts ON bundles(app, ts);
+      CREATE TABLE IF NOT EXISTS log_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        app TEXT NOT NULL,
+        line TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS log_lines_ts ON log_lines(ts);
+      CREATE INDEX IF NOT EXISTS log_lines_app_ts ON log_lines(app, ts);
+      CREATE TABLE IF NOT EXISTS crashes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        app TEXT NOT NULL,
+        exitCode INTEGER,
+        signal TEXT,
+        uptimeMs INTEGER,
+        lastLines TEXT,
+        gitHead TEXT
+      );
+      CREATE INDEX IF NOT EXISTS crashes_app_ts ON crashes(app, ts);
+      CREATE TABLE IF NOT EXISTS test_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        app TEXT NOT NULL,
+        runner TEXT,
+        durationMs INTEGER,
+        total INTEGER,
+        passed INTEGER,
+        failed INTEGER,
+        skipped INTEGER,
+        exitCode INTEGER,
+        gitHead TEXT
+      );
+      CREATE INDEX IF NOT EXISTS test_runs_app_ts ON test_runs(app, ts);
+      CREATE TABLE IF NOT EXISTS test_failures (
+        runId INTEGER NOT NULL,
+        suite TEXT,
+        test TEXT,
+        file TEXT,
+        line INTEGER,
+        message TEXT,
+        fingerprint TEXT
+      );
+      CREATE INDEX IF NOT EXISTS test_failures_run ON test_failures(runId);
+      CREATE INDEX IF NOT EXISTS test_failures_fp ON test_failures(fingerprint);
       CREATE TABLE IF NOT EXISTS self_metrics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,
@@ -190,6 +312,221 @@ export class History {
       );
       CREATE INDEX IF NOT EXISTS self_metrics_ts ON self_metrics(ts);
     `);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full-text search (M77). FTS5 external-content tables over events and log
+  // lines, kept in sync by insert/delete triggers so retention pruning cascades.
+  // If FTS5 is unavailable or setup fails, search degrades to a LIKE scan and
+  // the daemon keeps running — ftsDegradedReason() lets main.ts self-warn once.
+  // ---------------------------------------------------------------------------
+
+  private ftsOk = false;
+  private ftsError: string | null = null;
+
+  ftsAvailable(): boolean {
+    return this.ftsOk;
+  }
+
+  ftsDegradedReason(): string | null {
+    return this.db && !this.ftsOk ? (this.ftsError ?? 'unknown') : null;
+  }
+
+  // FTS indexing is DEFERRED, not trigger-per-insert: synchronous FTS5 writes
+  // cost 4-10× on the insert path (measured), blowing the <10% write-overhead
+  // budget. Instead a high-water mark (fts_state) tracks the last indexed
+  // rowid per table; syncFts() catches up in chunks on idle flush ticks,
+  // fully before retention pruning (so the delete triggers only ever see
+  // indexed rows), and fully before every search (results are never stale).
+  private setupFts(): void {
+    if (!this.db) return;
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS fts_state (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+        CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+          message, type UNINDEXED, app UNINDEXED,
+          content='events', content_rowid='id'
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS log_fts USING fts5(
+          line, app UNINDEXED,
+          content='log_lines', content_rowid='id'
+        );
+        CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
+          INSERT INTO events_fts(events_fts, rowid, message, type, app) VALUES ('delete', old.id, coalesce(old.message,''), old.type, old.app);
+        END;
+        CREATE TRIGGER IF NOT EXISTS log_fts_ad AFTER DELETE ON log_lines BEGIN
+          INSERT INTO log_fts(log_fts, rowid, line, app) VALUES ('delete', old.id, old.line, old.app);
+        END;
+        INSERT OR IGNORE INTO fts_state (key, value) VALUES ('events_hwm', 0);
+        INSERT OR IGNORE INTO fts_state (key, value) VALUES ('logs_hwm', 0);
+      `);
+      // Probe with a real MATCH: IF NOT EXISTS silently accepts a plain table
+      // squatting on the name, and a broken FTS module only fails at query time.
+      this.db.prepare(`SELECT rowid FROM events_fts WHERE events_fts MATCH '"daimon-probe"' LIMIT 1`).all();
+      this.db.prepare(`SELECT rowid FROM log_fts WHERE log_fts MATCH '"daimon-probe"' LIMIT 1`).all();
+      this.ftsOk = true;
+    } catch (err: any) {
+      this.ftsOk = false;
+      this.ftsError = err?.message || String(err);
+      // Broken FTS + live delete triggers would fail retention pruning — drop
+      // them so history keeps working and search falls back to LIKE.
+      try {
+        this.db.exec(`
+          DROP TRIGGER IF EXISTS events_fts_ad;
+          DROP TRIGGER IF EXISTS log_fts_ad;
+        `);
+      } catch {}
+      process.stderr.write(`[daimon] history: FTS unavailable, search degrades to LIKE (${this.ftsError})\n`);
+    }
+  }
+
+  // Index rows above the high-water mark, up to `chunk` per table (Infinity =
+  // catch up fully). Runs inside one transaction per table.
+  syncFts(chunk = Infinity): number {
+    if (!this.db || !this.ftsOk) return 0;
+    let indexed = 0;
+    try {
+      const getHwm = this.prepared(`SELECT value FROM fts_state WHERE key = ?`);
+      const setHwm = this.prepared(`UPDATE fts_state SET value = ? WHERE key = ?`);
+      const lim = Number.isFinite(chunk) ? Math.max(1, chunk) : -1; // -1 = no LIMIT
+      // events
+      {
+        const hwm = (getHwm.get('events_hwm') as any)?.value ?? 0;
+        const rows = this.prepared(`SELECT id, coalesce(message,'') AS message, type, app FROM events WHERE id > ? ORDER BY id LIMIT ?`)
+          .all(hwm, lim === -1 ? 1_000_000_000 : lim) as any[];
+        if (rows.length) {
+          const ins = this.prepared(`INSERT INTO events_fts(rowid, message, type, app) VALUES (?,?,?,?)`);
+          const tx = this.db.transaction(() => {
+            for (const r of rows) ins.run(r.id, r.message, r.type, r.app);
+            setHwm.run(rows[rows.length - 1].id, 'events_hwm');
+          });
+          tx();
+          indexed += rows.length;
+        }
+      }
+      // log lines
+      {
+        const hwm = (getHwm.get('logs_hwm') as any)?.value ?? 0;
+        const rows = this.prepared(`SELECT id, line, app FROM log_lines WHERE id > ? ORDER BY id LIMIT ?`)
+          .all(hwm, lim === -1 ? 1_000_000_000 : lim) as any[];
+        if (rows.length) {
+          const ins = this.prepared(`INSERT INTO log_fts(rowid, line, app) VALUES (?,?,?)`);
+          const tx = this.db.transaction(() => {
+            for (const r of rows) ins.run(r.id, r.line, r.app);
+            setHwm.run(rows[rows.length - 1].id, 'logs_hwm');
+          });
+          tx();
+          indexed += rows.length;
+        }
+      }
+    } catch (err: any) {
+      this.ftsOk = false;
+      this.ftsError = err?.message || String(err);
+      try { this.db.exec('DROP TRIGGER IF EXISTS events_fts_ad; DROP TRIGGER IF EXISTS log_fts_ad;'); } catch {}
+      this.warnOnce(`FTS sync failed, search degrades to LIKE: ${this.ftsError}`);
+    }
+    return indexed;
+  }
+
+  // Per-app log-line capture feeding log_fts. Callers gate on the
+  // search.logIndex / overrides.<app>.logIndex config — this just writes.
+  recordLogLine(app: string, line: string, ts = Date.now()): void {
+    if (!this.db) return;
+    if (!line) return;
+    this.queue.push({ kind: 'log', row: { ts, app, line: line.length > 2000 ? line.slice(0, 2000) : line } });
+  }
+
+  search(opts: { q: string; app?: string; since?: number; kind?: 'logs' | 'errors' | 'events'; limit?: number }): { hits: SearchHit[]; fallback: boolean } {
+    if (!this.db || !opts.q || !opts.q.trim()) return { hits: [], fallback: !this.ftsOk };
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
+    const wantEvents = !opts.kind || opts.kind === 'events' || opts.kind === 'errors';
+    const wantLogs = !opts.kind || opts.kind === 'logs';
+    const hits: SearchHit[] = [];
+    try {
+      if (this.ftsOk) {
+        // Flush queued rows then index to head — search is read-your-writes.
+        this.flush();
+        this.syncFts();
+      }
+      if (this.ftsOk) {
+        const match = ftsQuery(opts.q);
+        if (!match) return { hits: [], fallback: false };
+        if (wantEvents) {
+          const wh: string[] = ['events_fts MATCH ?'];
+          const args: any[] = [match];
+          if (opts.app) { wh.push('e.app = ?'); args.push(opts.app); }
+          if (opts.since != null) { wh.push('e.ts >= ?'); args.push(opts.since); }
+          if (opts.kind === 'errors') wh.push(`e.type IN (${ERROR_EVENT_TYPES.map(() => '?').join(',')})`);
+          if (opts.kind === 'errors') args.push(...ERROR_EVENT_TYPES);
+          args.push(limit);
+          // rowid DESC ≈ ts DESC (append-only) and lets FTS5 stream matches
+          // newest-first, stopping at LIMIT instead of materializing them all.
+          const rows = this.prepared(
+            `SELECT e.id, e.ts, e.app, e.type, snippet(events_fts, 0, '', '', '…', 16) AS snip
+             FROM events_fts JOIN events e ON e.id = events_fts.rowid
+             WHERE ${wh.join(' AND ')} ORDER BY events_fts.rowid DESC LIMIT ?`,
+          ).all(...args) as any[];
+          for (const r of rows) {
+            hits.push({
+              kind: ERROR_EVENT_TYPES.includes(r.type) ? 'errors' : 'events',
+              app: r.app, ts: r.ts, snippet: r.snip || r.type, ref: `event:${r.id}`,
+            });
+          }
+        }
+        if (wantLogs) {
+          const wh: string[] = ['log_fts MATCH ?'];
+          const args: any[] = [ftsQuery(opts.q)];
+          if (opts.app) { wh.push('l.app = ?'); args.push(opts.app); }
+          if (opts.since != null) { wh.push('l.ts >= ?'); args.push(opts.since); }
+          args.push(limit);
+          const rows = this.prepared(
+            `SELECT l.id, l.ts, l.app, snippet(log_fts, 0, '', '', '…', 16) AS snip
+             FROM log_fts JOIN log_lines l ON l.id = log_fts.rowid
+             WHERE ${wh.join(' AND ')} ORDER BY log_fts.rowid DESC LIMIT ?`,
+          ).all(...args) as any[];
+          for (const r of rows) {
+            hits.push({ kind: 'logs', app: r.app, ts: r.ts, snippet: r.snip, ref: `log:${r.id}` });
+          }
+        }
+        hits.sort((a, b) => b.ts - a.ts);
+        return { hits: hits.slice(0, limit), fallback: false };
+      }
+    } catch (err: any) {
+      // A MATCH-time failure (e.g. the DB was tampered with mid-flight)
+      // degrades this call to LIKE rather than erroring the endpoint.
+      this.ftsOk = false;
+      this.ftsError = err?.message || String(err);
+    }
+    // LIKE fallback — slower, but never blocks the daemon.
+    const pat = likePattern(opts.q.trim());
+    if (wantEvents) {
+      const wh: string[] = [`message LIKE ? ESCAPE '\\'`];
+      const args: any[] = [pat];
+      if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+      if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+      if (opts.kind === 'errors') { wh.push(`type IN (${ERROR_EVENT_TYPES.map(() => '?').join(',')})`); args.push(...ERROR_EVENT_TYPES); }
+      args.push(limit);
+      const rows = this.prepared(`SELECT id, ts, app, type, message FROM events WHERE ${wh.join(' AND ')} ORDER BY ts DESC LIMIT ?`).all(...args) as any[];
+      for (const r of rows) {
+        hits.push({
+          kind: ERROR_EVENT_TYPES.includes(r.type) ? 'errors' : 'events',
+          app: r.app, ts: r.ts, snippet: fallbackSnippet(r.message ?? '', opts.q.trim()), ref: `event:${r.id}`,
+        });
+      }
+    }
+    if (wantLogs) {
+      const wh: string[] = [`line LIKE ? ESCAPE '\\'`];
+      const args: any[] = [pat];
+      if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+      if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+      args.push(limit);
+      const rows = this.prepared(`SELECT id, ts, app, line FROM log_lines WHERE ${wh.join(' AND ')} ORDER BY ts DESC LIMIT ?`).all(...args) as any[];
+      for (const r of rows) {
+        hits.push({ kind: 'logs', app: r.app, ts: r.ts, snippet: fallbackSnippet(r.line, opts.q.trim()), ref: `log:${r.id}` });
+      }
+    }
+    hits.sort((a, b) => b.ts - a.ts);
+    return { hits: hits.slice(0, limit), fallback: true };
   }
 
   recordSelfMetric(rssMB: number, heapUsedMB: number, eventLoopLagMs: number, historyQueryP95Ms: number, ts = Date.now()): void {
@@ -245,7 +582,13 @@ export class History {
   }
 
   private flush(): void {
-    if (!this.db || this.queue.length === 0) return;
+    if (!this.db) return;
+    if (this.queue.length === 0) {
+      // Idle tick: catch the FTS index up in bounded chunks so search stays
+      // warm without ever taxing the write path.
+      if (this.ftsOk) this.syncFts(5000);
+      return;
+    }
     const batch = this.queue;
     this.queue = [];
     try {
@@ -253,11 +596,13 @@ export class History {
       const insCm = this.db.prepare('INSERT INTO compile_times (ts,app,ms) VALUES (?,?,?)');
       const insTk = this.db.prepare('INSERT INTO task_runs (ts,app,task,exit_code,duration_ms,summary) VALUES (?,?,?,?,?,?)');
       const insBd = this.db.prepare('INSERT INTO bundles (ts,app,initialKB,lazyKB,fileCount) VALUES (?,?,?,?,?)');
+      const insLg = this.db.prepare('INSERT INTO log_lines (ts,app,line) VALUES (?,?,?)');
       const tx = this.db.transaction((ops: Op[]) => {
         for (const op of ops) {
           if (op.kind === 'event') insEv.run(op.row.ts, op.row.app, op.row.type, op.row.from_state, op.row.to_state, op.row.message);
           else if (op.kind === 'compile') insCm.run(op.row.ts, op.row.app, op.row.ms);
           else if (op.kind === 'bundle') insBd.run(op.row.ts, op.row.app, op.row.initialKB, op.row.lazyKB, op.row.fileCount);
+          else if (op.kind === 'log') insLg.run(op.row.ts, op.row.app, op.row.line);
           else insTk.run(op.row.ts, op.row.app, op.row.task, op.row.exit_code, op.row.duration_ms, op.row.summary);
         }
       });
@@ -278,12 +623,22 @@ export class History {
     // DELETE the entire history on the first pass — the opposite of intent.
     if (!(this.cfg.retentionDays > 0)) return;
     try {
+      // Fully sync FTS first: the AFTER DELETE cascade triggers assume every
+      // row they remove was indexed.
+      this.syncFts();
       const cutoff = Date.now() - this.cfg.retentionDays * 86400000;
       this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM compile_times WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM task_runs WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM bundles WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM self_metrics WHERE ts < ?').run(cutoff);
+      // Failures cascade with their runs — prune child rows first so a crash
+      // between the two statements can't orphan failures.
+      this.db.prepare('DELETE FROM test_failures WHERE runId IN (SELECT id FROM test_runs WHERE ts < ?)').run(cutoff);
+      this.db.prepare('DELETE FROM test_runs WHERE ts < ?').run(cutoff);
+      this.db.prepare('DELETE FROM crashes WHERE ts < ?').run(cutoff);
+      // FTS shadows cascade via the AFTER DELETE triggers.
+      this.db.prepare('DELETE FROM log_lines WHERE ts < ?').run(cutoff);
     } catch (err: any) {
       this.warnOnce(`retention failed: ${err?.message || err}`);
     }
@@ -413,7 +768,7 @@ export class History {
         else if ((r.type === 'warning-new' || r.type === 'warning-recur') && wantWarning) kind = 'warning';
         else if ((r.type === 'lint-new' || r.type === 'lint-recur') && wantLint) kind = 'lint';
         else if (r.type === 'health' && wantHealth) kind = 'health';
-        else if ((r.type === 'restart-scheduled' || r.type === 'bundle-regression' || r.type === 'compile-regression' || r.type === 'stale' || r.type === 'self-warn') && wantRestart) kind = 'restart';
+        else if ((r.type === 'restart-scheduled' || r.type === 'bundle-regression' || r.type === 'compile-regression' || r.type === 'stale' || r.type === 'self-warn' || r.type === 'crash' || r.type === 'restart-storm') && wantRestart) kind = 'restart';
         if (!kind) continue;
         const summary = kind === 'status'
           ? `${r.from_state ?? '?'} → ${r.to_state ?? '?'}`
@@ -441,6 +796,87 @@ export class History {
     }
     out.sort((a, b) => b.ts - a.ts);
     return out.slice(0, limit);
+  }
+
+  // Crash reports (M76). Ring-buffered by design: the last `ring` crashes per
+  // app survive, older rows are pruned on insert — bounded forensics, not a
+  // second event log. Synchronous: crashes are rare and the caller is already
+  // off the log-line hot path.
+  recordCrash(
+    row: { app: string; ts?: number; exitCode: number | null; signal: string | null; uptimeMs: number | null; lastLines: string[]; gitHead: string | null },
+    ring = 10,
+  ): void {
+    if (!this.db) return;
+    try {
+      const tx = this.db.transaction(() => {
+        this.prepared('INSERT INTO crashes (ts,app,exitCode,signal,uptimeMs,lastLines,gitHead) VALUES (?,?,?,?,?,?,?)')
+          .run(row.ts ?? Date.now(), row.app, row.exitCode, row.signal, row.uptimeMs, row.lastLines.slice(-50).join('\n'), row.gitHead);
+        this.prepared('DELETE FROM crashes WHERE app = ? AND id NOT IN (SELECT id FROM crashes WHERE app = ? ORDER BY id DESC LIMIT ?)')
+          .run(row.app, row.app, ring);
+      });
+      tx();
+    } catch (err: any) {
+      this.warnOnce(`crashes write failed: ${err?.message || err}`);
+    }
+  }
+
+  queryCrashes(opts: { app?: string; since?: number; limit?: number } = {}): CrashRow[] {
+    if (!this.db) return [];
+    const wh: string[] = [];
+    const args: any[] = [];
+    if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+    if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+    const sql = `SELECT * FROM crashes ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
+    args.push(opts.limit ?? 10);
+    try { return this.prepared(sql).all(...args) as CrashRow[]; } catch { return []; }
+  }
+
+  // Test runs (M74) insert synchronously (not via the flush queue) because the
+  // caller needs the rowid to attach failures — one transaction per suite run,
+  // far off the log-line hot path.
+  recordTestRun(
+    run: { app: string; ts?: number; runner: string | null; durationMs: number | null; total: number | null; passed: number | null; failed: number | null; skipped: number | null; exitCode: number | null; gitHead: string | null },
+    failures: { suite: string; test: string; file?: string; line?: number; message: string; fingerprint: string }[],
+  ): number | null {
+    if (!this.db) return null;
+    try {
+      const insRun = this.prepared('INSERT INTO test_runs (ts,app,runner,durationMs,total,passed,failed,skipped,exitCode,gitHead) VALUES (?,?,?,?,?,?,?,?,?,?)');
+      const insFail = this.prepared('INSERT INTO test_failures (runId,suite,test,file,line,message,fingerprint) VALUES (?,?,?,?,?,?,?)');
+      const tx = this.db.transaction(() => {
+        const r = insRun.run(run.ts ?? Date.now(), run.app, run.runner, run.durationMs, run.total, run.passed, run.failed, run.skipped, run.exitCode, run.gitHead);
+        const runId = Number(r.lastInsertRowid);
+        for (const f of failures) {
+          insFail.run(runId, f.suite, f.test, f.file ?? null, f.line ?? null, f.message, f.fingerprint);
+        }
+        return runId;
+      });
+      return tx() as number;
+    } catch (err: any) {
+      this.warnOnce(`test_runs write failed: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  queryTestRuns(opts: { app?: string; since?: number; limit?: number } = {}): TestRunRow[] {
+    if (!this.db) return [];
+    const wh: string[] = [];
+    const args: any[] = [];
+    if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+    if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+    const sql = `SELECT * FROM test_runs ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
+    args.push(opts.limit ?? 50);
+    try { return this.prepared(sql).all(...args) as TestRunRow[]; } catch { return []; }
+  }
+
+  queryTestFailures(runIds: number[]): TestFailureRow[] {
+    if (!this.db || runIds.length === 0) return [];
+    // Keyset is small (≤ query limit) — an IN list beats N round-trips.
+    const placeholders = runIds.map(() => '?').join(',');
+    try {
+      return this.db.prepare(`SELECT * FROM test_failures WHERE runId IN (${placeholders})`).all(...runIds) as TestFailureRow[];
+    } catch {
+      return [];
+    }
   }
 
   queryTasks(opts: { app?: string; task?: string; since?: number; limit?: number }): TaskRunRow[] {
@@ -523,6 +959,10 @@ export class History {
 
   _flushForTest(): void {
     this.flush();
+  }
+
+  _runRetentionForTest(): void {
+    this.runRetention();
   }
 
   quickCheck(): boolean {

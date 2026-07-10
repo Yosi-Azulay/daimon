@@ -1,0 +1,17 @@
+{
+  "apps": [
+    {
+      "name": "bun",
+      "profile": "bun",
+      "command": "bun run dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "$ bun --watch server.ts",
+      "Listening on http://localhost:3000"
+    ],
+    "expectStatus": "starting",
+    "expectUrl": "http://localhost:3000"
+  }
+}

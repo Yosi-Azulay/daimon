@@ -1,0 +1,3 @@
+# air fixture marker
+[build]
+cmd = "go build -o ./tmp/main ."

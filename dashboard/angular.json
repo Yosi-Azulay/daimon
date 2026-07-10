@@ -18,7 +18,9 @@
             "browser": "src/main.ts",
             "polyfills": [],
             "tsConfig": "tsconfig.app.json",
-            "assets": [],
+            "assets": [
+              { "glob": "**/*", "input": "public" }
+            ],
             "styles": ["src/styles/tokens.css", "src/styles.scss"],
             "scripts": []
           },

@@ -80,6 +80,22 @@ export interface WebhookEntry {
   apps?: string[];
 }
 
+export interface SearchConfig {
+  // Per-app log-line FTS indexing (M77). Errors/events are ALWAYS indexed;
+  // this only gates log lines. Default true; overrides.<app>.logIndex wins.
+  logIndex: boolean;
+}
+
+export interface RestartStormConfig {
+  // Unrequested exits per hour before a single restart-storm event fires (M76).
+  perHour: number;
+}
+
+export interface TestsConfig {
+  // Pass↔fail flips at the same gitHead before a test is flagged flaky (M75).
+  flakyThreshold: number;
+}
+
 export interface DashboardConfig {
   theme: 'auto' | 'light' | 'dark';
   density: 'comfortable' | 'compact';
@@ -124,6 +140,10 @@ export interface AppmanConfig {
   webhooks: WebhookEntry[];
   // Custom framework profiles (M65) — validated data rows, never loaded code.
   frameworks: FrameworkProfile[];
+  // Optional: absent in older configs/tests — consumers default per-field.
+  tests?: TestsConfig;
+  restartStorm?: RestartStormConfig;
+  search?: SearchConfig;
 }
 
 export interface SearchRoot {
@@ -144,6 +164,10 @@ export interface AppOverride {
   // Per-app webhooks (M72), merged with the global `webhooks` list and scoped
   // to this app's events.
   webhooks?: WebhookEntry[];
+  // Explicit test command (M74) — always wins over registry testRunner hints.
+  testCommand?: string;
+  // Per-app opt-out of log-line FTS indexing (M77).
+  logIndex?: boolean;
 }
 
 // Built-in profile ids. DiscoveredApp.serverProfile is a plain string because
@@ -238,6 +262,11 @@ export type AppEventType =
   | 'compile-regression'
   | 'regression-detected'
   | 'task-run'
+  | 'test-run'
+  | 'test-failed'
+  | 'flaky-test-detected'
+  | 'crash'
+  | 'restart-storm'
   | 'self-warn';
 
 export interface AppEvent {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { pathToFileURL } from 'node:url';
+import { daimonDir } from './daemon.js';
 
 export interface DoctorFinding {
   pluginName: string;
@@ -47,7 +47,7 @@ export interface LoadedPlugin {
 
 export function pluginsDir(configured?: string): string {
   if (configured && typeof configured === 'string' && configured.trim()) return configured;
-  return path.join(os.homedir(), '.daimon', 'plugins');
+  return path.join(daimonDir(), 'plugins');
 }
 
 function isPluginFile(name: string): boolean {

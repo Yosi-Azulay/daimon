@@ -24,6 +24,8 @@ const EXPECTED_TOOLS = [
   'orchestrate', 'ensure_up', 'wait_for_app',
   'daimon_who_owns', 'daimon_subscribe_events', 'daimon_notify_on_error',
   'daimon_frameworks',
+  // v0.12 (M77/M78): search + the whole-loop agent verbs.
+  'daimon_search', 'daimon_run_tests', 'daimon_why', 'daimon_context',
 ].sort();
 
 async function connectedClient() {
@@ -54,7 +56,7 @@ function minimalArgs(schema) {
 const client = await connectedClient();
 const { tools } = await client.listTools();
 
-test('mcp surface: tools/list returns exactly the expected 21 tools', () => {
+test('mcp surface: tools/list returns exactly the expected 25 tools', () => {
   assert.deepEqual(tools.map(t => t.name).sort(), EXPECTED_TOOLS);
 });
 

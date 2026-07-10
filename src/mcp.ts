@@ -355,6 +355,74 @@ export function buildServer(): McpServer {
     return ok(r.body);
   });
 
+  server.registerTool('daimon_search', {
+    description: 'Full-text search over everything daimon has seen — per-app log lines, errors, and events (FTS5; falls back to LIKE with fallback:true). Returns compact hits { kind, app, ts, snippet, ref }. A trailing * on a term does prefix search.',
+    inputSchema: {
+      q: z.string(),
+      app: z.string().optional(),
+      since: z.string().optional().describe('Duration window like 30m, 24h, 7d'),
+      kind: z.enum(['logs', 'errors', 'events']).optional(),
+      limit: z.number().int().positive().max(500).optional(),
+    },
+  }, async ({ q, app, since, kind, limit }) => {
+    const qs = new URLSearchParams({ q });
+    if (app) qs.set('app', app);
+    if (since) qs.set('since', since);
+    if (kind) qs.set('kind', kind);
+    if (limit) qs.set('limit', String(limit));
+    const r = await callJson('/api/search?' + qs.toString());
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 400) return err(r.body?.error || 'bad search query');
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_run_tests', {
+    description: 'Run the app\'s own test suite once (daimon wraps the project\'s runner — vitest/jest/pytest/go/cargo/dotnet or overrides.<app>.testCommand; it never installs one). Returns parsed failures {suite,test,file,line,message,fingerprint} + totals; the run is recorded in history. Takes the per-app soft lock — a concurrent run by another agent returns locked-by-other-agent.',
+    inputSchema: {
+      name: z.string(),
+      timeoutMs: z.number().int().positive().max(600_000).optional(),
+      cwd: cwdField,
+    },
+  }, async ({ name, timeoutMs, cwd }) => {
+    const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
+    qs.set('timeoutMs', String(Math.min(timeoutMs ?? 300_000, 600_000)));
+    const r = await callJson(`/api/apps/${encodeURIComponent(name)}/test?${qs.toString()}`, 'POST');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    if (r.status === 412) return err(JSON.stringify(r.body));
+    if (r.status === 409) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_why', {
+    description: 'One-shot forensics for a broken app: current status/health, last crash report (exit code, signal, uptime, last log lines, gitHead), fingerprint-grouped 24h errors, recent regressions, restart-storm state, suspect commit, and matching doctor findings. Use before digging through logs manually.',
+    inputSchema: { name: z.string(), cwd: cwdField },
+  }, async ({ name, cwd }) => {
+    const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
+    const r = await callJson(`/api/why/${encodeURIComponent(name)}?${qs.toString()}`);
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    if (r.status === 412) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_context', {
+    description: 'The agent context pack: one call assembling status/url/framework/uptime, top error groups, last crash, last test run + failures, compile stats, suspect commits, and active locks/agents for an app. Pass budget (chars) to cap the payload — sections drop lowest-priority-first and are listed in truncated[]. Call this FIRST when debugging an app, then follow up with targeted calls.',
+    inputSchema: {
+      name: z.string(),
+      budget: z.number().int().positive().max(200_000).optional(),
+      cwd: cwdField,
+    },
+  }, async ({ name, budget, cwd }) => {
+    const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
+    if (budget) qs.set('budget', String(budget));
+    const r = await callJson(`/api/context/${encodeURIComponent(name)}?${qs.toString()}`);
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 404) return err('unknown app');
+    if (r.status === 412) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
   server.registerTool('daimon_who_owns', {
     description: 'Return the current soft-lock holder for an app (if any) and the last 3 agents who interacted with it. Use before start/stop/restart to avoid stepping on another agent.',
     inputSchema: { name: z.string(), cwd: cwdField },

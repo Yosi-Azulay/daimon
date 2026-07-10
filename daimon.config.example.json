@@ -77,6 +77,10 @@
 
   "frameworks": [],
 
+  "tests": { "flakyThreshold": 3 },
+  "restartStorm": { "perHour": 20 },
+  "search": { "logIndex": true },
+
   "staleDetect": {
     "enabled": true,
     "silentMs": 30000
@@ -101,7 +105,9 @@
       "command": "npx nx serve web-admin --configuration=dev",
       "env": { "API_BASE": "http://localhost:3000" },
       "url": null,
-      "compileRegressionFactor": 2.0
+      "compileRegressionFactor": 2.0,
+      "testCommand": "npx nx test web-admin",
+      "logIndex": true
     }
   }
 }

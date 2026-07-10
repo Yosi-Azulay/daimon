@@ -1,0 +1,85 @@
+{
+  "runner": "cargo-test",
+  "resolve": {
+    "app": { "serverProfile": "rust-trunk", "workspaceType": "polyglot" },
+    "expectCommand": "cargo test",
+    "expectRunner": "cargo-test"
+  },
+  "cases": [
+    {
+      "name": "pass",
+      "exitCode": 0,
+      "output": [
+        "    Finished test [unoptimized + debuginfo] target(s) in 0.45s",
+        "     Running unittests src/lib.rs (target/debug/deps/mathx-abc123)",
+        "",
+        "running 2 tests",
+        "test tests::test_add ... ok",
+        "test tests::test_sub ... ok",
+        "",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+      ],
+      "expectTotals": { "total": 2, "passed": 2, "failed": 0, "skipped": 0, "durationMs": 10 },
+      "expectFailures": []
+    },
+    {
+      "name": "fail-new-panic-format",
+      "exitCode": 101,
+      "output": [
+        "    Finished test [unoptimized + debuginfo] target(s) in 0.45s",
+        "     Running unittests src/lib.rs (target/debug/deps/mathx-abc123)",
+        "",
+        "running 2 tests",
+        "test tests::test_sub ... ok",
+        "test tests::test_add ... FAILED",
+        "",
+        "failures:",
+        "",
+        "---- tests::test_add stdout ----",
+        "thread 'tests::test_add' panicked at src/lib.rs:12:9:",
+        "assertion `left == right` failed",
+        "  left: 3",
+        " right: 4",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "failures:",
+        "    tests::test_add",
+        "",
+        "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "expectTotals": { "total": 2, "passed": 1, "failed": 1, "skipped": 0, "durationMs": 0 },
+      "expectFailures": [
+        { "suite": "tests", "test": "test_add", "file": "src/lib.rs", "line": 12, "messageIncludes": "assertion `left == right` failed" }
+      ]
+    },
+    {
+      "name": "fail-old-panic-format",
+      "exitCode": 101,
+      "output": [
+        "running 1 test",
+        "test parser::tests::parses_empty ... FAILED",
+        "",
+        "failures:",
+        "",
+        "---- parser::tests::parses_empty stdout ----",
+        "thread 'parser::tests::parses_empty' panicked at 'expected Ok, got Err(Unexpected)', src/parser.rs:88:13",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+      ],
+      "expectTotals": { "total": 1, "passed": 0, "failed": 1, "skipped": 0, "durationMs": 20 },
+      "expectFailures": [
+        { "suite": "parser::tests", "test": "parses_empty", "file": "src/parser.rs", "line": 88, "messageIncludes": "expected Ok, got Err(Unexpected)" }
+      ]
+    },
+    {
+      "name": "unparsed-garbage",
+      "exitCode": 101,
+      "output": [
+        "error: could not find `Cargo.toml`"
+      ],
+      "expectTotals": null,
+      "expectFailures": []
+    }
+  ]
+}

@@ -4,13 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Isolate ~/.daimon by overriding HOME / USERPROFILE *before* importing daimon.ts —
-// daemon.ts computes LOCK_PATH at module load time from os.homedir().
+// Isolate ~/.daimon via DAIMON_HOME (M79) — the first-class way for test
+// harnesses to relocate daimon's state dir.
 const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'daimon-lock-'));
-const prevHome = process.env.HOME;
-const prevUserProfile = process.env.USERPROFILE;
-process.env.HOME = fakeHome;
-process.env.USERPROFILE = fakeHome;
+process.env.DAIMON_HOME = fakeHome;
 
 const { readLock, writeLock, removeLock, lockPath } = await import('../dist/daemon.js');
 
@@ -110,9 +107,8 @@ if (!lockPath().startsWith(fakeHome)) {
     }
   });
 
-  test('cleanup: restore HOME/USERPROFILE', () => {
-    if (prevHome !== undefined) process.env.HOME = prevHome; else delete process.env.HOME;
-    if (prevUserProfile !== undefined) process.env.USERPROFILE = prevUserProfile; else delete process.env.USERPROFILE;
+  test('cleanup: restore DAIMON_HOME', () => {
+    delete process.env.DAIMON_HOME;
     try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch {}
   });
 }

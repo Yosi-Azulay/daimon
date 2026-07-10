@@ -1,16 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { daimonDir } from './daemon.js';
 
 export interface CursorsFile {
   errors: Record<string, number>;
 }
 
-const CURSORS_PATH = path.join(os.homedir(), '.daimon', 'cursors.json');
+const cursorsPath = () => path.join(daimonDir(), 'cursors.json');
 
 function load(): CursorsFile {
   try {
-    const raw = fs.readFileSync(CURSORS_PATH, 'utf8');
+    const raw = fs.readFileSync(cursorsPath(), 'utf8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && parsed.errors && typeof parsed.errors === 'object') {
       return { errors: parsed.errors };
@@ -30,8 +30,8 @@ function scheduleSave(data: CursorsFile): void {
     pending = null;
     if (!toWrite) return;
     try {
-      fs.mkdirSync(path.dirname(CURSORS_PATH), { recursive: true });
-      fs.writeFileSync(CURSORS_PATH, JSON.stringify(toWrite), 'utf8');
+      fs.mkdirSync(path.dirname(cursorsPath()), { recursive: true });
+      fs.writeFileSync(cursorsPath(), JSON.stringify(toWrite), 'utf8');
     } catch (err: any) {
       process.stderr.write(`[daimon] warning: cursor write failed: ${err.message}\n`);
     }

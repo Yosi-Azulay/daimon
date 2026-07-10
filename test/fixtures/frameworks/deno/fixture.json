@@ -1,0 +1,18 @@
+{
+  "apps": [
+    {
+      "name": "deno",
+      "profile": "deno",
+      "command": "deno task dev"
+    }
+  ],
+  "parse": {
+    "startup": [
+      "Task dev deno run --watch --allow-net main.ts",
+      "Watcher Process started.",
+      "Listening on http://localhost:8000/"
+    ],
+    "expectStatus": "serving",
+    "expectUrl": "http://localhost:8000"
+  }
+}

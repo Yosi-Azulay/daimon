@@ -26,6 +26,7 @@ import { SessionRecorder } from './session.js';
 import { detectBundleRegression, detectCompileRegression, detectErrorFlapRegression, suspectCommitForDir } from './regressions.js';
 import { allProfiles } from './frameworks.js';
 import { compileParseContext } from './parser.js';
+import { findFlakyTests, gitHeadForDir, resolveTestCommand, runTestCommand, testFailureFingerprint, type TestFailure, type TestTotals } from './testRunners.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -552,7 +553,10 @@ export class Registry extends EventEmitter {
         this.recordEvent({ app: name, type, message: entry.message });
         if (lvl === 'error') this.checkErrorFlapRegression(name, entry.message);
       },
-      onExit: (code, signal, stopping) => this.emit('childExit', { name, code, signal, stopping }),
+      onExit: (code, signal, stopping) => {
+        if (!stopping) this.captureCrash(name, code, signal);
+        this.emit('childExit', { name, code, signal, stopping });
+      },
       onLogLine: line => { e.logger?.write(line); this.emit('log', { name, ts: Date.now(), line }); },
       onCompile: ms => {
         const compileTs = Date.now();
@@ -701,6 +705,152 @@ export class Registry extends EventEmitter {
     this.recordEvent({ app: name, type: 'task-run', message: `${task} exit=${result.exitCode} duration=${result.durationMs}ms` });
     this.emit('taskRun', { name, task, result });
     return result;
+  }
+
+  // Crash forensics (M76): every child exit daimon didn't request persists a
+  // crash report — exit info, uptime, the last 50 log lines, and the git head
+  // at time of death — ring-buffered to 10 per app in the history DB.
+  private captureCrash(name: string, code: number | null, signal: NodeJS.Signals | null): void {
+    const s = this.getState(name);
+    const ts = Date.now();
+    const uptimeMs = s?.startedAt != null ? ts - s.startedAt : null;
+    const lastLines = (s?.logBuffer ?? []).slice(-50).map(l => l.line);
+    const app = this.getApp(name);
+    this.recordEvent({
+      app: name,
+      type: 'crash',
+      message: `exited code=${code ?? 'null'}${signal ? ` signal=${signal}` : ''} after ${uptimeMs != null ? Math.round(uptimeMs / 1000) + 's' : '?'}`,
+    });
+    void suspectCommitForDir(app?.workspaceRoot ?? null).then(suspect => {
+      // suspectCommit is "<sha>:<subject>" — keep just the sha for the column.
+      const gitHead = suspect ? suspect.split(':')[0] : null;
+      try {
+        this.history?.recordCrash({ app: name, ts, exitCode: code, signal: signal ?? null, uptimeMs, lastLines, gitHead });
+      } catch {}
+    });
+    this.noteCrashForStorm(name, code, ts);
+  }
+
+  // Restart-storm detection (M76): a sliding 1h window of unrequested exits
+  // per app. Crossing restartStorm.perHour fires ONE restart-storm event; the
+  // storm re-arms only after the window falls back below the threshold.
+  private readonly crashWindows = new Map<string, number[]>();
+  private readonly stormActive = new Map<string, boolean>();
+  private readonly lastCrashExit = new Map<string, number | null>();
+
+  noteCrashForStorm(name: string, code: number | null, now = Date.now()): void {
+    this.lastCrashExit.set(name, code);
+    const w = this.crashWindows.get(name) ?? [];
+    w.push(now);
+    const hourAgo = now - 3600_000;
+    while (w.length && w[0] < hourAgo) w.shift();
+    this.crashWindows.set(name, w);
+    const threshold = this.config.restartStorm?.perHour ?? 20;
+    if (w.length > threshold) {
+      if (!this.stormActive.get(name)) {
+        this.stormActive.set(name, true);
+        this.recordEvent({
+          app: name,
+          type: 'restart-storm',
+          message: JSON.stringify({ app: name, count: w.length, windowMs: 3600_000, lastExitCode: code }),
+        });
+      }
+    } else if (this.stormActive.get(name)) {
+      this.stormActive.set(name, false);
+    }
+  }
+
+  stormState(name: string, now = Date.now()): { active: boolean; countLastHour: number; threshold: number; lastExitCode: number | null } {
+    const w = (this.crashWindows.get(name) ?? []).filter(ts => ts >= now - 3600_000);
+    return {
+      active: this.stormActive.get(name) ?? false,
+      countLastHour: w.length,
+      threshold: this.config.restartStorm?.perHour ?? 20,
+      lastExitCode: this.lastCrashExit.get(name) ?? null,
+    };
+  }
+
+  // `daimon test` (M74): resolve the project's own runner, run the suite once
+  // with a hard timeout, parse failures, persist to test_runs/test_failures.
+  // Never installs or replaces a runner.
+  async runTests(name: string, opts: { timeoutMs?: number } = {}): Promise<
+    | { runId: number | null; app: string; runner: string | null; command: string; exitCode: number | null; timedOut: boolean; durationMs: number; totals: TestTotals | null; failures: (TestFailure & { fingerprint: string })[]; gitHead: string | null; outputTail: string[] }
+    | { error: string; hint?: string }
+  > {
+    const app = this.getApp(name);
+    if (!app) return { error: 'unknown app' };
+    const resolved = resolveTestCommand(app, this.config);
+    if ('error' in resolved) return resolved;
+    const timeoutMs = Math.min(Math.max(opts.timeoutMs ?? 300_000, 1000), 600_000);
+    const [result, gitHead] = await Promise.all([
+      runTestCommand(app, resolved, timeoutMs),
+      gitHeadForDir(app.workspaceRoot),
+    ]);
+    const failures = result.failures.map(f => ({ ...f, fingerprint: testFailureFingerprint(f) }));
+    const failed = result.totals?.failed ?? (result.exitCode === 0 ? 0 : failures.length || null);
+    const runId = this.history?.recordTestRun({
+      app: name,
+      runner: result.runner,
+      durationMs: result.totals?.durationMs ?? result.durationMs,
+      total: result.totals?.total ?? null,
+      passed: result.totals?.passed ?? null,
+      failed,
+      skipped: result.totals?.skipped ?? null,
+      exitCode: result.exitCode,
+      gitHead,
+    }, failures) ?? null;
+    const summaryMsg = result.totals
+      ? `${result.runner ?? 'tests'} ${result.totals.failed} failed / ${result.totals.total} total exit=${result.exitCode}`
+      : `${result.runner ?? 'tests'} exit=${result.exitCode}${result.timedOut ? ' (timeout)' : ''}`;
+    this.recordEvent({ app: name, type: 'test-run', message: summaryMsg });
+    if ((failed ?? 0) > 0 || (result.exitCode !== 0 && !result.timedOut)) {
+      this.recordEvent({
+        app: name,
+        type: 'test-failed',
+        message: JSON.stringify({ app: name, runId, failed: failed ?? null, total: result.totals?.total ?? null }),
+      });
+      this.checkFlakyTests(name, gitHead);
+    }
+    this.emit('testRun', { name, runId, result });
+    return {
+      runId,
+      app: name,
+      runner: result.runner,
+      command: result.command,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+      totals: result.totals,
+      failures,
+      gitHead,
+      outputTail: result.outputTail,
+    };
+  }
+
+  // Flaky detection (M75): a fingerprint that flips pass↔fail ≥ N times across
+  // runs at the SAME gitHead is flaky. Query-derived from test_runs/
+  // test_failures; fired at most once per fingerprint per daemon session.
+  private readonly flakyAlerted = new Set<string>();
+
+  checkFlakyTests(name: string, gitHead: string | null): void {
+    if (!gitHead || !this.history) return;
+    const threshold = this.config.tests?.flakyThreshold ?? 3;
+    const flaky = findFlakyTests(
+      this.history.queryTestRuns({ app: name, limit: 100 }),
+      ids => this.history!.queryTestFailures(ids),
+      gitHead,
+      threshold,
+    );
+    for (const f of flaky) {
+      const key = `${name}::${gitHead}::${f.fingerprint}`;
+      if (this.flakyAlerted.has(key)) continue;
+      this.flakyAlerted.add(key);
+      this.recordEvent({
+        app: name,
+        type: 'flaky-test-detected',
+        message: JSON.stringify({ app: name, fingerprint: f.fingerprint, test: f.test, flips: f.flips, gitHead }),
+      });
+    }
   }
 
   startWatchTask(name: string, task: string, args: string[] = []): { ok: boolean; pid?: number | null; error?: string } {

@@ -1,0 +1,71 @@
+{
+  "runner": "dotnet-test",
+  "resolve": {
+    "app": { "serverProfile": "dotnet", "workspaceType": "polyglot" },
+    "expectCommand": "dotnet test",
+    "expectRunner": "dotnet-test"
+  },
+  "cases": [
+    {
+      "name": "pass",
+      "exitCode": 0,
+      "output": [
+        "  Determining projects to restore...",
+        "Test run for C:\\src\\Tests\\bin\\Debug\\net8.0\\Tests.dll (.NETCoreApp,Version=v8.0)",
+        "Starting test execution, please wait...",
+        "A total of 1 test files matched the specified pattern.",
+        "",
+        "Passed!  - Failed:     0, Passed:     3, Skipped:     0, Total:     3, Duration: 18 ms - Tests.dll (net8.0)"
+      ],
+      "expectTotals": { "total": 3, "passed": 3, "failed": 0, "skipped": 0, "durationMs": 18 },
+      "expectFailures": []
+    },
+    {
+      "name": "fail",
+      "exitCode": 1,
+      "output": [
+        "Test run for C:\\src\\Tests\\bin\\Debug\\net8.0\\Tests.dll (.NETCoreApp,Version=v8.0)",
+        "Starting test execution, please wait...",
+        "A total of 1 test files matched the specified pattern.",
+        "  Failed Tests.MathTests.Adds [5 ms]",
+        "  Error Message:",
+        "   Assert.Equal() Failure: Values differ",
+        "  Stack Trace:",
+        "     at Tests.MathTests.Adds() in C:\\src\\Tests\\MathTests.cs:line 12",
+        "",
+        "Failed!  - Failed:     1, Passed:     2, Skipped:     0, Total:     3, Duration: 42 ms - Tests.dll (net8.0)"
+      ],
+      "expectTotals": { "total": 3, "passed": 2, "failed": 1, "skipped": 0, "durationMs": 42 },
+      "expectFailures": [
+        { "suite": "Tests.MathTests", "test": "Adds", "file": "C:\\src\\Tests\\MathTests.cs", "line": 12, "messageIncludes": "Assert.Equal() Failure" }
+      ]
+    },
+    {
+      "name": "mixed-skip-seconds-duration",
+      "exitCode": 1,
+      "output": [
+        "Starting test execution, please wait...",
+        "  Failed Api.Tests.ClientTests.GetsRows [12 ms]",
+        "  Error Message:",
+        "   System.NullReferenceException : Object reference not set to an instance of an object.",
+        "  Stack Trace:",
+        "     at Api.Tests.ClientTests.GetsRows() in C:\\src\\Api.Tests\\ClientTests.cs:line 27",
+        "",
+        "Failed!  - Failed:     1, Passed:     8, Skipped:     2, Total:    11, Duration: 1.4 s - Api.Tests.dll (net8.0)"
+      ],
+      "expectTotals": { "total": 11, "passed": 8, "failed": 1, "skipped": 2, "durationMs": 1400 },
+      "expectFailures": [
+        { "suite": "Api.Tests.ClientTests", "test": "GetsRows", "file": "C:\\src\\Api.Tests\\ClientTests.cs", "line": 27, "messageIncludes": "NullReferenceException" }
+      ]
+    },
+    {
+      "name": "unparsed-garbage",
+      "exitCode": 1,
+      "output": [
+        "MSBUILD : error MSB1003: Specify a project or solution file."
+      ],
+      "expectTotals": null,
+      "expectFailures": []
+    }
+  ]
+}
