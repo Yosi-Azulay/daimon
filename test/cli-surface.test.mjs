@@ -11,6 +11,8 @@ test('every CLI subcommand has description, args, summary, example', () => {
     assert.ok(c.summary && c.summary.length, `${c.name} missing summary`);
     assert.ok(c.example && c.example.length, `${c.name} missing example`);
     assert.ok(['lifecycle','queries','agent','introspection','config','claude','plugin'].includes(c.group), `${c.name} group invalid`);
+    // M87: every surface declares a stability tier (STABILITY.md).
+    assert.ok(['frozen','stable','experimental'].includes(c.stability), `${c.name} stability invalid`);
   }
 });
 

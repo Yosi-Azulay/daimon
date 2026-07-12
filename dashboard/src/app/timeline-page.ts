@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Input, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, Input, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { DaimonApi } from './daimon-api';
@@ -47,16 +47,17 @@ const SINCE_OPTS: { key: string; label: string }[] = [
           </div>
         </div>
         <div class="dm-header-actions">
-          <button type="button" class="ib" (click)="refresh()" [disabled]="loading()" title="Refresh">
+          <button type="button" class="ib" (click)="refresh()" [disabled]="loading()" aria-label="Refresh" title="Refresh">
             <span class="material-symbols-outlined" [class.spin]="loading()">refresh</span>
           </button>
         </div>
       </header>
 
       <div class="dm-toolbar">
-        <div class="dm-chips" role="tablist" aria-label="Time window">
+        <div class="dm-chips" role="group" aria-label="Time window">
           @for (s of sinceOpts; track s.key) {
             <button type="button" class="dm-chip" [class.active]="since() === s.key"
+                    [attr.aria-pressed]="since() === s.key"
                     (click)="setSince(s.key)">{{ s.label }}</button>
           }
         </div>
@@ -82,11 +83,15 @@ const SINCE_OPTS: { key: string; label: string }[] = [
         <dm-empty title="No events in window"
                   hint="Widen the window or pick different kinds. Status / error / lint / bundle / task all live here."></dm-empty>
       } @else {
-        <cdk-virtual-scroll-viewport #viewport itemSize="44" class="dm-tl-viewport">
+        <cdk-virtual-scroll-viewport #viewport itemSize="44" class="dm-tl-viewport" tabindex="-1">
           <div *cdkVirtualFor="let r of filtered(); trackBy: trackTs"
                class="dm-tl-row" [attr.data-kind]="r.kind"
                [class.dm-tl-anchored]="anchoredTs() === r.ts"
-               (click)="select(r)">
+               role="button" tabindex="0"
+               [attr.aria-label]="r.app + ' · ' + (kindLabel[r.kind] || r.kind) + ' · ' + r.summary"
+               (click)="select(r, $event)"
+               (keydown.enter)="select(r, $event)"
+               (keydown.space)="$event.preventDefault(); select(r, $event)">
             <span class="dm-tl-ts" [title]="fullTs(r.ts)">{{ rel(r.ts) }}</span>
             <span class="dm-tl-kind dm-kind-chip" [attr.data-kind]="r.kind">{{ kindLabel[r.kind] || r.kind }}</span>
             <span class="dm-tl-app">{{ r.app }}</span>
@@ -96,13 +101,14 @@ const SINCE_OPTS: { key: string; label: string }[] = [
       }
 
       @if (selected(); as sel) {
-        <aside class="dm-tl-drawer">
+        <aside class="dm-tl-drawer" role="dialog" aria-modal="true" tabindex="-1" #drawer
+               [attr.aria-label]="sel.app + ' event detail'">
           <header>
             <div>
               <h2>{{ sel.app }} · {{ kindLabel[sel.kind] || sel.kind }}</h2>
               <div class="dm-tl-drawer-ts">{{ fullTs(sel.ts) }}</div>
             </div>
-            <button type="button" class="ib" (click)="select(null)" title="Close">
+            <button type="button" class="ib" (click)="select(null)" aria-label="Close" title="Close">
               <span class="material-symbols-outlined">close</span>
             </button>
           </header>
@@ -123,7 +129,7 @@ const SINCE_OPTS: { key: string; label: string }[] = [
       border: 1px solid var(--mat-sys-outline-variant); cursor: pointer;
       font: 500 .75rem/1rem Roboto;
     }
-    .dm-chip.active { background: color-mix(in oklch, var(--mat-sys-primary) 14%, var(--mat-sys-surface)); color: var(--mat-sys-primary); border-color: color-mix(in oklch, var(--mat-sys-primary) 40%, transparent); }
+    .dm-chip.active { background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), var(--mat-sys-surface)); color: var(--mat-sys-primary); border-color: color-mix(in oklch, var(--mat-sys-primary) 40%, transparent); }
     .dm-app-pick { display: inline-flex; align-items: center; gap: .5rem; font: 500 .8125rem/1.25rem Roboto; color: var(--mat-sys-on-surface-variant); }
     .dm-app-pick select { padding: 4px 8px; border-radius: 8px; background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface); border: 1px solid var(--mat-sys-outline-variant); font: 500 .8125rem/1.25rem Roboto; }
     .dm-tl-viewport { height: calc(100vh - 240px); border: 1px solid var(--mat-sys-outline-variant); border-radius: 12px; background: var(--mat-sys-surface-container-lowest); }
@@ -136,16 +142,16 @@ const SINCE_OPTS: { key: string; label: string }[] = [
     .dm-tl-summary { color: var(--mat-sys-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* M85 search deep-link (?at=<ts>): highlights the row nearest the linked
        timestamp so a palette hit lands somewhere findable, not just "in view". */
-    .dm-tl-row.dm-tl-anchored { background: color-mix(in oklch, var(--mat-sys-primary) 16%, transparent); outline: 2px solid var(--mat-sys-primary); outline-offset: -2px; }
-    .dm-kind-chip[data-kind="status"]   { background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);   color: var(--mat-sys-primary); }
-    .dm-kind-chip[data-kind="error"]    { background: color-mix(in oklch, var(--mat-sys-error) 18%, transparent);     color: var(--mat-sys-error); }
-    .dm-kind-chip[data-kind="warning"]  { background: color-mix(in oklch, var(--mat-sys-tertiary) 18%, transparent);  color: var(--mat-sys-tertiary); }
-    .dm-kind-chip[data-kind="lint"]     { background: color-mix(in oklch, var(--mat-sys-secondary) 18%, transparent); color: var(--mat-sys-secondary); }
-    .dm-kind-chip[data-kind="health"]   { background: color-mix(in oklch, var(--mat-sys-primary) 10%, transparent);   color: var(--mat-sys-primary); }
-    .dm-kind-chip[data-kind="bundle"]   { background: color-mix(in oklch, var(--mat-sys-tertiary) 10%, transparent);  color: var(--mat-sys-tertiary); }
-    .dm-kind-chip[data-kind="compile"]  { background: color-mix(in oklch, var(--mat-sys-secondary) 10%, transparent); color: var(--mat-sys-secondary); }
+    .dm-tl-row.dm-tl-anchored { background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent); outline: 2px solid var(--mat-sys-primary); outline-offset: -2px; }
+    .dm-kind-chip[data-kind="status"]   { background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);   color: var(--mat-sys-primary); }
+    .dm-kind-chip[data-kind="error"]    { background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), transparent);     color: var(--mat-sys-error); }
+    .dm-kind-chip[data-kind="warning"]  { background: color-mix(in oklch, var(--mat-sys-tertiary) var(--dm-badge-tint), transparent);  color: var(--mat-sys-tertiary); }
+    .dm-kind-chip[data-kind="lint"]     { background: color-mix(in oklch, var(--mat-sys-secondary) var(--dm-badge-tint), transparent); color: var(--mat-sys-secondary); }
+    .dm-kind-chip[data-kind="health"]   { background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);   color: var(--mat-sys-primary); }
+    .dm-kind-chip[data-kind="bundle"]   { background: color-mix(in oklch, var(--mat-sys-tertiary) var(--dm-badge-tint), transparent);  color: var(--mat-sys-tertiary); }
+    .dm-kind-chip[data-kind="compile"]  { background: color-mix(in oklch, var(--mat-sys-secondary) var(--dm-badge-tint), transparent); color: var(--mat-sys-secondary); }
     .dm-kind-chip[data-kind="task"]     { background: color-mix(in oklch, var(--mat-sys-outline) 12%, transparent);   color: var(--mat-sys-on-surface-variant); }
-    .dm-kind-chip[data-kind="restart"]  { background: color-mix(in oklch, var(--mat-sys-error) 10%, transparent);     color: var(--mat-sys-error); }
+    .dm-kind-chip[data-kind="restart"]  { background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), transparent);     color: var(--mat-sys-error); }
     .dm-tl-drawer { position: fixed; right: 1rem; top: 80px; bottom: 1rem; width: 420px; background: var(--mat-sys-surface-container-high); border: 1px solid var(--mat-sys-outline-variant); border-radius: 12px; padding: 1rem; overflow: auto; box-shadow: var(--mat-sys-level3); z-index: 20; }
     .dm-tl-drawer header { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
     .dm-tl-drawer h2 { font: 500 1rem/1.5rem Roboto; margin: 0; }
@@ -177,6 +183,12 @@ export class TimelinePageComponent implements OnInit {
   readonly anchoredTs = signal<number | null>(null);
 
   @ViewChild('viewport') viewport?: CdkVirtualScrollViewport;
+  @ViewChild('drawer') private drawerRef?: ElementRef<HTMLElement>;
+  // The row element that opened the drawer (M89) — refocused when the
+  // drawer closes so keyboard users land back where they were instead of at
+  // the top of the document. cdkVirtualFor recycles row DOM nodes, so this
+  // can go stale on a fast scroll; select() falls back to the viewport.
+  private lastTrigger: HTMLElement | null = null;
 
   readonly filtered = computed(() => {
     const ks = this.kinds();
@@ -238,7 +250,30 @@ export class TimelinePageComponent implements OnInit {
     if (next.has(k)) next.delete(k); else next.add(k);
     this.kinds.set(next);
   }
-  select(r: TimelineRow | null): void { this.selected.set(r); }
+  select(r: TimelineRow | null, ev?: Event): void {
+    if (r) {
+      this.lastTrigger = (ev?.currentTarget as HTMLElement | null) ?? null;
+      this.selected.set(r);
+      this.focusDrawerWhenReady();
+    } else {
+      this.selected.set(null);
+      (this.lastTrigger && document.contains(this.lastTrigger) ? this.lastTrigger : this.viewport?.elementRef.nativeElement)?.focus();
+      this.lastTrigger = null;
+    }
+  }
+
+  // Drawer detail: Escape closes it and returns focus to the row that opened
+  // it (M89) — matches the palette/topbar-popover Escape convention.
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.selected()) this.select(null);
+  }
+
+  private focusDrawerWhenReady(attempt = 0): void {
+    if (this.drawerRef?.nativeElement) { this.drawerRef.nativeElement.focus(); return; }
+    if (attempt >= 10) return;
+    requestAnimationFrame(() => this.focusDrawerWhenReady(attempt + 1));
+  }
 
   rel(ts: number): string {
     const d = Math.max(0, Math.floor((Date.now() - ts) / 1000));

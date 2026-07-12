@@ -83,7 +83,7 @@ function relTime(ms: number, now: number): string {
         <mat-label>Search</mat-label>
         <input matInput [ngModel]="textFilter()" (ngModelChange)="textFilter.set($event)" placeholder="filter message / app" />
         @if (textFilter()) {
-          <button matSuffix mat-icon-button (click)="textFilter.set('')"><mat-icon>close</mat-icon></button>
+          <button matSuffix mat-icon-button aria-label="Clear filter" (click)="textFilter.set('')"><mat-icon>close</mat-icon></button>
         }
       </mat-form-field>
 
@@ -98,7 +98,7 @@ function relTime(ms: number, now: number): string {
           </button>
         }
         @if (typeFilter().size > 0) {
-          <button class="dm-chip dm-chip-clear" (click)="clearTypes()">
+          <button class="dm-chip dm-chip-clear" aria-label="Clear type filter" (click)="clearTypes()">
             <mat-icon>close</mat-icon>
           </button>
         }
@@ -213,22 +213,22 @@ function relTime(ms: number, now: number): string {
       white-space: nowrap;
     }
     .dm-type[data-kind="status"], .dm-chip[data-kind="status"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
       border-color: color-mix(in oklch, var(--mat-sys-primary) 30%, transparent);
       color: var(--mat-sys-primary);
     }
     .dm-type[data-kind="health"], .dm-chip[data-kind="health"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-secondary) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-secondary) var(--dm-badge-tint), transparent);
       border-color: color-mix(in oklch, var(--mat-sys-secondary) 30%, transparent);
       color: var(--mat-sys-secondary);
     }
     .dm-type[data-kind="error"], .dm-chip[data-kind="error"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-error) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), transparent);
       border-color: color-mix(in oklch, var(--mat-sys-error) 32%, transparent);
       color: var(--mat-sys-error);
     }
     .dm-type[data-kind="compile"], .dm-chip[data-kind="compile"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-tertiary) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-tertiary) var(--dm-badge-tint), transparent);
       border-color: color-mix(in oklch, var(--mat-sys-tertiary) 30%, transparent);
       color: var(--mat-sys-tertiary);
     }

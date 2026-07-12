@@ -130,7 +130,7 @@ function escapeRegex(s: string): string {
           <input matInput [ngModel]="filter()" (ngModelChange)="filter.set($event)"
                  [placeholder]="useRegex() ? 'regex (case-insensitive)' : 'case-insensitive substring'" />
           @if (filter()) {
-            <button matSuffix mat-icon-button (click)="filter.set('')"><mat-icon>close</mat-icon></button>
+            <button matSuffix mat-icon-button aria-label="Clear filter" (click)="filter.set('')"><mat-icon>close</mat-icon></button>
           }
         </mat-form-field>
         <button mat-stroked-button [class.dm-on]="useRegex()" (click)="useRegex.set(!useRegex())"

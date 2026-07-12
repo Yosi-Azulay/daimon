@@ -164,7 +164,8 @@ async function streamNdjson(pathname: string, method: 'GET' | 'POST' = 'GET'): P
   };
   try {
     const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders() });
-    if (!res.ok || !res.body) fail(JSON.stringify({ error: `stream failed: HTTP ${res.status}` }));
+    warnOnVersionSkew(res);
+    if (!res.ok || !res.body) failHint(`stream failed: HTTP ${res.status}`, "check 'daimon daemon status', then retry; 'daimon daemon restart' hands off to a fresh daemon");
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
@@ -187,6 +188,21 @@ async function streamNdjson(pathname: string, method: 'GET' | 'POST' = 'GET'): P
   return terminal;
 }
 
+// Version-skew warning (M88): every daemon response carries x-daimon-version
+// (v0.14+). Compare it against this CLI's version on responses we already
+// receive — one stderr line, at most once per invocation, never a hard fail.
+// A missing header on a live daemon means it predates v0.14: same skew, same
+// remedy (`daimon daemon restart` performs the handoff to the new version).
+let skewWarned = false;
+function warnOnVersionSkew(res: { headers: { get(name: string): string | null } }): void {
+  if (skewWarned) return;
+  const remote = res.headers.get('x-daimon-version');
+  if (remote === DAIMON_VERSION) return;
+  skewWarned = true;
+  const daemonV = remote ? `v${remote}` : 'an older version (pre-0.14)';
+  process.stderr.write(`[daimon] warning: CLI v${DAIMON_VERSION} is talking to a daemon running ${daemonV} — run \`daimon daemon restart\` to hand off to the current version\n`);
+}
+
 // Ceiling on a single (non-streaming) daemon call so a stalled daemon can't hang
 // the CLI forever. Set above the daemon's own 600s max long-poll deadline
 // (wait/ensure/orchestrate) so a legitimate long wait completes but a truly hung
@@ -198,12 +214,13 @@ async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{
   const timer = setTimeout(() => ac.abort(), CALL_TIMEOUT_MS);
   try {
     const res = await fetch(getBaseUrl() + pathname, { method, headers: authHeaders(), signal: ac.signal });
+    warnOnVersionSkew(res);
     const text = await res.text();
     let body: any = text;
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch (err: any) {
-    if (err?.name === 'AbortError') fail(JSON.stringify({ error: `daimon call timed out after ${CALL_TIMEOUT_MS}ms` }));
+    if (err?.name === 'AbortError') failHint(`daimon call timed out after ${CALL_TIMEOUT_MS}ms`, "the daemon may be hung — 'daimon daemon restart' hands off to a fresh one");
     failHint('daimon is not running', 'start it with: daimon daemon start --detach');
   } finally {
     clearTimeout(timer);
@@ -215,12 +232,13 @@ async function callJson(pathname: string, method: 'GET' | 'POST', payload: unkno
   const timer = setTimeout(() => ac.abort(), CALL_TIMEOUT_MS);
   try {
     const res = await fetch(getBaseUrl() + pathname, { method, headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify(payload), signal: ac.signal });
+    warnOnVersionSkew(res);
     const text = await res.text();
     let body: any = text;
     try { body = JSON.parse(text); } catch {}
     return { status: res.status, body };
   } catch (err: any) {
-    if (err?.name === 'AbortError') fail(JSON.stringify({ error: `daimon call timed out after ${CALL_TIMEOUT_MS}ms` }));
+    if (err?.name === 'AbortError') failHint(`daimon call timed out after ${CALL_TIMEOUT_MS}ms`, "the daemon may be hung — 'daimon daemon restart' hands off to a fresh one");
     failHint('daimon is not running', 'start it with: daimon daemon start --detach');
   } finally {
     clearTimeout(timer);
@@ -494,7 +512,7 @@ async function handleClaude(rest: string[]): Promise<void> {
 
   if (sub === 'update') {
     const m = readClaudeManifest(dir);
-    if (!m) fail(JSON.stringify({ error: 'no manifest at ' + dir + ' — run `daimon claude install` first' }));
+    if (!m) fail(JSON.stringify({ error: `no manifest at ${dir} — run \`daimon claude install\` first` }));
     const selection = {
       skill: !!m!.skill,
       commands: false,
@@ -519,7 +537,7 @@ async function handleClaude(rest: string[]): Promise<void> {
     return;
   }
 
-  fail(JSON.stringify({ error: `unknown claude subcommand: ${sub}` }));
+  failHint(`unknown claude subcommand: ${sub}`, 'usage: daimon claude <install|update|uninstall|status>');
   void CLAUDE_COMMAND_NAMES;
 }
 
@@ -530,8 +548,9 @@ async function handleDaemon(rest: string[]): Promise<void> {
     case 'status': {
       const lock = readLock();
       if (!lock) { out({ running: false }); return; }
-      const uptime = Date.now() - lock.startedAt;
-      out({ running: true, pid: lock.pid, port: lock.apiPort, uptime, version: lock.version, headless: lock.headless });
+      // M87 last-call rename (was `uptime`): milliseconds, so say so in the key.
+      const uptimeMs = Date.now() - lock.startedAt;
+      out({ running: true, pid: lock.pid, port: lock.apiPort, uptimeMs, version: lock.version, headless: lock.headless });
       return;
     }
     case 'start': {
@@ -585,7 +604,7 @@ async function handleDaemon(rest: string[]): Promise<void> {
     case 'attach': {
       await ensureDaemon();
       const lock = readLock();
-      if (!lock) fail(JSON.stringify({ error: 'no daemon running and auto-spawn failed' }));
+      if (!lock) failHint('no daemon running and auto-spawn failed', "start it in the foreground to see why: 'daimon daemon start'");
       const { attachToDaemon } = await import('./tui/AttachApp.js');
       await attachToDaemon(lock!.apiPort);
       return;
@@ -731,9 +750,40 @@ async function main() {
 
   if (cmd === 'daemon') { await handleDaemon(rest); return; }
   if (cmd === 'claude') { await handleClaude(rest); return; }
+  // Alias resolution rewrote `config` to the canonical multi-word name.
+  if (cmd === 'config validate') {
+    const sub = rest[0];
+    if (sub !== 'validate') failHint(`unknown config subcommand: ${sub ?? '(none)'}`, 'usage: daimon config validate [<path>]');
+    const { validateConfig, configValidationWarnings, configLookupPaths } = await import('./config.js');
+    const fsMod = await import('node:fs');
+    const explicit = rest[1] ? path.resolve(rest[1]) : null;
+    const { local, user } = configLookupPaths();
+    const target = explicit ?? (fsMod.existsSync(local) ? local : user);
+    if (!fsMod.existsSync(target)) {
+      out({ path: target, ok: false, errors: [`no config file at ${target}`], warnings: [], hint: "run 'daimon init --auto' to create one" });
+      process.exit(1);
+    }
+    let raw: unknown;
+    try {
+      let text = fsMod.readFileSync(target, 'utf8');
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // strip BOM, same as configManager
+      raw = JSON.parse(text);
+    } catch (err: any) {
+      out({ path: target, ok: false, errors: [`invalid JSON: ${err?.message || err}`], warnings: [], hint: 'fix the syntax error; the daemon refuses to start on unparseable config' });
+      process.exit(1);
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      out({ path: target, ok: false, errors: ['config must be a JSON object'], warnings: [] });
+      process.exit(1);
+    }
+    validateConfig(raw, target);
+    const warnings = configValidationWarnings();
+    out({ path: target, ok: true, errors: [], warnings, ...(warnings.length ? { hint: 'warnings never block loading — the daemon falls back to defaults for these' } : {}) });
+    return;
+  }
   if (cmd === 'export-config') {
     const cfgR = loadConfig();
-    if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
+    if (cfgR.kind !== 'loaded') failHint('no config loaded', "run 'daimon init --auto' in your workspace to create one");
     const fParsed = parseFlags(rest);
     const cfg: any = JSON.parse(JSON.stringify(cfgR.config));
     if (fParsed.redacted) {
@@ -761,7 +811,7 @@ async function main() {
   if (cmd === 'discover') {
     await ensureDaemon();
     const r = await call('/api/discovery/explain');
-    if (r.status !== 200) fail(JSON.stringify({ error: 'discovery failed', status: r.status }));
+    if (r.status !== 200) failHint(`discovery failed (HTTP ${r.status})`, "run 'daimon doctor' for config + searchRoot checks");
     out(r.body);
     return;
   }
@@ -836,10 +886,14 @@ async function main() {
 
   switch (cmd) {
     case 'list': {
-      const needFull = f.full || ((f.tags.length || f.workspace) && !f.compact);
+      // M87 last-call fix: --tag/--workspace filter on the DAEMON (where the
+      // full rows live) instead of silently switching the output to the full
+      // shape client-side. The output shape now depends only on --full/--compact.
       const params = new URLSearchParams();
-      if (needFull) params.set('format', 'full');
+      if (f.full) params.set('format', 'full');
       else if (f.compact) params.set('format', 'compact');
+      for (const t of f.tags) params.append('tag', t);
+      if (f.workspace) params.set('workspace', f.workspace);
       if (f.explain) params.set('explain', '1');
       // Default: only show apps under the current cwd. Pass --all to see every app the
       // daemon knows about (across all registered searchRoots).
@@ -856,13 +910,16 @@ async function main() {
       const qs = params.toString();
       const r = await call('/api/apps' + (qs ? '?' + qs : ''));
       if (f.explain) {
-        // explain returns { apps, _meta }; do not apply tag/workspace filters here.
+        // explain returns { apps, _meta }; filters already applied server-side.
         out(r.body);
         return;
       }
       let arr = Array.isArray(r.body) ? r.body : [];
-      if (f.tags.length) arr = arr.filter((a: any) => f.tags.every(t => (a.tags || []).includes(t)));
-      if (f.workspace) arr = arr.filter((a: any) => a.workspaceLabel === f.workspace);
+      // Belt-and-braces for version skew (new CLI, pre-v0.14 daemon that
+      // ignores ?tag=/?workspace=): re-filter locally when rows carry the
+      // fields (full shape). Harmless when the daemon already filtered.
+      if (f.tags.length) arr = arr.filter((a: any) => !Array.isArray(a.tags) || f.tags.every(t => a.tags.includes(t)));
+      if (f.workspace) arr = arr.filter((a: any) => !('workspaceLabel' in a) || a.workspaceLabel === f.workspace);
       out(arr);
       return;
     }
@@ -928,7 +985,7 @@ async function main() {
       let timeoutSec = 300;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);
-        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
         timeoutSec = Math.min(t, 600);
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
@@ -992,7 +1049,10 @@ async function main() {
       out(r.body);
       return;
     }
-    case 'profiles': {
+    // The alias maps `profiles` → this canonical name before the switch. The
+    // old `case 'profiles'` could never match after that rewrite, so the verb
+    // shipped broken in v0.12–v0.13 (M91 fix).
+    case 'profiles suggest': {
       const sub = f.positional[0];
       if (sub !== 'suggest') failHint('usage: daimon profiles suggest [--since 30d] [--min 5]');
       const params = new URLSearchParams();
@@ -1072,7 +1132,7 @@ async function main() {
       // Legacy behavior (pre-v0.13): --use activates an env file for injection.
       if (f.use) {
         const r = await callJson(`/api/apps/${encodeURIComponent(name)}/env`, 'POST', { use: f.use });
-        if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+        if (r.status === 404) await suggestUnknownApp(name);
         out(r.body);
         return;
       }
@@ -1137,7 +1197,7 @@ async function main() {
       if (f.deep) qs.set('deep', '1');
       if (f.yes) qs.set('yes', '1');
       const r = await call(`/api/apps/${encodeURIComponent(name)}/clean${qs.toString() ? '?' + qs.toString() : ''}`, 'POST');
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       if (r.status === 409) { out(r.body); process.exit(1); }
       out(r.body);
       return;
@@ -1169,7 +1229,7 @@ async function main() {
     }
     case 'doctor': {
       const cfgR = loadConfig();
-      if (cfgR.kind !== 'loaded') fail(JSON.stringify({ error: 'no config loaded' }));
+      if (cfgR.kind !== 'loaded') failHint('no config loaded', "run 'daimon init --auto' in your workspace to create one");
       if (f.self) {
         await ensureDaemon();
         const r = await call('/api/self');
@@ -1235,7 +1295,7 @@ async function main() {
       const holder = findPortHolder(port);
       if (!holder) { out({ port, free: true }); return; }
       if (!f.force) { out({ port, free: false, holder }); return; }
-      if (holder.pid === process.pid) fail(JSON.stringify({ error: 'refuse to kill daimon itself', holder }));
+      if (holder.pid === process.pid) failHint('refusing: that port is held by this daimon itself', "use 'daimon daemon stop' to stop the daemon, or change apiPort in daimon.config.json");
       const ok = await killHolder(holder);
       out({ port, killed: ok, holder });
       if (!ok) process.exit(1);
@@ -1245,7 +1305,7 @@ async function main() {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: daimon snapshot <name>' }));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/snapshot?write=1`, 'POST');
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
     }
@@ -1253,7 +1313,7 @@ async function main() {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: daimon tasks <name>' }));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/tasks`);
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
     }
@@ -1267,7 +1327,7 @@ async function main() {
       const qs = params.toString();
       const r = await callJson(`/api/apps/${encodeURIComponent(name)}/run/${encodeURIComponent(task)}${qs ? '?' + qs : ''}`, 'POST', body);
       if (r.status === 412) reportCollisionAndExit(r.body);
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       if (!f.watch && typeof r.body?.exitCode === 'number') process.exit(r.body.exitCode === 0 ? 0 : 1);
       return;
@@ -1298,7 +1358,7 @@ async function main() {
       const qs = params.toString();
       const r = await call(endpoint + (qs ? '?' + qs : ''));
       if (r.status === 412) reportCollisionAndExit(r.body);
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       let body = r.body;
       if (f.structured && Array.isArray(body)) {
         body = body.map((e: any) => e.parsed ?? { message: e.message });
@@ -1331,12 +1391,12 @@ async function main() {
       let timeoutSec = 180;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);
-        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
         timeoutSec = Math.min(t, 600);
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/ensure?${params.toString()}`, 'POST');
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       if (r.body?.error === 'timeout') process.exit(2);
       return;
@@ -1351,12 +1411,12 @@ async function main() {
       let timeoutSec = 300;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);
-        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
         timeoutSec = Math.min(t, 1200);
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
       const r = await call(`/api/profiles/${encodeURIComponent(profile)}/ensure-up?${params.toString()}`, 'POST');
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown profile' }));
+      if (r.status === 404) failHint('unknown profile', "profiles are named sets in daimon.config.json `profiles`; run 'daimon profiles suggest' for candidates");
       out(r.body);
       const anyTimeout = Array.isArray(r.body?.apps) && r.body.apps.some((a: any) => a.timedOut);
       if (anyTimeout) process.exit(2);
@@ -1427,7 +1487,7 @@ async function main() {
       let timeoutSec = 180;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);
-        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
         timeoutSec = Math.min(t, 600);
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
@@ -1442,7 +1502,7 @@ async function main() {
       const name = f.positional[0];
       if (!name) fail(JSON.stringify({ error: 'usage: daimon pin-health <name> [--accept] [--path <p>]' }));
       const status = await call(`/api/apps/${encodeURIComponent(name)}?format=full`);
-      if (status.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (status.status === 404) await suggestUnknownApp(name);
       const discovered: string | null = (status.body as any)?.discoveredHealthPath ?? null;
       const candidate = f.path ?? discovered ?? null;
       if (!f.accept) {
@@ -1451,7 +1511,7 @@ async function main() {
       }
       if (!candidate) fail(JSON.stringify({ error: 'no path to pin — pass --path or wait for auto-discovery' }));
       const r = await callJson(`/api/apps/${encodeURIComponent(name)}/health/pin`, 'POST', { path: candidate });
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
     }
@@ -1466,7 +1526,7 @@ async function main() {
       let timeoutSec = 300;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);
-        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
         timeoutSec = Math.min(t, 1200);
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
@@ -1489,32 +1549,32 @@ async function main() {
       let timeoutSec = 180;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);
-        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
         timeoutSec = Math.min(t, 600);
       }
       params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/try-fix?${params.toString()}`, 'POST');
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       if (r.body && r.body.reached === false) process.exit(2);
       return;
     }
     case 'wait': {
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 120s]' }));
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
       if (f.until) params.set('until', f.until);
       let timeoutSec = 120;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);
-        if (t == null) fail(JSON.stringify({ error: `invalid --timeout: ${f.timeout}` }));
+        if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
         timeoutSec = Math.min(t, 600);
       }
       params.set('timeout', String(Math.ceil(timeoutSec)));
       const r = await call(`/api/apps/${encodeURIComponent(name)}/wait?${params.toString()}`);
       if (r.status === 412) reportCollisionAndExit(r.body);
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       if (r.body?.timedOut) process.exit(2);
       return;
@@ -1529,14 +1589,14 @@ async function main() {
       if (!profile) {
         targets = knownConfig.autoStart || [];
         if (cmd === 'up' && targets.length === 0) {
-          fail(JSON.stringify({ error: 'no autoStart configured and no profile given' }));
+          failHint('no autoStart configured and no profile given', "add an autoStart list or a profiles entry to daimon.config.json, or start one app with 'daimon start <name>'");
         }
         if (cmd === 'down' && targets.length === 0) {
           targets = all.map(a => a.name);
         }
       } else {
         const list = knownConfig.profiles?.[profile];
-        if (!list) fail(JSON.stringify({ error: `unknown profile: ${profile}` }));
+        if (!list) failHint(`unknown profile: ${profile}`, "profiles are named sets in daimon.config.json `profiles`; run 'daimon profiles suggest' for candidates");
         targets = list;
       }
       const action = cmd === 'up' ? 'start' : 'stop';
@@ -1584,8 +1644,8 @@ async function main() {
         // NDJSON {ts,line} until SIGINT.
         try {
           const res = await fetch(getBaseUrl() + `/api/apps/${encodeURIComponent(name)}/logs/stream?${params.toString()}`, { headers: authHeaders() });
-          if (res.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
-          if (!res.ok || !res.body) fail(JSON.stringify({ error: `stream failed: HTTP ${res.status}` }));
+          if (res.status === 404) await suggestUnknownApp(name);
+          if (!res.ok || !res.body) failHint(`stream failed: HTTP ${res.status}`, "check 'daimon daemon status', then retry; 'daimon daemon restart' hands off to a fresh daemon");
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buf = '';
@@ -1609,7 +1669,7 @@ async function main() {
       const r = await call(`/api/apps/${encodeURIComponent(name)}/logs${qs ? '?' + qs : ''}`);
       if (r.status === 412) reportCollisionAndExit(r.body);
       if (r.status === 400) fail(JSON.stringify(r.body));
-      if (r.status === 404) fail(JSON.stringify({ error: 'unknown app' }));
+      if (r.status === 404) await suggestUnknownApp(name);
       out(r.body);
       return;
     }

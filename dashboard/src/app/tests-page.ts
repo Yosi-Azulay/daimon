@@ -78,7 +78,7 @@ const SPARK_MAX = 30;
             <div class="dm-trend-row" aria-label="Recent pass/fail history">
               @for (cell of c.spark; track cell.id) {
                 <button type="button" class="dm-tick" [attr.data-kind]="cell.outcome"
-                        [attr.title]="tickLabel(cell)" (click)="toggleRun(c.app, cell.id)"></button>
+                        [attr.title]="tickLabel(cell)" [attr.aria-label]="tickLabel(cell)" (click)="toggleRun(c.app, cell.id)"></button>
               }
             </div>
 
@@ -100,7 +100,7 @@ const SPARK_MAX = 30;
               @for (r of c.runs; track r.id) {
                 <div class="dm-run-row" [class.expanded]="isExpanded(c.app, r.id)" role="listitem">
                   <label class="dm-cmp" [matTooltip]="'Select for diff'" (click)="$event.stopPropagation()">
-                    <input type="checkbox" [checked]="isSelectedForDiff(c.app, r.id)" (change)="toggleDiffSelect(c.app, r.id)" />
+                    <input type="checkbox" [checked]="isSelectedForDiff(c.app, r.id)" (change)="toggleDiffSelect(c.app, r.id)" aria-label="Select for diff" />
                   </label>
                   <button type="button" class="dm-run-main" (click)="toggleRun(c.app, r.id)">
                     <span class="dm-run-kind" [attr.data-kind]="outcomeKind(r)"></span>
@@ -208,10 +208,10 @@ const SPARK_MAX = 30;
     .dm-pill .dm-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--dm-color-fg-muted); }
     .dm-pill[data-kind="ok"] { background: color-mix(in oklch, var(--dm-color-serving) 12%, transparent); border-color: color-mix(in oklch, var(--dm-color-serving) 28%, transparent); }
     .dm-pill[data-kind="ok"] .dm-dot { background: var(--dm-color-serving); }
-    .dm-pill[data-kind="fail"] { background: color-mix(in oklch, var(--dm-color-error) 14%, transparent); border-color: color-mix(in oklch, var(--dm-color-error) 30%, transparent); color: var(--dm-color-error); }
+    .dm-pill[data-kind="fail"] { background: color-mix(in oklch, var(--dm-color-error) var(--dm-badge-tint), transparent); border-color: color-mix(in oklch, var(--dm-color-error) 30%, transparent); color: var(--dm-color-error); }
     .dm-pill[data-kind="fail"] .dm-dot { background: var(--dm-color-error); }
 
-    .dm-flaky-count { display: inline-flex; align-items: center; gap: 2px; margin-left: .5rem; padding: 1px 8px; border-radius: var(--dm-radius-full); background: color-mix(in oklch, var(--dm-color-accent) 14%, transparent); color: var(--dm-color-accent); font: 600 var(--dm-text-xs)/1rem Roboto; }
+    .dm-flaky-count { display: inline-flex; align-items: center; gap: 2px; margin-left: .5rem; padding: 1px 8px; border-radius: var(--dm-radius-full); background: color-mix(in oklch, var(--dm-color-accent) var(--dm-badge-tint), transparent); color: var(--dm-color-accent); font: 600 var(--dm-text-xs)/1rem Roboto; }
     .dm-flaky-count mat-icon { font-size: 14px; width: 14px; height: 14px; }
 
     .dm-trend-row { display: flex; gap: 2px; margin: .5rem 0; flex-wrap: wrap; }
@@ -252,7 +252,7 @@ const SPARK_MAX = 30;
     .dm-fail-jump { color: var(--dm-color-primary); text-decoration: none; display: inline-flex; align-items: center; gap: .3rem; font-size: var(--dm-text-xs); }
     .dm-fail-jump:hover { text-decoration: underline; }
     .dm-jump-icon { font-size: 13px; width: 13px; height: 13px; }
-    .dm-flaky-tag { display: inline-flex; align-items: center; gap: 2px; padding: 1px 7px; border-radius: var(--dm-radius-full); background: color-mix(in oklch, var(--dm-color-accent) 16%, transparent); color: var(--dm-color-accent); font: 600 var(--dm-text-xs)/1rem Roboto; }
+    .dm-flaky-tag { display: inline-flex; align-items: center; gap: 2px; padding: 1px 7px; border-radius: var(--dm-radius-full); background: color-mix(in oklch, var(--dm-color-accent) var(--dm-badge-tint), transparent); color: var(--dm-color-accent); font: 600 var(--dm-text-xs)/1rem Roboto; }
     .dm-flaky-tag mat-icon { font-size: 12px; width: 12px; height: 12px; }
 
     .dm-diff { margin-top: .75rem; padding: .75rem; border-radius: var(--dm-radius-lg); border: 1px dashed var(--dm-color-border-strong); }

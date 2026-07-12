@@ -133,6 +133,9 @@ const ROUTINES: RoutineDef[] = [
                 <div class="dm-block">
                   <div class="dm-k">Rejected</div>
                   <table class="dm-table">
+                    <thead>
+                      <tr><th scope="col" class="dm-sr-only">Reason</th><th scope="col" class="dm-sr-only dm-num">Count</th></tr>
+                    </thead>
                     <tbody>
                       @for (row of rejectedRows(); track row.reason) {
                         <tr><td><dm-mono>{{ row.reason }}</dm-mono></td><td class="dm-num"><dm-mono>{{ row.count }}</dm-mono></td></tr>
@@ -364,7 +367,7 @@ const ROUTINES: RoutineDef[] = [
     }
     .dm-pill[data-kind="detected"] .dm-dot { background: var(--mat-sys-tertiary); }
     .dm-pill[data-kind="err"], .dm-pill[data-kind="error"] {
-      background: color-mix(in oklch, var(--mat-sys-error) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), transparent);
       border-color: color-mix(in oklch, var(--mat-sys-error) 30%, transparent);
       color: var(--mat-sys-error);
     }
@@ -416,7 +419,7 @@ const ROUTINES: RoutineDef[] = [
       width: 28px; height: 28px;
       display: flex; align-items: center; justify-content: center;
       border-radius: 8px;
-      background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
       color: var(--mat-sys-primary);
     }
     .dm-stat-icon mat-icon { font-size: 16px; width: 16px; height: 16px; }

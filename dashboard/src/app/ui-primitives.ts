@@ -28,7 +28,7 @@ import { frameworkTone } from './workspace-tone';
     .dm-pill[data-kind="serving"] { background: color-mix(in oklch, var(--dm-color-serving) 12%, transparent); border-color: color-mix(in oklch, var(--dm-color-serving) 28%, transparent); }
     .dm-pill[data-kind="compiling"] { background: color-mix(in oklch, var(--dm-color-compiling) 14%, transparent); border-color: color-mix(in oklch, var(--dm-color-compiling) 28%, transparent); }
     .dm-pill[data-kind="starting"] { background: color-mix(in oklch, var(--dm-color-starting) 14%, transparent); border-color: color-mix(in oklch, var(--dm-color-starting) 28%, transparent); }
-    .dm-pill[data-kind="error"] { background: color-mix(in oklch, var(--dm-color-error) 14%, transparent); border-color: color-mix(in oklch, var(--dm-color-error) 30%, transparent); color: var(--dm-color-error); }
+    .dm-pill[data-kind="error"] { background: color-mix(in oklch, var(--dm-color-error) var(--dm-badge-tint), transparent); border-color: color-mix(in oklch, var(--dm-color-error) 30%, transparent); color: var(--dm-color-error); }
     .dm-dot { width: 8px; height: 8px; border-radius: var(--dm-radius-full); box-shadow: 0 0 0 2px color-mix(in oklch, currentColor 18%, transparent); }
     .dm-eta { font: 600 var(--dm-text-xs)/var(--dm-line-tight) var(--dm-mono); color: var(--dm-color-fg-muted); }
   `],

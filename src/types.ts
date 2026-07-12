@@ -1,4 +1,6 @@
-export type AppStatus = 'stopped' | 'starting' | 'compiling' | 'serving' | 'error';
+// 'orphaned' (M88, additive): a child that survived a daemon handoff but could
+// not be verified (pid+port) for re-adoption. Reported, never blindly killed.
+export type AppStatus = 'stopped' | 'starting' | 'compiling' | 'serving' | 'error' | 'orphaned';
 export type AppHealth = 'unknown' | 'healthy' | 'unhealthy';
 
 export interface AutoRestartConfig {
@@ -267,28 +269,36 @@ export interface LogEntry {
   line: string;
 }
 
-export type AppEventType =
-  | 'status'
-  | 'error-new'
-  | 'error-recur'
-  | 'warning-new'
-  | 'warning-recur'
-  | 'lint-new'
-  | 'lint-recur'
-  | 'health'
-  | 'restart-scheduled'
-  | 'stale'
-  | 'bundle-regression'
-  | 'compile-regression'
-  | 'regression-detected'
-  | 'task-run'
-  | 'test-run'
-  | 'test-failed'
-  | 'flaky-test-detected'
-  | 'crash'
-  | 'restart-storm'
-  | 'digest-sent'
-  | 'self-warn';
+// Event-kind catalog with stability tiers (M87). This const is the single
+// source of truth for which event kinds exist — AppEventType derives from it,
+// build-docs renders it, and the contract suite pins the frozen kinds.
+// Frozen kinds never disappear or change meaning; additive kinds start
+// experimental. See STABILITY.md.
+export const EVENT_KIND_STABILITY = {
+  'status': 'frozen',
+  'error-new': 'frozen',
+  'error-recur': 'frozen',
+  'health': 'frozen',
+  'crash': 'stable',
+  'warning-new': 'stable',
+  'warning-recur': 'stable',
+  'lint-new': 'stable',
+  'lint-recur': 'stable',
+  'restart-scheduled': 'stable',
+  'stale': 'stable',
+  'bundle-regression': 'stable',
+  'compile-regression': 'stable',
+  'regression-detected': 'stable',
+  'task-run': 'stable',
+  'test-run': 'stable',
+  'test-failed': 'stable',
+  'flaky-test-detected': 'stable',
+  'restart-storm': 'stable',
+  'self-warn': 'stable',
+  'digest-sent': 'experimental', // v0.13 (M84)
+} as const satisfies Record<string, import('./stability.js').Stability>;
+
+export type AppEventType = keyof typeof EVENT_KIND_STABILITY;
 
 export interface AppEvent {
   ts: number;
@@ -342,6 +352,10 @@ export interface AppState {
   baseName: string;
   lastErrorHash?: string | null;
   discoveredHealthPath?: string | null;
+  // Re-adopted after a daemon handoff (M88): the child predates this daemon
+  // process, so there is no AppProcess/stdio — pid+port only. stop() tree-kills
+  // the pid; log capture resumes on the next restart.
+  adopted?: boolean;
 }
 
 export interface AppSummary {

@@ -78,7 +78,7 @@ type SectionKey = keyof Report['sections'];
               <div class="dm-note">{{ n }}</div>
             } @else {
               <table class="dm-table">
-                <thead><tr><th>app</th><th>uptime</th><th>restarts</th><th>now</th></tr></thead>
+                <thead><tr><th scope="col">app</th><th scope="col">uptime</th><th scope="col">restarts</th><th scope="col">now</th></tr></thead>
                 <tbody>
                   @for (r of uptimeRows(); track r.app) {
                     <tr>
@@ -269,9 +269,9 @@ type SectionKey = keyof Report['sections'];
       font: 600 var(--dm-text-xs)/1rem Roboto; text-transform: uppercase; letter-spacing: .02rem;
       background: var(--dm-color-surface-3); color: var(--dm-color-fg-muted);
     }
-    .dm-tag[data-kind="new"] { background: color-mix(in oklch, var(--dm-color-danger) 14%, transparent); color: var(--dm-color-danger); }
-    .dm-tag[data-kind="recurring"] { background: color-mix(in oklch, var(--dm-color-accent) 14%, transparent); color: var(--dm-color-accent); }
-    .dm-tag[data-kind="resolved"] { background: color-mix(in oklch, var(--dm-color-serving) 14%, transparent); color: var(--dm-color-serving); }
+    .dm-tag[data-kind="new"] { background: color-mix(in oklch, var(--dm-color-danger) var(--dm-badge-tint), transparent); color: var(--dm-color-danger); }
+    .dm-tag[data-kind="recurring"] { background: color-mix(in oklch, var(--dm-color-accent) var(--dm-badge-tint), transparent); color: var(--dm-color-accent); }
+    .dm-tag[data-kind="resolved"] { background: color-mix(in oklch, var(--dm-color-serving) var(--dm-badge-tint), transparent); color: var(--dm-color-serving); }
   `],
 })
 export class ReportPageComponent implements OnInit, OnDestroy {

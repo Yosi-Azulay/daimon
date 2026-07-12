@@ -128,6 +128,7 @@ const MODE_KEY = 'daimon.config.mode';
                       @case ('number') {
                         <mat-form-field appearance="outline" subscriptSizing="dynamic">
                           <input matInput type="number"
+                                 [attr.aria-label]="f.label"
                                  [min]="f.min ?? null" [max]="f.max ?? null"
                                  [value]="getVal(f.key)"
                                  (input)="setVal(f.key, toNum($any($event.target).value))" />
@@ -153,14 +154,14 @@ const MODE_KEY = 'daimon.config.mode';
                       }
                       @case ('string') {
                         <mat-form-field appearance="outline" subscriptSizing="dynamic">
-                          <input matInput [placeholder]="f.placeholder ?? ''"
+                          <input matInput [attr.aria-label]="f.label" [placeholder]="f.placeholder ?? ''"
                                  [value]="getStrOrEmpty(f.key)"
                                  (input)="setVal(f.key, $any($event.target).value || (f.kind === 'string' ? '' : null))" />
                         </mat-form-field>
                       }
                       @case ('path') {
                         <mat-form-field appearance="outline" subscriptSizing="dynamic">
-                          <input matInput class="dm-mono"
+                          <input matInput class="dm-mono" [attr.aria-label]="f.label"
                                  [placeholder]="f.placeholder ?? ''"
                                  [value]="getStrOrEmpty(f.key)"
                                  (input)="setVal(f.key, $any($event.target).value)" />
@@ -168,7 +169,7 @@ const MODE_KEY = 'daimon.config.mode';
                       }
                       @case ('token') {
                         <mat-form-field appearance="outline" subscriptSizing="dynamic">
-                          <input matInput [type]="showToken() ? 'text' : 'password'"
+                          <input matInput [type]="showToken() ? 'text' : 'password'" [attr.aria-label]="f.label"
                                  [placeholder]="'(unset)'"
                                  [value]="getStrOrEmpty(f.key)"
                                  (input)="setVal(f.key, $any($event.target).value || null)" />
@@ -194,7 +195,7 @@ const MODE_KEY = 'daimon.config.mode';
                             @for (item of getArr(f.key); track item; let i = $index) {
                               <mat-chip [removable]="true" (removed)="removeAt(f.key, i)">
                                 <dm-mono>{{ item }}</dm-mono>
-                                <button matChipRemove>
+                                <button matChipRemove [attr.aria-label]="'Remove ' + item">
                                   <mat-icon fontSet="material-symbols-outlined">cancel</mat-icon>
                                 </button>
                               </mat-chip>
@@ -205,7 +206,7 @@ const MODE_KEY = 'daimon.config.mode';
                                    [placeholder]="f.placeholder ?? 'Add value and press Enter'"
                                    #addInput
                                    (keydown.enter)="addItem(f.key, addInput.value); addInput.value = ''; $event.preventDefault();" />
-                            <button matSuffix mat-icon-button type="button" (click)="addItem(f.key, addInput.value); addInput.value = '';">
+                            <button matSuffix mat-icon-button type="button" (click)="addItem(f.key, addInput.value); addInput.value = '';" [attr.aria-label]="'Add ' + f.label">
                               <mat-icon fontSet="material-symbols-outlined">add</mat-icon>
                             </button>
                           </mat-form-field>
@@ -216,7 +217,7 @@ const MODE_KEY = 'daimon.config.mode';
                           @for (item of getObjArr(f.key); track $index; let i = $index) {
                             <div class="dm-path-row">
                               <mat-form-field appearance="outline" subscriptSizing="dynamic" class="dm-path-input">
-                                <input matInput class="dm-mono"
+                                <input matInput class="dm-mono" aria-label="Path"
                                        [value]="item.path"
                                        (input)="setObjAt(f.key, i, 'path', $any($event.target).value)" />
                               </mat-form-field>
@@ -226,7 +227,7 @@ const MODE_KEY = 'daimon.config.mode';
                                        [value]="item.label ?? ''"
                                        (input)="setObjAt(f.key, i, 'label', $any($event.target).value || null)" />
                               </mat-form-field>
-                              <button mat-icon-button type="button" (click)="removeAt(f.key, i)" matTooltip="Remove">
+                              <button mat-icon-button type="button" (click)="removeAt(f.key, i)" aria-label="Remove path" matTooltip="Remove">
                                 <mat-icon fontSet="material-symbols-outlined">delete</mat-icon>
                               </button>
                             </div>
@@ -236,7 +237,7 @@ const MODE_KEY = 'daimon.config.mode';
                                    [placeholder]="f.placeholder ?? 'Add absolute path and press Enter'"
                                    #addObjInput
                                    (keydown.enter)="addObj(f.key, addObjInput.value); addObjInput.value = ''; $event.preventDefault();" />
-                            <button matSuffix mat-icon-button type="button" (click)="addObj(f.key, addObjInput.value); addObjInput.value = '';">
+                            <button matSuffix mat-icon-button type="button" (click)="addObj(f.key, addObjInput.value); addObjInput.value = '';" aria-label="Add path">
                               <mat-icon fontSet="material-symbols-outlined">add</mat-icon>
                             </button>
                           </mat-form-field>
@@ -321,7 +322,7 @@ const MODE_KEY = 'daimon.config.mode';
       border: 1px solid var(--mat-sys-outline-variant);
     }
     .dm-tag-dirty {
-      background: color-mix(in oklch, var(--mat-sys-tertiary) 18%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-tertiary) var(--dm-badge-tint), transparent);
       color: var(--mat-sys-tertiary);
       border-color: color-mix(in oklch, var(--mat-sys-tertiary) 40%, transparent);
     }

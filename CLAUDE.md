@@ -9,9 +9,17 @@ If you arrive here mid-task, this file is what you need to know about the codeba
 ```
 src/
   cli.ts            # Argv dispatch. Adds X-Daimon-Agent + X-Daimon-Cwd to every HTTP call.
-  cliSurface.ts     # Single source of truth for CLI verbs (rendered in --help, README, completion).
+                    # Warns once on stderr when the daemon's x-daimon-version header
+                    # mismatches (M88) — never hard-fails on skew.
+  cliSurface.ts     # Single source of truth for CLI verbs (rendered in --help, README,
+                    # completion). Every verb declares a `stability` tier (M87).
+  stability.ts      # The Stability type ('frozen'|'stable'|'experimental') — see STABILITY.md.
+  httpSurface.ts    # HTTP endpoint catalog (M87): one row per server.ts route, with tier.
   main.ts           # Daemon entry point. Boots Registry / History / Server / WebhookDispatcher / TUI.
+                    # Crash-recovery ORDER (M88, documented at the top of startInProcess):
+                    # recover state → verify locks → re-adopt/orphan handoff children → serve.
   server.ts         # HTTP routes. Per-app soft-lock gating + audit log writes live here.
+                    # Every JSON response carries x-daimon-version (M88 skew detection).
   registry.ts       # In-memory app/event/error book-keeping. Emits 'event' to dispatcher subscribers.
   history.ts        # SQLite-backed events / compiles / bundles / tasks / test runs /
                     # crashes (ring 10/app) / log lines / self-metrics.
@@ -63,20 +71,40 @@ src/
   mcp.ts            # MCP server. Wraps the HTTP API and forwards X-Daimon-Agent.
   ...
 dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
-test/               # node --test suite. ~200+ test cases under 30s wall-clock.
+test/               # node --test suite. 571 test cases (v0.14); files run in parallel child processes.
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
 
-## Build / run / test
+## Build / run / test (verified commands)
 
-```
-npm run build            # tsc → dist/*.js
-npm test                 # node --test, ~30s
-npm run build:dashboard  # Angular build into dist/dashboard
-npm run dev:install      # tsc + dashboard + npm link  (use for local iteration)
-```
+| Purpose | Command (repo root unless noted) | Runtime | Success signal |
+|---|---|---|---|
+| Build daemon | `npm run build` | ~5s | exit 0, silent; `dist/*.js` refreshed |
+| Full test suite | `npm test` | ~2 min | TAP tail: `# pass 571`, `# fail 0` |
+| One test file | `node --test test/<name>.test.mjs` | 3–60s | `# fail 0` |
+| Dashboard unit | `npx vitest run` (in `dashboard/`) | ~5s | `Tests  17 passed` |
+| Dashboard bundle | `npm run build:dashboard` | ~30s | `Application bundle generation complete` → `dist/dashboard` |
+| VS Code ext compile | `npm run compile` (in `vscode-extension/`) | ~3s | exit 0 |
+| Docs regen | `npm run build:docs` | ~1s | `[build-docs] wrote …docs/index.html` (idempotent — needs fresh `dist/`) |
+| CLI smoke | `DAIMON_NO_SPAWN=1 node dist/cli.js --help` | <1s | usage text, exit 0 |
+
+`npm run dev:install` = tsc + dashboard + npm link, for local iteration (links the global `daimon`).
+Dashboard Playwright e2e needs a live daemon and seeds the real `~/.daimon/history.db` — see `/verify` before running it.
 
 The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never** start the real daemon — they exercise modules in isolation against synthetic state.
+
+**Flaky-failure protocol:** since v0.14 (M91) the two historically contention-flaky files are contention-immune — `history-stress` passes on an absolute budget OR a ratio to an interleaved CPU reference (external load inflates both; a real regression inflates only the numerator), and `ports` forensics tests use a generous probe ceiling (they assert classification, not speed). A failure there is now likely REAL: re-run the file alone to confirm, then investigate. Never loosen a perf budget to silence a flake. One residual flake class: running two copies of `ports.test.mjs` simultaneously collides on its fixed 434xx test ports — don't do that.
+
+## Claude toolkit (`.claude/`)
+
+- `/verify` — the local CI gate; run it before claiming any change done.
+- `/add-framework` — new `FrameworkProfile` registry row + fixture.
+- `/add-test-runner` — new test-runner parser + fixture.
+- `/add-cli-verb` — new verb across the whole surface (cliSurface → cli → server → mcp → docs).
+- `/cut-release` — version bump → gates → tag. User-invoked only; never publishes or pushes.
+- `/review-daimon` — multi-agent diff review across daimon's five recurring failure classes.
+- `/daimon-pm` — product planning / milestone-review playbook.
+- Agents: `daimon-test-runner` (haiku — runs the suite, returns structured failures), `daimon-reviewer` (opus — single-agent review against the failure classes).
 
 ## Things daimon never does
 
@@ -105,8 +133,22 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - **New test runner = parser + fixture, same convention (M74).** Add the parser in `src/testRunners.ts`, its id to `KNOWN_TEST_RUNNER_IDS`, and a fixture in `test/fixtures/testrunners/<id>/` (marker files + `fixture.json` with pass/fail/mixed cases). `test/testrunners.test.mjs` fails on a runner without a fixture. Parsers are fail-soft: no totals is acceptable, fabricated totals are not.
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
 - **History migrations are additive** (`CREATE TABLE IF NOT EXISTS` only) — a v0.11 DB must open cleanly under v0.12 and vice versa.
+- **Every surface declares a stability tier (M87).** New CLI verbs, HTTP endpoints, MCP tools, config keys, and event kinds MUST carry `frozen`/`stable`/`experimental` at their source of truth (`cliSurface.ts` / `httpSurface.ts` / `mcp.ts` MCP_TOOL_STABILITY / `config.ts` CONFIG_KEY_STABILITY / `types.ts` EVENT_KIND_STABILITY). New work defaults to experimental. A `frozen` surface needs a golden-shape snapshot in `test/fixtures/contract/` — `test/contract.test.mjs` fails without one, and fails forever on a frozen-shape change (regenerate with `UPDATE_CONTRACT_SNAPSHOTS=1` only for reviewed ADDITIVE changes). See STABILITY.md.
+- **State writes are atomic with a .bak (M88).** Every `~/.daimon/*.json` the daemon rewrites (state.json, session-state.json, config rewrites) goes tmp → copy-current-to-.bak → rename. `state.json` load order: main → `.bak` → archive as `state.json.corrupt-<ts>` + fresh start, with a self-warn event (never silent). Torture coverage: `test/lifecycle-torture.test.mjs`.
+- **Daemon handoff is verify-then-adopt (M88).** `daimon daemon restart` leaves children RUNNING (registry handoff flag, 60s window); the incoming daemon re-adopts a child only when the handoff-recorded LISTENING pid is alive AND still the port's listener. Anything else → status `orphaned` + a per-case remedy, never a blind kill. The handoff file records the listener pid (findPortHolder at snapshot time), NOT the spawn/shell pid — on Windows the wrapper dies with the daemon's pipes.
+- **Config back-compat is unbreakable.** Unknown config keys warn (with a nearest-name suggestion) and are ignored — `daimon config validate` checks offline; loading NEVER fails on old or unknown keys.
+- **Error strings carry remedies (M90).** Every user-facing error says what to do next; `test/error-remedies.test.mjs` scans cli.ts/server.ts/main.ts and fails on bare errors. EADDRINUSE forensics is the model.
 
-## v0.13 highlights (what landed this release)
+## v0.14 highlights (what landed this release)
+
+- **Stability tiers (M87)**: every CLI verb / HTTP endpoint / MCP tool / config key / event kind declares frozen/stable/experimental at its source of truth; docs render badges; `test/contract.test.mjs` pins golden shapes (key sets + types) for all frozen surfaces from a synthetic Registry+startServer harness (fixtures in `test/fixtures/contract/`; regenerate via `UPDATE_CONTRACT_SNAPSHOTS=1`). STABILITY.md defines the tiers. Deliberate exception: `GET /api/signature` is frozen despite its v0.13 birth (cross-version identification).
+- **Last-call breaking fixes (M87, the last ever)**: compact-status `uptime` → `uptimeMs` (CLI status / HTTP compact / ensure / MCP get_status / daemon status); `daimon list --tag/--workspace` filters server-side (`?tag=&workspace=`) instead of silently switching to the full shape (also fixed `--tag --compact` returning `[]`). Additive: `/wait` accepts `timeoutMs`.
+- **Lifecycle (M88)**: version-skew stderr warning via `x-daimon-version` response header; atomic state + `.bak` + archive-corrupt recovery (stateFile/sessionState/configManager/health-pin); handoff re-adoption (children survive `daimon daemon restart`; verify-then-adopt by listener pid + port; `orphaned` status + remedy for the unverifiable); crash-recovery order documented in main.ts; `test/lifecycle-torture.test.mjs` (real daemon spawns under DAIMON_HOME isolation).
+- **WCAG AA dashboard pass (M89)**: keyboard-only routes, token-layer contrast, ARIA landmarks/labels/aria-live, prefers-reduced-motion, `@axe-core/playwright` gate (zero serious/critical, both viewports) in the Playwright drive.
+- **First-15 + errors (M90)**: README stranger rewrite (verified end-to-end on clean DAIMON_HOME); SECURITY.md; every error names its remedy (`test/error-remedies.test.mjs`).
+- **Debt (M91)**: AttachApp uses `daimonDir()`; parser.ts literal NUL bytes replaced with \u0000 string escapes (grep-clean tree); contention-immune perf tests; `daimon config validate` + load-time unknown-key warnings with nearest-name suggestions (`CONFIG_KEY_STABILITY` is the schema); fixed `daimon profiles suggest` (multi-word alias dispatch — shipped broken in v0.12–v0.13); npm pack audit test + files whitelist now ships docs/ and daimon.config.example.json; doctor coverage table (`DOCTOR_COVERAGE` in doctor.ts → docs).
+
+## v0.13 highlights
 
 - **Ports (M81)**: `ports.pool` opt-in auto-assignment; `portFlag`/`portEnv` registry fields (documented mechanisms only); `daimon ports` / `GET /api/ports`; `GET /api/signature`; EADDRINUSE startup forensics (holder pid/name/start + signature probe + remedy + crash dump); lock written only after a successful bind; doctor `port-holder-no-lock` (verify-then-kill) + pool-aware `port-conflict-pred`.
 - **Env awareness (M82)**: registry `envFiles` conventions; spawn snapshots → `env_snapshots` table (names + salted truncated hashes, values discarded same-tick, salt at `~/.daimon/salt`); `daimon env` / `env diff`; `why` gains `envChanged`; doctor `env-file-missing` (suggest-only); redaction suite.

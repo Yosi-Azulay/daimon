@@ -83,7 +83,7 @@ function readToken(name: string): string {
   selector: 'dm-history-spark',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<div class="dm-spark-box"><canvas #canvas></canvas></div>`,
+  template: `<div class="dm-spark-box" role="img" [attr.aria-label]="sparkLabel()"><canvas #canvas aria-hidden="true"></canvas></div>`,
   styles: [`
     :host { display: block; }
     .dm-spark-box { position: relative; height: 56px; }
@@ -93,6 +93,11 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
   @Input() samples: Sample[] = [];
   @ViewChild('canvas', { static: true }) canvasRef!: ElementRef<HTMLCanvasElement>;
   private chart?: Chart;
+
+  sparkLabel(): string {
+    const n = this.samples.length;
+    return n ? `Compile time sparkline, ${n} sample${n === 1 ? '' : 's'}` : 'Compile time sparkline, no data yet';
+  }
 
   ngAfterViewInit(): void {
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -242,7 +247,7 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
         <mat-card class="dm-chart-card">
           <mat-card-header><mat-card-title>Compile time (ms)</mat-card-title></mat-card-header>
           <mat-card-content>
-            <div class="dm-chart-box"><canvas #chart></canvas></div>
+            <div class="dm-chart-box" role="img" [attr.aria-label]="chartAriaLabel()"><canvas #chart aria-hidden="true"></canvas></div>
           </mat-card-content>
         </mat-card>
 
@@ -251,7 +256,7 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
           <mat-card-content>
             <table class="dm-table">
               <thead>
-                <tr><th>time</th><th class="dm-num">duration</th></tr>
+                <tr><th scope="col">time</th><th class="dm-num" scope="col">duration</th></tr>
               </thead>
               <tbody>
                 @for (row of recent(); track row.ts) {
@@ -618,5 +623,13 @@ export class HistoryPageComponent implements OnInit, OnChanges, OnDestroy {
 
   fmtTs(ts: number | undefined): string {
     return fmtTransitionTs(ts);
+  }
+
+  chartAriaLabel(): string {
+    const st = this.stats();
+    const who = this.name || 'app';
+    return st.count
+      ? `Compile time history chart for ${who}: ${st.count} builds, p50 ${st.p50} ms, p95 ${st.p95} ms`
+      : `Compile time history chart for ${who}: no data yet`;
   }
 }

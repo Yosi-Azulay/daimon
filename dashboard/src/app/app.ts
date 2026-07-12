@@ -15,10 +15,11 @@ const WS_KEY = 'daimon.workspace';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent, OnboardingTourComponent],
   template: `
+    <a class="dm-skip-link" href="#dm-main-content">Skip to content</a>
     <div class="dm-shell">
       <dm-nav-rail></dm-nav-rail>
       <dm-topbar></dm-topbar>
-      <main class="dm-main">
+      <main id="dm-main-content" class="dm-main" tabindex="-1">
         @if (api.cwdUnknown() && api.cwdHint(); as cwd) {
           <div class="dm-cwd-banner" role="status">
             <span class="material-symbols-outlined">help_outline</span>
@@ -26,7 +27,7 @@ const WS_KEY = 'daimon.workspace';
             <button type="button" (click)="registerCwd(cwd)" [disabled]="registering()">
               {{ registering() ? 'Registering…' : 'Register' }}
             </button>
-            <button type="button" class="dm-cwd-dismiss" (click)="dismissBanner()" title="Dismiss">×</button>
+            <button type="button" class="dm-cwd-dismiss" (click)="dismissBanner()" aria-label="Dismiss" title="Dismiss">×</button>
           </div>
         }
         <router-outlet />
@@ -39,6 +40,19 @@ const WS_KEY = 'daimon.workspace';
   `,
   styles: [`
     :host { display: block; height: 100vh; }
+    /* Skip-to-content link (M89): first tabbable element in the app. Visually
+       hidden until it receives focus, then pinned to the top-left corner so
+       keyboard users can jump straight past the nav rail and topbar. */
+    .dm-skip-link {
+      position: fixed; top: -100%; left: var(--dm-space-3); z-index: 2000;
+      padding: 10px 16px; border-radius: var(--dm-radius-md);
+      background: var(--dm-color-primary); color: var(--dm-color-on-primary);
+      font: 600 var(--dm-text-sm)/1.25rem var(--dm-font);
+      text-decoration: none;
+    }
+    .dm-skip-link:focus-visible {
+      top: var(--dm-space-3);
+    }
     .dm-shell {
       display: grid;
       grid-template-columns: auto 1fr;
@@ -97,18 +111,28 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly keys = inject(KeyboardShortcutsService);
   readonly paletteActivated = signal(false);
   readonly registering = signal(false);
+  // First-open handshake: the palette mounts via @defer, so the very first
+  // cmdk request arrives before its listener exists. A timed re-dispatch (the
+  // old 50ms setTimeout) silently DROPPED the open on a slow machine — the
+  // palette announces 'daimon:cmdk-ready' from its ngOnInit instead, and the
+  // pending open replays exactly then. Deterministic, no timing gamble.
+  private pendingPaletteOpen = false;
   private readonly onCmdK = () => {
     if (this.paletteActivated()) return;
     this.paletteActivated.set(true);
-    // The palette mounts after defer resolves; re-dispatch so it can hear the
-    // open signal once its own ngOnInit listener is attached.
-    setTimeout(() => window.dispatchEvent(new CustomEvent('daimon:cmdk')), 50);
+    this.pendingPaletteOpen = true;
+  };
+  private readonly onPaletteReady = () => {
+    if (!this.pendingPaletteOpen) return;
+    this.pendingPaletteOpen = false;
+    window.dispatchEvent(new CustomEvent('daimon:cmdk'));
   };
 
   ngOnInit(): void {
     this.api.start();
     this.keys.install();
     window.addEventListener('daimon:cmdk', this.onCmdK);
+    window.addEventListener('daimon:cmdk-ready', this.onPaletteReady);
     void this.detectCwd();
   }
 
@@ -116,6 +140,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.api.stop();
     this.keys.uninstall();
     window.removeEventListener('daimon:cmdk', this.onCmdK);
+    window.removeEventListener('daimon:cmdk-ready', this.onPaletteReady);
   }
 
   // Read `?cwd=<path>` from the URL; if present, ask the daemon which workspace

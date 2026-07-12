@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, signal } from '@angular/core';
+import { AfterViewChecked, ChangeDetectionStrategy, Component, ElementRef, HostListener, OnInit, ViewChild, signal } from '@angular/core';
 
 // First-run overlay (M79). Shows once; dismissing (skip or finishing the last
 // step) persists `daimon.tourDismissed = '1'` and it never shows again. No
@@ -28,7 +28,7 @@ const STEPS: TourStep[] = [
   template: `
     @if (visible()) {
       <div class="dm-tour-scrim" (click)="skip()"></div>
-      <div class="dm-tour-card" role="dialog" aria-modal="true"
+      <div class="dm-tour-card" role="dialog" aria-modal="true" tabindex="-1" #card
            [attr.aria-label]="'Onboarding step ' + (index() + 1) + ' of ' + steps.length">
         <div class="dm-tour-head">
           <span class="material-symbols-outlined dm-tour-icon">{{ step().icon }}</span>
@@ -75,7 +75,7 @@ const STEPS: TourStep[] = [
     .dm-tour-icon {
       display: inline-flex; align-items: center; justify-content: center;
       width: 40px; height: 40px; border-radius: var(--dm-radius-lg);
-      background: color-mix(in oklch, var(--dm-color-primary) 16%, transparent);
+      background: color-mix(in oklch, var(--dm-color-primary) var(--dm-badge-tint), transparent);
       color: var(--dm-color-primary);
       font-size: 22px;
     }
@@ -105,15 +105,35 @@ const STEPS: TourStep[] = [
     }
   `],
 })
-export class OnboardingTourComponent implements OnInit {
+export class OnboardingTourComponent implements OnInit, AfterViewChecked {
   protected readonly steps = STEPS;
   readonly visible = signal(false);
   readonly index = signal(0);
+  @ViewChild('card') private cardRef?: ElementRef<HTMLDivElement>;
+  private focusedOnShow = false;
 
   ngOnInit(): void {
     let dismissed = '0';
     try { dismissed = localStorage.getItem(KEY) ?? '0'; } catch { /* localStorage unavailable — never persist, tour just won't recur within a session */ }
     if (dismissed !== '1') this.visible.set(true);
+  }
+
+  // Move focus into the dialog once it renders (M89) — the tour is a
+  // first-run auto-show with no trigger element, so there's nothing to focus
+  // it *from*; this just ensures keyboard users land inside it, not on
+  // whatever happened to have focus (or nothing) beforehand.
+  ngAfterViewChecked(): void {
+    if (this.visible() && this.cardRef && !this.focusedOnShow) {
+      this.focusedOnShow = true;
+      this.cardRef.nativeElement.focus();
+    } else if (!this.visible()) {
+      this.focusedOnShow = false;
+    }
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.visible()) this.skip();
   }
 
   step(): TourStep {

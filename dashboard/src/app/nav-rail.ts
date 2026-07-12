@@ -30,8 +30,8 @@ const KEY = 'daimon.nav.expanded';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, RouterLinkActive, MatIconModule, MatTooltipModule],
   template: `
-    <nav class="dm-rail" [class.expanded]="expanded()">
-      <button class="dm-rail-toggle" (click)="toggle()" [attr.aria-label]="expanded() ? 'Collapse' : 'Expand'">
+    <nav class="dm-rail" [class.expanded]="expanded()" aria-label="Primary">
+      <button class="dm-rail-toggle" (click)="toggle()" [attr.aria-label]="expanded() ? 'Collapse navigation' : 'Expand navigation'">
         <mat-icon fontSet="material-symbols-outlined">{{ expanded() ? 'menu_open' : 'menu' }}</mat-icon>
       </button>
       <div class="dm-rail-brand">
@@ -44,6 +44,7 @@ const KEY = 'daimon.nav.expanded';
              [routerLink]="e.path"
              [routerLinkActiveOptions]="{ exact: e.path === '/' }"
              routerLinkActive="active"
+             [attr.aria-label]="e.label + ' · ' + e.shortcut"
              [matTooltip]="expanded() ? e.shortcut : (e.label + ' · ' + e.shortcut)"
              matTooltipPosition="right"
              [matTooltipShowDelay]="300"
@@ -94,7 +95,7 @@ const KEY = 'daimon.nav.expanded';
     }
     .dm-rail-item:hover { background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface); }
     .dm-rail-item.active {
-      background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
       color: var(--mat-sys-primary);
     }
     .dm-rail-label { flex: 1; }

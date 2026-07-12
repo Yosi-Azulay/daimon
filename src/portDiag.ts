@@ -145,9 +145,12 @@ export interface ApiPortForensics {
   lockExists: boolean;
 }
 
-export async function inspectApiPort(port: number, lockExists: boolean): Promise<ApiPortForensics> {
+// opts.probeTimeoutMs (M91): the 1.5s default is a production-UX choice; test
+// harnesses pass a generous ceiling so a contended host can't turn a slow-but-
+// correct signature response into a false "no response" classification.
+export async function inspectApiPort(port: number, lockExists: boolean, opts: { probeTimeoutMs?: number } = {}): Promise<ApiPortForensics> {
   const holder = findPortHolder(port);
-  const signature = holder ? await probeDaimonSignature(port) : null;
+  const signature = holder ? await probeDaimonSignature(port, opts.probeTimeoutMs ?? 1500) : null;
   return { port, holder, signature, lockExists };
 }
 

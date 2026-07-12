@@ -1,0 +1,111 @@
+{
+  "surface": "daimon export-config",
+  "note": "Golden shape (key sets + types, never values). Regenerate with UPDATE_CONTRACT_SNAPSHOTS=1 and hand-review: keys may be ADDED, never removed or retyped.",
+  "cases": {
+    "default": {
+      "apiPort": "number",
+      "apiToken": "null",
+      "autoRestart": {
+        "enabled": "boolean",
+        "maxAttempts": "number",
+        "windowMs": "number"
+      },
+      "autoStart": {
+        "$array": "unknown"
+      },
+      "cascadeRestart": "boolean",
+      "dashboard": {
+        "density": "string",
+        "theme": "string"
+      },
+      "depends": {},
+      "doctor": {
+        "autoFix": {
+          "onInit": "boolean",
+          "permitted": {
+            "$array": "string"
+          }
+        }
+      },
+      "editor": {
+        "scheme": "string"
+      },
+      "envFiles": {},
+      "errorRetention": {
+        "maxAgeMs": "number"
+      },
+      "frameworks": {
+        "$array": "unknown"
+      },
+      "headless": "boolean",
+      "healthProbe": {
+        "enabled": "boolean",
+        "fallbackHosts": {
+          "$array": "string"
+        },
+        "host": "null",
+        "intervalMs": "number",
+        "path": "string",
+        "rejectUnauthorized": "boolean",
+        "scheme": "null",
+        "timeoutMs": "number"
+      },
+      "history": {
+        "enabled": "boolean",
+        "path": "string",
+        "retentionDays": "number"
+      },
+      "logs": {
+        "dir": "string",
+        "enabled": "boolean",
+        "maxBytesPerFile": "number",
+        "maxFiles": "number"
+      },
+      "metrics": {
+        "enabled": "boolean"
+      },
+      "notifications": {
+        "enabled": "boolean",
+        "onError": "boolean",
+        "onUnhealthy": "boolean",
+        "tray": "boolean"
+      },
+      "output": {
+        "format": "string",
+        "ndjson": "boolean"
+      },
+      "overrides": {},
+      "plugins": {
+        "dir": "null"
+      },
+      "portRange": {
+        "$array": "number"
+      },
+      "profiles": {},
+      "requestLog": {
+        "enabled": "boolean",
+        "portOffset": "number"
+      },
+      "restartStorm": {
+        "perHour": "number"
+      },
+      "search": {
+        "logIndex": "boolean"
+      },
+      "searchRoots": {
+        "$array": "unknown"
+      },
+      "staleDetect": {
+        "enabled": "boolean",
+        "silentMs": "number"
+      },
+      "tags": {},
+      "tests": {
+        "flakyThreshold": "number"
+      },
+      "webhooks": {
+        "$array": "unknown"
+      }
+    }
+  }
+}

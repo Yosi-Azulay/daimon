@@ -382,16 +382,16 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .fp-meta{font:400 .75rem/1rem Roboto;color:var(--mat-sys-on-surface-variant);white-space:nowrap}
     mat-panel-title{display:flex;align-items:center;gap:.5rem;flex:1;min-width:0}
     mat-panel-description{justify-content:flex-end;color:var(--mat-sys-on-surface-variant)}
-    .eb{display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem Roboto;background:color-mix(in oklch,var(--mat-sys-error) 14%,transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent);margin-left:.25rem}
+    .eb{display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem Roboto;background:color-mix(in oklch,var(--mat-sys-error) var(--dm-badge-tint),transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent);margin-left:.25rem}
     .lnk{display:inline-flex;align-items:center;gap:.125rem;color:var(--mat-sys-primary);text-decoration:none;font:500 .8125rem/1.25rem Roboto}
     .lnk:hover{text-decoration:underline}
     .lnk .material-symbols-outlined{font-size:16px}
     .rows{display:flex;flex-direction:column}
     .row{display:grid;grid-template-columns:minmax(0,1.4fr) auto minmax(0,2fr) auto;align-items:center;gap:.75rem;padding:.5rem .25rem;border-bottom:1px solid var(--mat-sys-outline-variant);border-left:3px solid transparent;padding-left:.5rem}
     .row.is-warning{border-left-color:color-mix(in oklch,var(--mat-sys-tertiary) 70%,transparent);background:color-mix(in oklch,var(--mat-sys-tertiary) 4%,transparent)}
-    .row.is-warning .code{background:color-mix(in oklch,var(--mat-sys-tertiary) 18%,transparent);color:var(--mat-sys-tertiary)}
+    .row.is-warning .code{background:color-mix(in oklch,var(--mat-sys-tertiary) var(--dm-badge-tint),transparent);color:var(--mat-sys-tertiary)}
     .row.is-lint{border-left-color:color-mix(in oklch,var(--mat-sys-secondary) 70%,transparent);background:color-mix(in oklch,var(--mat-sys-secondary) 4%,transparent)}
-    .row.is-lint .code{background:color-mix(in oklch,var(--mat-sys-secondary) 18%,transparent);color:var(--mat-sys-secondary)}
+    .row.is-lint .code{background:color-mix(in oklch,var(--mat-sys-secondary) var(--dm-badge-tint),transparent);color:var(--mat-sys-secondary)}
     .rows-nofile .row{grid-template-columns:auto minmax(0,1fr) auto}
     .row:last-child{border-bottom:0}
     .row:hover{background:var(--mat-sys-surface-container)}
@@ -399,7 +399,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     .loc:hover{text-decoration:underline}
     .dim{color:var(--mat-sys-on-surface-variant)}
     .ln{justify-self:end}
-    .code{display:inline-flex;align-items:center;padding:1px 8px;border-radius:6px;background:color-mix(in oklch,var(--mat-sys-tertiary) 14%,transparent);color:var(--mat-sys-tertiary);border:1px solid color-mix(in oklch,var(--mat-sys-tertiary) 28%,transparent);font-weight:500}
+    .code{display:inline-flex;align-items:center;padding:1px 8px;border-radius:6px;background:color-mix(in oklch,var(--mat-sys-tertiary) var(--dm-badge-tint),transparent);color:var(--mat-sys-tertiary);border:1px solid color-mix(in oklch,var(--mat-sys-tertiary) 28%,transparent);font-weight:500}
     .tool-chip{display:inline-flex;align-items:center;padding:2px 10px;border-radius:6px;background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface);border:1px solid var(--mat-sys-outline-variant);font:600 .8125rem/1.125rem Roboto;text-transform:lowercase;letter-spacing:.02rem}
     .tool-chip[data-tool="esbuild"],.tool-chip[data-tool="vite"]{color:var(--mat-sys-primary);border-color:color-mix(in oklch,var(--mat-sys-primary) 36%,transparent)}
     .tool-chip[data-tool="jest"],.tool-chip[data-tool="nx"]{color:var(--mat-sys-secondary);border-color:color-mix(in oklch,var(--mat-sys-secondary) 36%,transparent)}

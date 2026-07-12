@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { Box, render, Text, useApp, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 import type { AppHealth, AppStatus, AppSummary } from '../types.js';
 import { generateAgentId } from '../agents.js';
+import { daimonDir } from '../daemon.js';
 
 const STATUS_COLORS: Record<AppStatus, string> = {
   stopped: 'gray',
@@ -13,6 +13,7 @@ const STATUS_COLORS: Record<AppStatus, string> = {
   compiling: 'yellow',
   serving: 'green',
   error: 'red',
+  orphaned: 'magenta',
 };
 
 const HEALTH_COLORS: Record<AppHealth, string> = {
@@ -32,7 +33,10 @@ function fmtUptime(ms: number | null): string {
 }
 
 function tokenFilePath(port: number): string {
-  return path.join(os.homedir(), '.daimon', `attach-token.${port}`);
+  // daimonDir() honors DAIMON_HOME (M91) — the attach token must live in the
+  // same relocated state dir as everything else, or isolated test harnesses
+  // leak tokens into the real ~/.daimon.
+  return path.join(daimonDir(), `attach-token.${port}`);
 }
 
 function readCachedToken(port: number): string | null {

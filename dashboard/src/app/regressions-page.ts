@@ -182,12 +182,12 @@ function fmtMetric(kind: Kind, v: number): string {
     .dm-regr-card[data-kind="bundle"] { border-left-color: var(--mat-sys-secondary); }
     .dm-regr-card[data-kind="error-flap"] { border-left-color: var(--mat-sys-error); }
     .dm-regr-icon { font-size: 28px; width: 28px; height: 28px; color: var(--mat-sys-on-surface-variant); }
-    .dm-app-link { color: var(--mat-sys-primary); text-decoration: none; font-weight: 500; }
+    .dm-app-link { color: var(--mat-sys-primary); text-decoration: underline; text-underline-offset: 2px; font-weight: 500; }
     .dm-app-link:hover { text-decoration: underline; }
     .dm-fp { font-size: .75rem; color: var(--mat-sys-on-surface-variant); }
     .dm-regr-metrics { display: flex; align-items: center; gap: 1rem; margin-top: .5rem; }
     .dm-metric { display: flex; flex-direction: column; padding: .5rem .875rem; border-radius: 8px; background: var(--mat-sys-surface-container); }
-    .dm-metric-bad { background: color-mix(in oklch, var(--mat-sys-error) 12%, var(--mat-sys-surface-container)); }
+    .dm-metric-bad { background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), var(--mat-sys-surface-container)); }
     .dm-metric-label { font: 500 .6875rem/1rem Roboto; text-transform: uppercase; letter-spacing: .05rem; color: var(--mat-sys-on-surface-variant); }
     .dm-metric-value { font-size: 1rem; font-weight: 500; color: var(--mat-sys-on-surface); }
     .dm-metric-bad .dm-metric-value { color: var(--mat-sys-error); }

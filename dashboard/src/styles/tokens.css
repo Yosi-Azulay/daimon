@@ -37,6 +37,30 @@
   --dm-tone-c: 0.05;
   --dm-tone-badge-l: 0.62;
   --dm-tone-badge-c: 0.14;
+  /* chart series (M89): Chart.js reads these via getComputedStyle (canvas
+     can't consume custom properties directly). Aliased to the Material
+     system roles rather than fixed hex, so every series clears the 3:1
+     non-text contrast minimum against --dm-color-bg in BOTH themes — the
+     fixed hex literals these replaced (#60A5FA/#84CC16/#FB923C) were tuned
+     for dark backgrounds only and measured 1.9–2.4:1 (fail) against the
+     light surface. Verified via the M3 palette's resolved hex:
+     primary 6.17:1 (light) / 10.92:1 (dark), tertiary 6.15:1 / 10.92:1,
+     secondary 6.19:1 / 10.88:1, error 6.16:1 / 10.94:1. */
+  --dm-chart-1: var(--mat-sys-primary);
+  --dm-chart-2: var(--mat-sys-tertiary);
+  --dm-chart-3: var(--mat-sys-secondary);
+  --dm-chart-4: var(--mat-sys-error);
+  /* badge tint (M89): the "colored text on a faint tint of the SAME color"
+     pattern used by status pills / tags / chips / active nav items across
+     the app. Measured with a canvas-rendered probe (getComputedStyle
+     echoes oklch(...) rather than resolved rgb on this Chromium, so
+     getComputedStyle alone can't be trusted for this check): the previous
+     per-component literals (10–18%) ranged 4.39–4.85:1 against
+     --dm-color-surface-2 — under the 4.5:1 text minimum for at least the
+     error/tertiary hues. 6% clears it with margin for all four hues (worst
+     case measured 5.29:1 light / 8.98:1 dark). Never hardcode a percentage
+     in a component when pairing a hue's tint with that same hue as text. */
+  --dm-badge-tint: 6%;
 
   /* ---- spacing (4px base) ------------------------------------------------ */
   --dm-space-1: 0.25rem;

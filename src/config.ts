@@ -10,6 +10,49 @@ import { daimonDir } from './daemon.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Config-key catalog with stability tiers (M87). Keys are the top-level
+// properties of daimon.config.json; this map is the single source of truth for
+// which keys exist (build-docs renders it; `daimon config validate` checks
+// unknown keys against it). Config back-compat is NEVER breakable regardless
+// of tier — a v0.1 config must load unchanged forever; the tier speaks to the
+// key's *semantics* staying put. Experimental sub-keys inside stable parents:
+// notifications.kinds / notifications.quietHours / notifications.batchMs and
+// webhooks[].digest (all M84, v0.13).
+export const CONFIG_KEY_STABILITY: Record<string, import('./stability.js').Stability> = {
+  searchRoots: 'frozen',
+  portRange: 'frozen',
+  apiPort: 'frozen',
+  overrides: 'frozen',
+  autoStart: 'frozen',
+  profiles: 'frozen',
+  tags: 'frozen',
+  depends: 'frozen',
+  autoRestart: 'stable',
+  healthProbe: 'stable',
+  logs: 'stable',
+  cascadeRestart: 'stable',
+  history: 'stable',
+  notifications: 'stable',
+  staleDetect: 'stable',
+  headless: 'stable',
+  envFiles: 'stable',
+  requestLog: 'stable',
+  metrics: 'stable',
+  editor: 'stable',
+  apiToken: 'stable',
+  output: 'stable',
+  doctor: 'stable',
+  dashboard: 'stable',
+  errorRetention: 'stable',
+  plugins: 'stable',
+  webhooks: 'stable',
+  frameworks: 'stable',
+  tests: 'stable',
+  restartStorm: 'stable',
+  search: 'stable',
+  ports: 'experimental', // v0.13 (M81)
+};
+
 export interface ConfigLoadResult {
   config: AppmanConfig;
   path: string;
@@ -87,6 +130,44 @@ export function validateConfig(raw: unknown, source: string): AppmanConfig {
   return validate(raw, source);
 }
 
+// Small edit-distance for unknown-key suggestions (M91). Local on purpose:
+// config.ts must stay importable without dragging the CLI help layer in.
+function editDistance(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...new Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+export function nearestConfigKey(key: string): string | null {
+  let best: string | null = null;
+  let bestDist = 3; // suggest only within 2 edits
+  for (const known of Object.keys(CONFIG_KEY_STABILITY)) {
+    const d = editDistance(key.toLowerCase(), known.toLowerCase());
+    if (d < bestDist) { bestDist = d; best = known; }
+  }
+  return best;
+}
+
+// Unknown top-level keys (M91): warn with the nearest valid name — never fail,
+// old configs stay loadable forever. '$schema' is tolerated silently.
+function warnUnknownKeys(obj: Record<string, unknown>, source: string, warn: (msg: string) => void): void {
+  for (const key of Object.keys(obj)) {
+    if (key === '$schema') continue;
+    if (key in CONFIG_KEY_STABILITY) continue;
+    const guess = nearestConfigKey(key);
+    warn(`unknown config key "${key}"${guess ? ` — did you mean "${guess}"?` : ''} (${source})`);
+  }
+}
+
 function validate(raw: unknown, source: string): AppmanConfig {
   if (!raw || typeof raw !== 'object') {
     throw new Error(`Config at ${source} is not a JSON object`);
@@ -99,6 +180,13 @@ function validate(raw: unknown, source: string): AppmanConfig {
     warnings.push(msg);
     process.stderr.write(`[daimon] config warning: ${msg} — using default\n`);
   };
+
+  // Unknown keys warn (with a nearest-name suggestion) but never fail —
+  // config back-compat is not breakable (STABILITY.md).
+  warnUnknownKeys(obj, source, msg => {
+    warnings.push(msg);
+    process.stderr.write(`[daimon] config warning: ${msg} — ignored\n`);
+  });
 
   if (obj.searchRoots !== undefined) {
     if (!Array.isArray(obj.searchRoots) || !obj.searchRoots.every(s => typeof s === 'string' || (s && typeof s === 'object' && typeof (s as any).path === 'string'))) {

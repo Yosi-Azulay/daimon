@@ -43,6 +43,7 @@ const STATUS_COLORS: Record<AppStatus, string> = {
   compiling: 'yellow',
   serving: 'green',
   error: 'red',
+  orphaned: 'magenta',
 };
 
 const HEALTH_COLORS: Record<AppHealth, string> = {

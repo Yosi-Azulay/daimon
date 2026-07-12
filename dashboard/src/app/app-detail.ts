@@ -30,6 +30,13 @@ import { workspaceTone } from './workspace-tone';
 
 Chart.register(...registerables);
 
+// Canvas can't consume CSS custom properties directly — read the resolved
+// (theme-aware) token value at chart-build time. Same pattern trends-page.ts
+// and metrics-chart.ts use.
+function readToken(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 interface DetailError {
   message: string;
   count: number;
@@ -203,7 +210,7 @@ interface EnvInfo {
                   @if (bundleFiles().length) {
                     <table class="dm-bundle">
                       <thead>
-                        <tr><th>file</th><th class="dm-right">size</th></tr>
+                        <tr><th scope="col">file</th><th class="dm-right" scope="col">size</th></tr>
                       </thead>
                       <tbody>
                         @for (f of bundleFiles(); track $index) {
@@ -287,13 +294,15 @@ interface EnvInfo {
               <div class="dm-logs-toolbar">
                 <span class="dm-dim">Live tail — last {{ logLines().length }} lines</span>
                 <span class="dm-spacer"></span>
-                <button class="dm-iconbtn" (click)="clearLogs()" matTooltip="Clear">
+                <button class="dm-iconbtn" (click)="clearLogs()" aria-label="Clear logs" matTooltip="Clear">
                   <span class="material-symbols-outlined">delete_sweep</span>
                 </button>
                 <button
                   class="dm-iconbtn"
                   [class.active]="autoScroll()"
                   (click)="autoScroll.set(!autoScroll())"
+                  aria-label="Auto-scroll"
+                  [attr.aria-pressed]="autoScroll()"
                   matTooltip="Auto-scroll">
                   <span class="material-symbols-outlined">vertical_align_bottom</span>
                 </button>
@@ -323,8 +332,8 @@ interface EnvInfo {
                     <div class="dm-stat"><span class="dm-stat-label">p95</span><span class="dm-stat-num">{{ p95() }} ms</span></div>
                     <div class="dm-stat"><span class="dm-stat-label">max</span><span class="dm-stat-num">{{ pMax() }} ms</span></div>
                   </div>
-                  <div class="dm-spark-wrap">
-                    <canvas #spark></canvas>
+                  <div class="dm-spark-wrap" role="img" [attr.aria-label]="'Compile time trend: ' + compileTimes().length + ' samples, p50 ' + p50() + ' ms, p95 ' + p95() + ' ms, max ' + pMax() + ' ms'">
+                    <canvas #spark aria-hidden="true"></canvas>
                   </div>
                 } @else {
                   <div class="dm-dim">No compile history yet.</div>
@@ -586,7 +595,7 @@ interface EnvInfo {
     }
     .dm-kv dt { color: var(--mat-sys-on-surface-variant); font: 400 .8125rem/1.25rem Roboto; }
     .dm-kv dd { margin: 0; color: var(--mat-sys-on-surface); }
-    .dm-kv a { color: var(--mat-sys-primary); text-decoration: none; }
+    .dm-kv a { color: var(--mat-sys-primary); text-decoration: underline; text-underline-offset: 2px; }
     .dm-kv a:hover { text-decoration: underline; }
     .dm-err-text { color: var(--mat-sys-error); }
 
@@ -629,7 +638,7 @@ interface EnvInfo {
     .dm-err-code { color: var(--mat-sys-error); }
     .dm-err-count {
       padding: 0 6px; border-radius: 999px;
-      background: color-mix(in oklch, var(--mat-sys-error) 12%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), transparent);
       color: var(--mat-sys-error);
       font: 600 .6875rem/1rem 'Roboto Mono', ui-monospace, monospace;
     }
@@ -704,7 +713,7 @@ interface EnvInfo {
       margin-left: auto;
       padding: 2px 8px; border-radius: 999px;
       font: 500 .6875rem/1rem Roboto;
-      background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
       color: var(--mat-sys-primary);
     }
 
@@ -1040,13 +1049,14 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     const ms = data.map(x => x.ms);
     const p50 = this.percentile(0.5);
     const p95 = this.percentile(0.95);
+    const compileColor = readToken('--dm-chart-1');
     this.spark.data.labels = labels;
     this.spark.data.datasets = [
       {
         label: 'compile ms',
         data: ms,
-        borderColor: 'rgb(96, 165, 250)',
-        backgroundColor: 'rgba(96, 165, 250, 0.15)',
+        borderColor: compileColor,
+        backgroundColor: `color-mix(in oklch, ${compileColor} 15%, transparent)`,
         tension: 0.25,
         pointRadius: 0,
         fill: true,
@@ -1054,7 +1064,7 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
       {
         label: 'p50',
         data: labels.map(() => p50),
-        borderColor: 'rgba(132, 204, 22, 0.85)',
+        borderColor: readToken('--dm-chart-3'),
         borderDash: [4, 4],
         pointRadius: 0,
         fill: false,
@@ -1062,7 +1072,7 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
       {
         label: 'p95',
         data: labels.map(() => p95),
-        borderColor: 'rgba(251, 146, 60, 0.85)',
+        borderColor: readToken('--dm-chart-4'),
         borderDash: [4, 4],
         pointRadius: 0,
         fill: false,

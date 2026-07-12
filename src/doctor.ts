@@ -18,6 +18,37 @@ export interface Check {
   detail?: string;
 }
 
+// Doctor coverage table (M91): every recurring failure class from v0.11–v0.14
+// mapped to its doctor rule, auto-fix, built-in remedy — or a documented gap
+// with the reason. Rendered into docs/index.html by build:docs; M90's support
+// path ("run daimon doctor first") leans on this being complete.
+export interface DoctorCoverageRow {
+  failure: string;
+  kind: 'rule' | 'auto-fix' | 'built-in' | 'gap';
+  coverage: string;
+}
+
+export const DOCTOR_COVERAGE: DoctorCoverageRow[] = [
+  { failure: 'Orphan daimon holding the api port (no daemon.lock)', kind: 'auto-fix', coverage: '`port-holder-no-lock` — kills only a holder that answers GET /api/signature as a daimon AND has no live lock, re-verified at fix time (M81 verify-then-kill). Plus EADDRINUSE startup forensics naming the holder + remedy.' },
+  { failure: 'Stale daemon.lock after an unclean exit', kind: 'auto-fix', coverage: '`stale-lock`; startup also self-clears any lock whose pid is dead (M88 recovery step 2).' },
+  { failure: 'Corrupt history.db', kind: 'auto-fix', coverage: '`corrupt-history-db`; startup independently archives a corrupt db as history.db.corrupt-<ts> and rebuilds, with a self-warn event.' },
+  { failure: 'Corrupt state.json (ports/mutes/digests)', kind: 'built-in', coverage: 'Recovered from state.json.bak; if both are unreadable, archived as state.json.corrupt-<ts> + fresh start + self-warn (M88). Repaired before doctor could even run.' },
+  { failure: 'Missing or deleted searchRoot', kind: 'auto-fix', coverage: '`searchRoot exists` check; `missing-search-root` / `dead-search-root` auto-fixes.' },
+  { failure: 'Workspace not detected as an app', kind: 'rule', coverage: '`searchRoot has marker` (checks the full framework registry); `daimon frameworks` shows per-profile rejection stats; `daimon why-empty` explains an empty list.' },
+  { failure: 'Invalid custom framework profile (config data row)', kind: 'rule', coverage: '`config-valid` — invalid rows are skipped with a field-level warning at load; doctor surfaces the warnings.' },
+  { failure: 'Typo’d or unknown config key', kind: 'rule', coverage: 'Load-time warning with the nearest valid name (never a failure — old configs stay loadable); `daimon config validate` reports the same offline; `config-valid` doctor check surfaces it (M91).' },
+  { failure: 'Pinned-port collision between apps', kind: 'rule', coverage: '`port pin <n>` collision check; predicted pool conflicts via `port-conflict-pred` (M81).' },
+  { failure: 'Restart storm / crash loop', kind: 'rule', coverage: '`restart-storm: <app>` (threshold via restartStorm.perHour) + `smart-restart-tune`; crash reports ring-buffer 10/app and surface in `daimon why`.' },
+  { failure: 'Flaky tests', kind: 'gap', coverage: 'No doctor rule by design: flakiness is derived from run history at each git head, not from config or daemon state — `daimon test-history <app> --flaky` is the surface.' },
+  { failure: 'Full-text search degraded (FTS5 unavailable)', kind: 'built-in', coverage: 'Search degrades to a LIKE scan (fallback:true) and a self-warn event fires; `history-db-healthy` covers the underlying db.' },
+  { failure: 'Convention env file missing for a framework', kind: 'rule', coverage: '`env-file-missing: <app>` — suggest-only; daimon never creates or edits .env files (M82).' },
+  { failure: 'Node version below daimon’s floor', kind: 'auto-fix', coverage: '`node-version-mismatch`.' },
+  { failure: 'Orphaned dependency caches (node_modules / venv / bundler / cargo target)', kind: 'auto-fix', coverage: '`orphan-node-modules` / `orphan-venv` / `orphan-bundler-cache` / `orphan-cargo-target`.' },
+  { failure: 'Health probe pointed at a 404 path', kind: 'auto-fix', coverage: '`health-probe-missing`; `daimon pin-health <app> --accept` persists the discovered path.' },
+  { failure: 'Child unverifiable after a daemon handoff', kind: 'gap', coverage: 'No auto-fix by design (verify-then-kill: daimon never kills what it cannot positively identify). The app surfaces as status `orphaned` with a per-case remedy in `daimon list` / `daimon why` (M88).' },
+  { failure: 'CLI and daemon running different versions', kind: 'built-in', coverage: 'Every CLI call compares versions via the x-daimon-version header and warns on stderr with the remedy (`daimon daemon restart`) — never a hard fail (M88).' },
+];
+
 export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Promise<{ ok: boolean; checks: Check[] }> {
   const checks: Check[] = [];
   const appNames = new Set(apps.map(a => a.name));
@@ -99,8 +130,12 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
 
   const roots = new Set(apps.map(a => a.workspaceRoot));
   for (const r of roots) {
+    // Only meaningful where a package.json exists — a Django/Rails/Go root
+    // legitimately has no node_modules (M90: fewer false findings).
+    if (!fs.existsSync(path.join(r, 'package.json'))) continue;
     const nm = path.join(r, 'node_modules');
-    checks.push({ name: `node_modules: ${r}`, ok: fs.existsSync(nm), detail: fs.existsSync(nm) ? undefined : 'missing' });
+    const ok = fs.existsSync(nm);
+    checks.push({ name: `node_modules: ${r}`, ok, detail: ok ? undefined : 'missing — run your package manager install (npm/pnpm/yarn/bun) there; daimon never installs for you' });
   }
 
   // apiPort + port-holder-no-lock (M81): a busy apiPort is fine when the

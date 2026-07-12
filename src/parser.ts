@@ -240,7 +240,7 @@ function safeCompile(pattern: string): RegExp | undefined {
 
 export function compileParseContext(profile: FrameworkProfile | undefined): ProfileParseContext | undefined {
   if (!profile) return undefined;
-  const key = `${profile.id} ${profile.readiness?.pattern ?? ''} ${profile.url?.pattern ?? ''} ${profile.errorParser ?? ''}`;
+  const key = `${profile.id}\u0000${profile.readiness?.pattern ?? ''}\u0000${profile.url?.pattern ?? ''}\u0000${profile.errorParser ?? ''}`;
   if (parseCtxCache.has(key)) return parseCtxCache.get(key);
   const ctx: ProfileParseContext = {};
   if (profile.readiness?.pattern) ctx.readinessRx = safeCompile(profile.readiness.pattern);

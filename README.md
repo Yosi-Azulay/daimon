@@ -4,11 +4,13 @@
 
 # Daimon
 
-A local manager for dev servers, polyglot since v0.11: Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri, Deno / Bun — plus a generic `package.json` fallback and custom profiles from config. One daemon owns all your `serve` processes, auto-assigns ports, dedup's error captures across every supported tool, and exposes a loopback HTTP API + JSON CLI + MCP server. Since v0.12 it also closes **the whole loop**: `daimon test` with parsed failures and flaky detection, crash forensics with `daimon why`, full-text search over everything it has seen, and a one-call `daimon context` pack for agents. v0.13 adds the **daily rhythm**: `daimon report` answers "what happened", env fingerprints answer "what changed", a port pool + forensics answer "who has what", and notifications you can route, batch, and mute — with a scheduled Slack digest.
+**One local daemon for all your dev servers.** Daimon discovers the runnable apps in your workspaces — Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri, Deno / Bun, plus a generic `package.json` fallback and custom profiles from config — then starts and stops them, assigns their ports, dedup's their error output, and answers questions about them. You talk to it four ways: a terminal TUI, a loopback HTTP API, a JSON CLI, and an MCP server for AI agents.
+
+Beyond serving, it closes the whole dev loop: `daimon test` runs the project's own test runner and parses the failures, `daimon why` keeps crash forensics that would otherwise evaporate, `daimon search` greps everything the daemon has ever seen, `daimon report` answers "what happened today", and `daimon env diff` answers "what changed since it last worked".
 
 Daimon is built for the **single machine with several agents on it**: you in one terminal, a Claude Code session in another repo, a second Claude in a third. All of them talk to the same daemon, see only their own workspace by default, carry distinct agent identities, and coordinate through per-app soft-locks instead of stepping on each other's dev servers.
 
-Loopback only. Single user. No cloud. No telemetry.
+Loopback only. Single user. No cloud. **No telemetry, ever** — the full posture is written down in [SECURITY.md](SECURITY.md). Every public surface carries an explicit stability tier (`frozen` / `stable` / `experimental`), enforced by contract tests — see [STABILITY.md](STABILITY.md).
 
 **Docs site:** <https://yosi-azulay.github.io/daimon/> (generated from the live CLI surface — also in [`docs/`](docs/)).
 
@@ -18,15 +20,29 @@ Loopback only. Single user. No cloud. No telemetry.
 npm i -g daimon
 ```
 
-After install, `daimon` is on your PATH globally.
+Requires Node ≥ 20. After install, `daimon` is on your PATH globally.
 
-## Quick start
+## The first 15 minutes
 
 ```bash
-daimon init             # interactive scaffolder; writes ./daimon.config.json or ~/.daimon/config.json
-daimon list             # auto-spawns the daemon on first call (defaults to cwd-scoped — pass --all for every workspace)
-daimon daemon status
+cd your-workspace       # anywhere with nx.json / angular.json / vite.config.* / manage.py /
+                        # a *.csproj / pubspec.yaml / or just a package.json with a dev script
+daimon init --auto      # writes ./daimon.config.json with safe defaults, no prompts
+daimon list             # discovers your apps; auto-spawns the daemon on first call
+daimon start <name>     # or: daimon ensure <name> — start if needed AND wait until healthy
+daimon dashboard        # opens the web dashboard scoped to this workspace
 ```
+
+What just happened: `init --auto` registered this folder as a search root; the daemon scanned it against the framework registry (`daimon frameworks` shows the whole registry and what matched); `start` spawned the app's own dev command with a port daimon assigned, and began parsing its output for errors. From here, `daimon status <name>`, `daimon errors <name>`, and `daimon logs <name>` are the everyday verbs — every one prints compact JSON, so they compose with scripts and agents.
+
+### When it breaks
+
+1. **`daimon doctor`** — the first stop, always. Checks config, search roots, ports, locks, and daimon's own state; `daimon doctor --auto-fix` repairs what it can (only ever daimon's own state — never your code, never an unverified process).
+2. **`daimon why <name>`** — one-shot forensics for a broken app: the last crash (exit code + final log lines), grouped errors, restart storms, env changes since it was last healthy, the suspect commit, and any doctor findings that mention it.
+3. **`daimon why-empty`** — when `daimon list` comes back empty, this explains what was scanned and why things were rejected.
+4. **`daimon config validate`** — checks your config offline; typo'd keys get a "did you mean" suggestion.
+
+Every recurring failure class maps to a doctor rule, an auto-fix, or a documented reason it can't — the [doctor coverage table](https://yosi-azulay.github.io/daimon/#doctor) in the docs is the full list.
 
 ## Framework support (v0.11)
 
@@ -201,6 +217,17 @@ Opt into pool auto-assignment with `ports: { "pool": "4200-4299" }`. Ports are i
 
 All optional — absent keys keep the old behavior. Per-app: `daimon mute web-admin --for 2h` / `daimon unmute` (persisted, visible in status and the dashboard).
 
+## Runway (v0.14)
+
+The release before 1.0 added nothing new to learn — it froze what exists:
+
+- **Stability tiers on every surface.** Every CLI verb, HTTP endpoint, MCP tool, config key, and event kind declares `frozen` (shape never breaks; additive only), `stable` (breaks only with a major version + migration note), or `experimental` (the v0.13 surfaces, until they've soaked). Tiers render as badges in the [docs](https://yosi-azulay.github.io/daimon/); the promise each tier makes is written down in [STABILITY.md](STABILITY.md). Frozen surfaces are pinned by golden-shape contract tests — a shape change fails the suite forever after.
+- **Lifecycle hardening.** `daimon daemon restart` now hands off *running* children to the new daemon — verified by pid + listening port and re-adopted with the same pid, so your dev servers survive a daimon upgrade. A child that can't be verified surfaces as status `orphaned` with a per-case remedy (never silently dropped, never blindly killed). `state.json` writes are atomic with a `.bak`, and a corrupt state file recovers from the backup or archives itself and starts fresh — with a self-warn event either way. A CLI talking to a daemon of a different version warns once on stderr with the exact remedy.
+- **Config back-compat, forever.** Any config that ever loaded keeps loading. Unknown keys warn with the nearest valid name (`daimon config validate` checks offline); malformed values fall back to defaults with a warning — never a refusal.
+- **The dashboard passed its first WCAG AA audit** — keyboard-only operation on every route, token-level contrast fixes for both themes, landmarks/ARIA, reduced-motion support, and an axe gate in the Playwright drive.
+
+v1.0.0 is not this release: it will be tagged after the freeze survives a real-usage soak, as a near-empty release — the version number catching up to what the contract tests already enforce.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -364,9 +391,9 @@ If neither exists, the first call to `daimon` creates a stub and exits — edit 
 
 ```bash
 daimon daemon start [--detach] [--headless]   # foreground TUI by default
-daimon daemon status                          # { running, pid, port, uptime, version }
+daimon daemon status                          # { running, pid, port, uptimeMs, version }
 daimon daemon stop
-daimon daemon restart                          # state-handoff: serving apps come back on the same ports
+daimon daemon restart                          # handoff: RUNNING apps survive and are re-adopted (same pid, v0.14)
 daimon daemon attach                           # HTTP-client TUI against a running detached daemon
 daimon daemon install-service                  # emits service unit for Windows (nssm) / macOS (launchd) / Linux (systemd)
 ```
@@ -402,7 +429,7 @@ daimon test-history <name> [--flaky] [--limit N]   # recent test runs / flaky te
 daimon report [--since 24h|7d] [--app <a>] [--workspace <l>] [--md]   # the digest (v0.13)
 
 # agent verbs
-daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 60s]
+daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 120s]
 daimon ensure <name> [--until serving|healthy] [--timeout 180s]
 daimon ensure-up <profile> [--until serving|healthy] [--timeout 300s]
 daimon overview [--workspace <label>] [--profile <name>] [--budget <tokens>]   # decision-ready snapshot
@@ -421,7 +448,7 @@ daimon why-empty                   # explain an empty `daimon list`
 daimon env <name> [--use <file>]   # env-file awareness: files, key names, snapshot age (v0.13); --use sets the active file
 daimon env diff <name> [--from <ts>] [--to <ts>]   # files/keys added/removed/changed between spawns (v0.13)
 daimon ports                       # app → port → source (pinned|pool|announced) → pid + foreign holders (v0.13)
-daimon discover [--dry-run]        # what daimon would (or did) detect
+daimon discover                    # read-only discovery pass: scanned/rejected counts per folder
 daimon timeline [--since 7d] [--app <name>] [--kinds status,error,warning,lint,bundle,task]
 daimon tasks <name>                # discovered non-serve tasks
 daimon snapshot <name>             # bundle state for bug reports
@@ -433,6 +460,7 @@ daimon dashboard                   # open the dashboard scoped to cwd
 
 # config
 daimon init [--force] [--auto]
+daimon config validate [<path>]    # unknown keys warn with the nearest valid name (v0.14)
 daimon pin-health <name> [--accept] [--path <p>]
 daimon export-config [--redacted]
 daimon workspaces list|add|rm|show
@@ -450,13 +478,13 @@ All CLI commands print compact JSON on stdout by default (`--full` for the verbo
 Bound to `127.0.0.1:<apiPort>` only. The dashboard at `/` is an Angular 20 SPA (Material 3, zoneless, signals) bundled into the published tarball — it shows apps, errors grouped by file/app/tool, live logs, doctor, trends, regressions (chord `g r`), settings editor, and one-click actions.
 
 ```
-GET  /api/apps                                  # compact by default; ?format=full for v0.4 shape
+GET  /api/apps                                  # compact by default; ?format=full for v0.4 shape; ?tag=&workspace= filter server-side (v0.14)
 GET  /api/apps/:name
 GET  /api/apps/:name/errors[?since=2m]
 GET  /api/apps/:name/errors/since-last?client=<id>
 GET  /api/apps/:name/logs?tail=N&since=30s&grep=<regex>
 GET  /api/apps/:name/logs/stream[?grep=<regex>] # Server-Sent Events, filtered live tail (v0.12)
-GET  /api/apps/:name/wait?until=serving&timeout=60
+GET  /api/apps/:name/wait?until=serving&timeout=60   # seconds; ?timeoutMs= also accepted (v0.14)
 GET  /api/events[?since=5m&app=<name>&stream=ndjson]
 GET  /api/agents                                # active agents + soft-locks (v0.10)
 GET  /api/profiles/suggest                      # profile candidates from co-starts (v0.10)
@@ -516,7 +544,7 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, plus the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, and `daimon_search`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
+The MCP server exposes 27 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, and the v0.13 pair `daimon_report`, `daimon_env`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
 
 ## State files (in `~/.daimon/`)
 
@@ -524,7 +552,7 @@ Relocatable since v0.12: set `DAIMON_HOME=<dir>` to move the entire state direct
 
 - `config.json` — your config (above)
 - `daemon.lock` — `{ pid, apiPort, version, startedAt, headless }`
-- `state.json` — sticky port assignments; since v0.13 also per-app notification mutes and digest last-sent timestamps
+- `state.json` — sticky port assignments; since v0.13 also per-app notification mutes and digest last-sent timestamps. Written atomically with a `.bak` of the last good version; a corrupt file recovers from the `.bak` or is archived as `state.json.corrupt-<ts>` with a fresh start (v0.14)
 - `salt` — per-install random salt for env-snapshot value hashes (v0.13; deleting it only resets change-detection baselines)
 - `cursors.json` — per-client error cursors for `--since-last`
 - `history.db` — SQLite of events, compile times, task runs, test runs, crashes, env snapshots, and per-app bundle sizes (powers the Trends dashboard). If it's corrupt at startup, daimon archives it as `history.db.corrupt-<ts>` and rebuilds automatically (v0.10).

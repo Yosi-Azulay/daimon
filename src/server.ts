@@ -76,6 +76,10 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
+    // Version-skew detection (M88): the CLI compares this against its own
+    // version on responses it already receives — no extra round-trip. Absence
+    // of the header itself signals a pre-v0.14 daemon.
+    'x-daimon-version': DAIMON_VERSION,
   });
   res.end(body);
 }
@@ -127,7 +131,9 @@ function compactStatus(s: AppSummary): Record<string, unknown> {
     health: s.health,
     errCount: s.errorCount,
     lastChangeMs: s.lastChangeMs ?? null,
-    uptime: s.uptimeMs,
+    // M87 last-call rename (was `uptime`): the value is milliseconds and the
+    // unsuffixed key caused real unit bugs in agents. Frozen as uptimeMs.
+    uptimeMs: s.uptimeMs,
   };
   if (s.estimatedReadyAtMs != null) out.estimatedReadyAtMs = s.estimatedReadyAtMs;
   if (s.serverProfile) out.serverProfile = s.serverProfile;
@@ -142,6 +148,9 @@ function compactError(e: ErrorEntry): Record<string, unknown> {
   }
   return { file: null, line: null, col: null, code: null, message: e.message, level };
 }
+
+// M90: the most common 404 names the next step everywhere it appears.
+const UNKNOWN_APP = { error: 'unknown app', hint: "list apps with GET /api/apps (CLI: daimon list); pass ?cwd= or --workspace to disambiguate duplicated names" };
 
 function parseSinceParam(s: string | null): { sinceMs?: number; sinceTs?: number } {
   if (!s) return {};
@@ -490,7 +499,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const roots = cfg.searchRoots.map(s => typeof s === 'string' ? { path: s, label: null as string | null } : { path: s.path, label: s.label ?? null });
         const match = roots.find(r2 => isPathUnder(cwdParam, r2.path));
         if (!match) {
-          sendJson(res, 404, { error: 'no workspace covers cwd', cwd: cwdParam });
+          sendJson(res, 404, { error: 'no workspace covers cwd', cwd: cwdParam, hint: "register it with 'daimon workspaces add' (or POST /api/workspaces/ensure)" });
           return;
         }
         sendJson(res, 200, { path: match.path, label: match.label, cwd: cwdParam });
@@ -564,7 +573,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const sinceMs = parseDuration(url.searchParams.get('since'));
         const app = url.searchParams.get('app') || undefined;
         if (url.searchParams.get('stream') === 'ndjson') {
-          res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+          res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'x-daimon-version': DAIMON_VERSION });
           const seed = registry.events({ sinceMs, app });
           for (const ev of seed) res.write(JSON.stringify(ev) + '\n');
           // Ring-buffer against slow consumers (M54): cap pending lines at 500,
@@ -738,7 +747,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const profile = decodeURIComponent(parts[2]);
         const cfg = opts.getConfig?.();
         const list = cfg?.profiles?.[profile];
-        if (!list) { sendJson(res, 404, { error: 'unknown profile' }); return; }
+        if (!list) { sendJson(res, 404, { error: 'unknown profile', hint: 'profiles are named sets in daimon.config.json profiles; GET /api/profiles/suggest lists candidates' }); return; }
         const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
         if (!['serving', 'healthy'].includes(untilRaw)) { sendJson(res, 400, { error: 'until must be serving|healthy' }); return; }
         const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
@@ -907,7 +916,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         const ctxName = resolvedCtx.kind === 'unique' && resolvedCtx.key ? resolvedCtx.key : ctxName0;
         const s = registry.summary(ctxName);
-        if (!s) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!s) { sendJson(res, 404, UNKNOWN_APP); return; }
         const appRow = registry.getApp(ctxName);
         const h = registry.getHistory();
         const dayAgo = Date.now() - 24 * 3600_000;
@@ -1051,7 +1060,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         const envName = resolvedEnv.kind === 'unique' && resolvedEnv.key ? resolvedEnv.key : envName0;
         const appRow = registry.getApp(envName);
-        if (!appRow) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!appRow) { sendJson(res, 404, UNKNOWN_APP); return; }
         const h = registry.getHistory();
         const stripHashes = (snapJson: string): any => {
           try {
@@ -1103,7 +1112,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         const whyName = resolvedWhy.kind === 'unique' && resolvedWhy.key ? resolvedWhy.key : whyName0;
         const s = registry.summary(whyName);
-        if (!s) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!s) { sendJson(res, 404, UNKNOWN_APP); return; }
         const appRow = registry.getApp(whyName);
         const h = registry.getHistory();
         const dayAgo = Date.now() - 24 * 3600_000;
@@ -1345,6 +1354,15 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             return isPathUnder(app.workspaceRoot, cwd) || isPathUnder(cwd, app.workspaceRoot);
           });
         }
+        // Server-side ?tag= / ?workspace= filters (M87 last-call fix). The CLI
+        // used to filter client-side on fields only the FULL shape carries, so
+        // `daimon list --tag x` silently switched to the verbose shape and
+        // `--tag x --compact` always returned []. Filtering here, where the
+        // full summaries live, keeps the output shape independent of filters.
+        const tagFilters = url.searchParams.getAll('tag').filter(Boolean);
+        if (tagFilters.length) all = all.filter(s => tagFilters.every(t => (s.tags ?? []).includes(t)));
+        const wsFilter = url.searchParams.get('workspace');
+        if (wsFilter) all = all.filter(s => s.workspaceLabel === wsFilter);
         const rows = fmt === 'full' ? all : all.map(compactSummary);
         if (url.searchParams.get('stream') === 'ndjson') {
           res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
@@ -1425,7 +1443,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       const tryLock = (action: string): boolean => {
         // Validate the app before locking — otherwise 409s (and interaction
         // history) can materialize for app names that don't exist.
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return false; }
+        if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return false; }
         const stealQ = url.searchParams.get('steal');
         const steal = stealQ === '1' || stealQ === 'true';
         if (steal) { locks.steal(name, agentId, action); return true; }
@@ -1450,7 +1468,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         const s = registry.summary(name);
         if (!s) {
-          sendJson(res, 404, { error: 'unknown app' });
+          sendJson(res, 404, UNKNOWN_APP);
           return;
         }
         const fmt = resolveFormat(url, opts.getConfig);
@@ -1477,7 +1495,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const client = url.searchParams.get('client') || 'default';
         const cursor = cursors.getErrorCursor(client, name);
         const errsAll = registry.errorsSince(name, cursor);
-        if (errsAll == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (errsAll == null) { sendJson(res, 404, UNKNOWN_APP); return; }
         const errs = errsAll.filter(matchesLevel);
         const newest = errs.reduce((acc, e) => Math.max(acc, e.lastSeen), cursor);
         if (newest > cursor) cursors.setErrorCursor(client, name, newest);
@@ -1493,20 +1511,20 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           const { sinceMs, sinceTs } = parseSinceParam(sinceRaw);
           const cutoff = sinceTs ?? (sinceMs != null ? Date.now() - sinceMs : 0);
           const errsAll = registry.errorsSince(name, cutoff);
-          if (errsAll == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+          if (errsAll == null) { sendJson(res, 404, UNKNOWN_APP); return; }
           const errs = errsAll.filter(matchesLevel);
           sendJson(res, 200, fmt === 'full' ? errs : errs.map(compactError));
           return;
         }
         const errsAll = registry.errors(name);
-        if (errsAll == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (errsAll == null) { sendJson(res, 404, UNKNOWN_APP); return; }
         const errs = errsAll.filter(matchesLevel);
         sendJson(res, 200, fmt === 'full' ? errs : errs.map(compactError));
         return;
       }
 
       if (sub === 'logs' && parts[4] === 'stream' && method === 'GET') {
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
         // ?grep= (M79): server-side regex filter on the live tail. Length-
         // capped and compiled case-insensitively, like custom-profile patterns.
         const grepRaw = url.searchParams.get('grep');
@@ -1520,6 +1538,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
+          'x-daimon-version': DAIMON_VERSION,
         });
         const initial = (registry.logs(name, { tail: 50 }) ?? []).filter(l => !grepRx || grepRx.test(l));
         for (const line of initial) {
@@ -1561,7 +1580,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           tail: tail ? Number(tail) : undefined,
           sinceMs: parseDuration(since),
         });
-        if (lines == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (lines == null) { sendJson(res, 404, UNKNOWN_APP); return; }
         const grepRaw = url.searchParams.get('grep');
         if (grepRaw) {
           if (grepRaw.length > 512) { sendJson(res, 400, { error: 'grep pattern too long (max 512 chars)' }); return; }
@@ -1579,7 +1598,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (sub === 'focus' && method === 'POST') {
         const s0 = registry.summary(name);
-        if (!s0) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!s0) { sendJson(res, 404, UNKNOWN_APP); return; }
         const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
         if (!['serving', 'healthy', 'stable'].includes(untilRaw)) {
           sendJson(res, 400, { error: 'until must be one of serving|healthy|stable' });
@@ -1595,6 +1614,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           'content-type': 'application/x-ndjson; charset=utf-8',
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
+          'x-daimon-version': DAIMON_VERSION,
         });
         const write = (obj: any) => {
           try { res.write(JSON.stringify(obj) + '\n'); } catch {}
@@ -1653,10 +1673,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (sub === 'health' && sub2 === 'pin' && method === 'POST') {
         const s = registry.getState(name);
-        if (!s) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!s) { sendJson(res, 404, UNKNOWN_APP); return; }
         const body: any = await readJsonBody(req);
         const desired: string | null = (typeof body.path === 'string' && body.path) ? body.path : (s.discoveredHealthPath ?? null);
-        if (!desired) { sendJson(res, 400, { error: 'no path supplied and no discoveredHealthPath on app' }); return; }
+        if (!desired) { sendJson(res, 400, { error: 'no path supplied and no discoveredHealthPath on app', hint: 'start the app and wait for it to serve once (auto-discovery), or pass { path } explicitly' }); return; }
         const { configLookupPaths } = await import('./config.js');
         const { local, user } = configLookupPaths();
         const target = fs.existsSync(local) ? local : user;
@@ -1672,7 +1692,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const prev = raw.overrides[name].healthProbePath ?? null;
         raw.overrides[name].healthProbePath = desired;
         fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+        // Atomic + .bak (M88): this writes a user-owned config file, so a
+        // crash mid-write must never leave it truncated or unrecoverable.
+        const pinTmp = target + '.' + process.pid + '.tmp';
+        fs.writeFileSync(pinTmp, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+        try { if (fs.existsSync(target)) fs.copyFileSync(target, target + '.bak'); } catch {}
+        fs.renameSync(pinTmp, target);
         // health/pin mutates on-disk config just like PATCH /api/config, so it
         // must leave the same audit trail.
         try {
@@ -1688,7 +1713,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (sub === 'try-fix' && method === 'POST') {
         const s0 = registry.summary(name);
-        if (!s0) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!s0) { sendJson(res, 404, UNKNOWN_APP); return; }
         const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
         if (!['serving', 'healthy'].includes(untilRaw)) {
           sendJson(res, 400, { error: 'until must be serving|healthy' });
@@ -1744,14 +1769,20 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
 
       if (sub === 'wait' && method === 'GET') {
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
         const untilRaw = (url.searchParams.get('until') || 'serving').toLowerCase();
         if (!['serving', 'healthy', 'stopped', 'error'].includes(untilRaw)) {
           sendJson(res, 400, { error: 'until must be one of serving|healthy|stopped|error' });
           return;
         }
+        // ?timeout= is SECONDS (legacy, kept forever); ?timeoutMs= accepted
+        // since v0.14 for consistency with ensure/focus/try-fix. Ms wins.
+        const timeoutMsRaw = url.searchParams.get('timeoutMs');
         const timeoutSecRaw = url.searchParams.get('timeout');
         let timeoutSec = timeoutSecRaw ? Number(timeoutSecRaw) : 120;
+        if (timeoutMsRaw && Number.isFinite(Number(timeoutMsRaw)) && Number(timeoutMsRaw) > 0) {
+          timeoutSec = Number(timeoutMsRaw) / 1000;
+        }
         if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) timeoutSec = 120;
         timeoutSec = Math.min(timeoutSec, 600);
         const result = await registry.waitFor(name, untilRaw as any, timeoutSec * 1000);
@@ -1761,7 +1792,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (sub === 'ensure' && method === 'POST') {
         const s0 = registry.summary(name);
-        if (!s0) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!s0) { sendJson(res, 404, UNKNOWN_APP); return; }
         const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
         if (!['serving', 'healthy'].includes(untilRaw)) {
           sendJson(res, 400, { error: 'until must be serving|healthy' });
@@ -1795,7 +1826,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         }
         const r = await registry.waitFor(name, effectiveUntil, timeoutMs);
         const sFinal = registry.summary(name);
-        const compact = sFinal ? compactStatus(sFinal) : { name, status: r.status, port: null, url: null, health: r.health, errCount: 0, lastChangeMs: null, uptime: null };
+        const compact = sFinal ? compactStatus(sFinal) : { name, status: r.status, port: null, url: null, health: r.health, errCount: 0, lastChangeMs: null, uptimeMs: null };
         if (r.timedOut) {
           sendJson(res, 200, { error: 'timeout', state: compact, _meta: { format: 'compact', startedFromState: startFromState, warning, waitedMs: r.waitedMs, timedOut: true } });
           return;
@@ -1805,7 +1836,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
 
       if (sub === 'lock' && method === 'GET') {
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
         const current = locks.current(name);
         const recent = locks.recentInteractions(name, 3);
         sendJson(res, 200, { app: name, current, recent });
@@ -1813,7 +1844,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
 
       if (sub === 'handoff' && method === 'POST') {
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
         const body: any = await readJsonBody(req);
         const toAgent = typeof body?.to === 'string' ? body.to.trim() : '';
         if (!toAgent) { sendJson(res, 400, { error: 'body { to: <agentId> } required' }); return; }
@@ -1866,7 +1897,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
 
       if (sub === 'tasks' && method === 'GET' && !sub2) {
         const tasks = registry.listTasks(name);
-        if (tasks == null) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (tasks == null) { sendJson(res, 404, UNKNOWN_APP); return; }
         sendJson(res, 200, { tasks, watching: registry.listWatchTasks(name) });
         return;
       }
@@ -1917,7 +1948,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const deep = url.searchParams.get('deep') === '1';
         const yes = url.searchParams.get('yes') === '1';
         const plan = planClean(registry, name, deep);
-        if (!plan) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!plan) { sendJson(res, 404, UNKNOWN_APP); return; }
         if (plan.ranOnServing) { sendJson(res, 409, { error: 'refusing: app is currently running', plan }); return; }
         if (!yes) { sendJson(res, 200, { plan, hint: 'pass --yes to delete' }); return; }
         const result = executeClean(registry, name, deep);
@@ -1929,12 +1960,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const persist = url.searchParams.get('write') === '1';
         if (persist) {
           const wr = writeSnapshot(registry, name);
-          if (!wr) { sendJson(res, 404, { error: 'unknown app' }); return; }
+          if (!wr) { sendJson(res, 404, UNKNOWN_APP); return; }
           sendJson(res, 200, { snapshot: wr.path });
           return;
         }
         const p = buildSnapshot(registry, name);
-        if (!p) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!p) { sendJson(res, 404, UNKNOWN_APP); return; }
         sendJson(res, 200, p);
         return;
       }
@@ -1946,14 +1977,14 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
       // Notification mute (M84): persisted, surfaced in status + dashboard.
       if (sub === 'mute' && method === 'POST') {
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
         const body: any = await readJsonBody(req);
         const forMs = typeof body?.forMs === 'number' && body.forMs > 0 ? body.forMs : null;
         sendJson(res, 200, registry.mute(name, forMs));
         return;
       }
       if (sub === 'unmute' && method === 'POST') {
-        if (!registry.summary(name)) { sendJson(res, 404, { error: 'unknown app' }); return; }
+        if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
         sendJson(res, 200, registry.unmute(name));
         return;
       }

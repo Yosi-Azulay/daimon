@@ -85,7 +85,7 @@ function statusBucketOf(s: number): StatusBucket | null {
     <div class="dm-page-header">
       <div>
         <h1>
-          <a [routerLink]="['/apps', name]" class="dm-back" matTooltip="Back to app">
+          <a [routerLink]="['/apps', name]" class="dm-back" aria-label="Back to app" matTooltip="Back to app">
             <mat-icon>arrow_back</mat-icon>
           </a>
           <span>Requests</span>
@@ -165,7 +165,7 @@ function statusBucketOf(s: number): StatusBucket | null {
           <mat-label>Path contains</mat-label>
           <input matInput [ngModel]="pathQuery()" (ngModelChange)="pathQuery.set($event)" placeholder="/api/..." />
           @if (pathQuery()) {
-            <button matSuffix mat-icon-button (click)="pathQuery.set('')"><mat-icon>close</mat-icon></button>
+            <button matSuffix mat-icon-button (click)="pathQuery.set('')" aria-label="Clear filter"><mat-icon>close</mat-icon></button>
           }
         </mat-form-field>
       </div>
@@ -188,11 +188,11 @@ function statusBucketOf(s: number): StatusBucket | null {
           <table class="dm-req-table">
             <thead>
               <tr>
-                <th class="dm-col-time">Time</th>
-                <th class="dm-col-method">Method</th>
-                <th class="dm-col-status">Status</th>
-                <th class="dm-col-path">Path</th>
-                <th class="dm-col-dur">ms</th>
+                <th class="dm-col-time" scope="col">Time</th>
+                <th class="dm-col-method" scope="col">Method</th>
+                <th class="dm-col-status" scope="col">Status</th>
+                <th class="dm-col-path" scope="col">Path</th>
+                <th class="dm-col-dur" scope="col">ms</th>
               </tr>
             </thead>
             <tbody>
@@ -269,7 +269,7 @@ function statusBucketOf(s: number): StatusBucket | null {
     }
     .dm-chip:hover { color: var(--mat-sys-on-surface); }
     .dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent);
+      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
       border-color: color-mix(in oklch, var(--mat-sys-primary) 35%, transparent);
       color: var(--mat-sys-primary);
     }

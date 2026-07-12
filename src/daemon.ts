@@ -28,7 +28,7 @@ export function lockPath(): string {
   return path.join(daimonDir(), 'daemon.lock');
 }
 
-function isPidAlive(pid: number): boolean {
+export function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

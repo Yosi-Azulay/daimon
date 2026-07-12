@@ -13,23 +13,74 @@ export interface PersistedState {
   digests?: Record<string, number>;
 }
 
+// What the last loadPersistedState() had to do to produce a usable state
+// (M88). Mirrors History.archivedCorruptDbPath(): main.ts reads this after
+// boot and records a self-warn event so recovery is never silent.
+export interface StateLoadDiagnostics {
+  recoveredFromBak: boolean;
+  archivedCorruptPath: string | null;
+}
+
+let lastDiagnostics: StateLoadDiagnostics = { recoveredFromBak: false, archivedCorruptPath: null };
+
+export function stateLoadDiagnostics(): StateLoadDiagnostics {
+  return { ...lastDiagnostics };
+}
+
 // Last full state seen by this process — savePersistedState merges partial
 // updates into it so the ports writer can't clobber mutes and vice versa.
 let current: PersistedState | null = null;
 
+function parseState(raw: string): PersistedState | null {
+  const parsed = JSON.parse(raw);
+  if (parsed && typeof parsed === 'object' && parsed.ports && typeof parsed.ports === 'object') {
+    return {
+      ports: parsed.ports,
+      ...(parsed.mutes && typeof parsed.mutes === 'object' ? { mutes: parsed.mutes } : {}),
+      ...(parsed.digests && typeof parsed.digests === 'object' ? { digests: parsed.digests } : {}),
+    };
+  }
+  return null;
+}
+
+// Load order (M88): state.json → state.json.bak → archive-corrupt + fresh.
+// A recovered or archived load is reported via stateLoadDiagnostics() so the
+// daemon can emit a self-warn event — never a silent reset.
 export function loadPersistedState(): PersistedState {
+  lastDiagnostics = { recoveredFromBak: false, archivedCorruptPath: null };
+  const p = STATE_PATH();
+  const mainExists = fs.existsSync(p);
   try {
-    const raw = fs.readFileSync(STATE_PATH(), 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && parsed.ports && typeof parsed.ports === 'object') {
-      current = {
-        ports: parsed.ports,
-        ...(parsed.mutes && typeof parsed.mutes === 'object' ? { mutes: parsed.mutes } : {}),
-        ...(parsed.digests && typeof parsed.digests === 'object' ? { digests: parsed.digests } : {}),
-      };
+    const state = parseState(fs.readFileSync(p, 'utf8'));
+    if (state) {
+      current = state;
       return { ...current };
     }
   } catch {}
+  // Main is missing or corrupt — try the .bak of the last good write.
+  try {
+    const state = parseState(fs.readFileSync(p + '.bak', 'utf8'));
+    if (state) {
+      lastDiagnostics.recoveredFromBak = true;
+      current = state;
+      // Move the corrupt main aside BEFORE the heal-write: writeNow copies
+      // main → .bak, which would clobber the good .bak with the corrupt file.
+      if (mainExists) {
+        try { fs.renameSync(p, p + '.corrupt-' + Date.now()); } catch {}
+      }
+      try { writeNow(state); } catch {}
+      return { ...current };
+    }
+  } catch {}
+  // Both unreadable. Archive the corrupt main (if any) for forensics — same
+  // convention as history.db.corrupt-<ts> — and start fresh.
+  if (mainExists) {
+    const archived = p + '.corrupt-' + Date.now();
+    try {
+      fs.renameSync(p, archived);
+      lastDiagnostics.archivedCorruptPath = archived;
+    } catch {}
+  }
   current = { ports: {} };
   return { ...current };
 }
@@ -41,11 +92,13 @@ function writeNow(state: PersistedState): void {
   try {
     fs.mkdirSync(path.dirname(STATE_PATH()), { recursive: true });
     // Atomic temp+rename so a crash mid-write can't leave a truncated
-    // state.json — a half-written file fails JSON.parse on load and silently
-    // resets every persisted port assignment.
-    const tmp = STATE_PATH() + '.' + process.pid + '.tmp';
+    // state.json, plus a .bak of the last good version taken BEFORE the
+    // rename — loadPersistedState falls back to it when main won't parse.
+    const p = STATE_PATH();
+    const tmp = p + '.' + process.pid + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
-    fs.renameSync(tmp, STATE_PATH());
+    try { if (fs.existsSync(p)) fs.copyFileSync(p, p + '.bak'); } catch {}
+    fs.renameSync(tmp, p);
   } catch (err: any) {
     process.stderr.write(`[daimon] warning: state write failed: ${err.message}\n`);
   }

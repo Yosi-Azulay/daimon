@@ -12,7 +12,9 @@ import { startServer } from './server.js';
 import { HealthMonitor } from './health.js';
 import { UsageMonitor } from './usage.js';
 import { Restarter } from './restarter.js';
-import { loadPersistedState, savePersistedState, flushPersistedState } from './stateFile.js';
+import { loadPersistedState, savePersistedState, flushPersistedState, stateLoadDiagnostics } from './stateFile.js';
+import { scanListeningPorts } from './portDiag.js';
+import { isPidAlive } from './daemon.js';
 import { History } from './history.js';
 import { findCycle } from './depends.js';
 import { Notifier } from './notifier.js';
@@ -42,6 +44,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     cfgResult = loadConfig();
   } catch (err: any) {
     process.stderr.write(`[daimon] config error: ${err.message}\n`);
+    process.stderr.write(`[daimon] fix the JSON and re-run — 'daimon config validate' pinpoints the problem\n`);
     process.exit(1);
   }
 
@@ -60,6 +63,7 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     const cycle = findCycle(config.depends);
     if (cycle) {
       process.stderr.write(`[daimon] config error: depends graph has a cycle: ${cycle.join(' -> ')}\n`);
+      process.stderr.write(`[daimon] break the cycle in daimon.config.json "depends" — remove one edge of the loop above\n`);
       process.exit(1);
     }
   }
@@ -69,7 +73,18 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     process.stdout.write(`[daimon] no serveable projects discovered in: ${config.searchRoots.join(', ') || '(none)'}\n`);
   }
 
+  // ── Crash-recovery order (M88) ─────────────────────────────────────────
+  // After an unclean exit the startup sequence is, in this order:
+  //   1. recover persisted state  (state.json → .bak → archive-corrupt+fresh)
+  //   2. verify the daemon lock   (readLock() clears a stale lock whose pid
+  //      is dead; per-app soft-locks are in-memory and die with the daemon)
+  //   3. re-adopt or mark orphans (consumeHandoff below, before autoStart)
+  //   4. then serve               (startServer at the end of this function;
+  //      the lock is written only after a successful bind)
+  // Recovery is never silent: steps 1 and 3 record self-warn / status events.
   const persisted = loadPersistedState();
+  const stateDiag = stateLoadDiagnostics();
+  readLock(); // step 2: side effect — deletes a leftover lock from a dead pid
   // ports.pool (M81) narrows the allocator to the pool range; absent = the
   // legacy portRange behavior, byte for byte.
   const portAlloc = new PortAllocator(parsePortPool(config.ports?.pool) ?? config.portRange, {
@@ -87,6 +102,13 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   const archivedDb = history.archivedCorruptDbPath();
   if (archivedDb) {
     registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `history.db was corrupt and was rebuilt; previous db archived at ${archivedDb}` });
+  }
+  // State recovery is never silent (M88): say what load had to do.
+  if (stateDiag.recoveredFromBak) {
+    registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: 'state.json was corrupt; recovered from state.json.bak (port assignments and mutes intact)' });
+  }
+  if (stateDiag.archivedCorruptPath) {
+    registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `state.json and its .bak were both unreadable; archived at ${stateDiag.archivedCorruptPath} and started fresh — port assignments and mutes were reset` });
   }
   const ftsDegraded = history.ftsDegradedReason();
   if (ftsDegraded) {
@@ -120,15 +142,45 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   registry.on('childExit', ({ name, code, signal, stopping }: any) => restarter.onExit(name, code, signal, stopping));
   registry.on('userStop', ({ name }: any) => restarter.onUserStop(name));
 
+  // Handoff re-adoption (M88, step 3 of the recovery order). The outgoing
+  // daemon left these children RUNNING; verify each (pid alive AND port
+  // listening) before adopting. Unverifiable children surface as 'orphaned'
+  // with a remedy — never silently dropped, never blindly killed.
   const handoff = consumeHandoff();
   if (handoff && handoff.apps.length) {
-    process.stdout.write(`[daimon] state-handoff: restoring ${handoff.apps.map(a => a.name).join(', ')}\n`);
+    process.stdout.write(`[daimon] state-handoff: verifying ${handoff.apps.map(a => a.name).join(', ')}\n`);
+    const known = new Set(registry.names());
+    const ports = new Set(handoff.apps.map(h => h.port).filter((p): p is number => typeof p === 'number'));
+    let listeners = new Map<number, number>();
+    try { listeners = scanListeningPorts(ports); } catch {}
     for (const h of handoff.apps) {
+      if (!known.has(h.name)) continue;
       portAlloc.pin(h.name, h.port);
-    }
-    for (const h of handoff.apps) {
-      if (registry.names().includes(h.name)) {
+      if (h.pid === undefined) {
+        // Pre-v0.14 handoff file: the old daemon killed its children on
+        // shutdown, so the legacy contract applies — start them fresh.
         void registry.start(h.name);
+        continue;
+      }
+      const pidAlive = h.pid != null && isPidAlive(h.pid);
+      const listenerPid = listeners.get(h.port) ?? null;
+      const portListening = listenerPid != null;
+      // Adopt only on the strongest evidence: the pid the OUTGOING daemon saw
+      // listening on this port is alive AND is STILL the one listening.
+      if (pidAlive && listenerPid === h.pid) {
+        registry.adoptChild(h.name, h.pid!, h.port, h.startedAt ?? null);
+        process.stdout.write(`[daimon] state-handoff: re-adopted ${h.name} (pid ${h.pid}, port ${h.port})\n`);
+      } else if (portListening && listenerPid !== h.pid) {
+        registry.markOrphaned(h.name, pidAlive ? h.pid! : null, h.port,
+          `port ${h.port} is now held by pid ${listenerPid}, not the handed-off child (pid ${h.pid ?? '?'}) — run 'daimon free-port ${h.port}' to identify it, then 'daimon start ${h.name}'`);
+        process.stdout.write(`[daimon] state-handoff: ${h.name} orphaned (port ${h.port} held by pid ${listenerPid})\n`);
+      } else if (pidAlive && !portListening) {
+        registry.markOrphaned(h.name, h.pid!, h.port,
+          `survived the daemon handoff (pid ${h.pid}) but nothing is listening on port ${h.port} — inspect with 'daimon why ${h.name}', then 'daimon stop ${h.name}' to end it or 'daimon restart ${h.name}' to replace it`);
+        process.stdout.write(`[daimon] state-handoff: ${h.name} orphaned (pid ${h.pid} alive, port ${h.port} silent)\n`);
+      } else {
+        registry.recordEvent({ app: h.name, type: 'status', from: 'serving', to: 'stopped', message: `child (pid ${h.pid ?? '?'}) did not survive the daemon handoff — run 'daimon start ${h.name}'` });
+        process.stdout.write(`[daimon] state-handoff: ${h.name} did not survive (pid gone, port free) — left stopped\n`);
       }
     }
   }
@@ -226,7 +278,16 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { webhookDispatcher?.stop(); } catch {}
     try { history.close(); } catch {}
     try {
-      await registry.stopAll(3000);
+      // Handoff shutdown (M88): a snapshot-state call in the last 60s means a
+      // new daemon is about to re-adopt the children — leave them running.
+      // (Their stdio pipes die with this process; log capture resumes when the
+      // app is next restarted. A plain `daimon daemon stop` still kills all.)
+      if (registry.isHandoffPending()) {
+        process.stdout.write(`[daimon] handoff pending — leaving managed children running for re-adoption\n`);
+        await registry.stopAll(3000, { keepManagedChildren: true });
+      } else {
+        await registry.stopAll(3000);
+      }
     } catch {}
     try {
       server.close();

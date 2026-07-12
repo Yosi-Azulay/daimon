@@ -4,6 +4,47 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-07-12
+
+"Runway" — the release before 1.0. No new feature surfaces: v0.14 inventories, repairs, labels, and hardens what exists (M87–M92). Every public surface now carries a stability tier enforced by contract tests, the daemon survives its own restart without killing your dev servers, the dashboard passed its first WCAG AA audit, and this is the **last release with a breaking-changes section**. v1.0.0 will be tagged later, after a real-usage soak, as a near-empty release.
+
+### Breaking (the last)
+
+- **Compact status `uptime` → `uptimeMs`** — `daimon status` (compact/default), `GET /api/apps/:name` (compact), the `ensure` response, MCP `get_status`, and `daimon daemon status`. The value was always milliseconds; the unsuffixed key read as seconds and caused real unit bugs. Migration: read `uptimeMs`.
+- **`daimon list --tag/--workspace` no longer switches to the full shape** — filters now run on the daemon (new `GET /api/apps?tag=&workspace=` params) and the output stays compact unless `--full` is passed. Also fixes `--tag <t> --compact` always returning `[]`. Migration: add `--full` if you scripted against the verbose filtered rows.
+
+### Added
+
+- **Stability tiers (M87)** — every CLI verb, HTTP endpoint, MCP tool, config key, and event kind declares `frozen` / `stable` / `experimental` at its source of truth; `npm run build:docs` renders the badge next to each; `STABILITY.md` defines the promise each tier makes. `test/contract.test.mjs` pins golden shapes (key sets + types, never values) for every frozen surface — a frozen surface without a snapshot fails the suite; a frozen-shape change fails it forever. Deliberate exception: `GET /api/signature` is frozen despite being born in v0.13 (it is the cross-version identification handshake).
+- **Daemon handoff re-adoption (M88)** — `daimon daemon restart` leaves managed children RUNNING; the incoming daemon verifies each (the pid the outgoing daemon saw LISTENING on the app's port, still alive and still the listener) and re-adopts it with the same pid — health probing resumes, log capture resumes on the next app restart. Unverifiable children surface as the new `orphaned` status with a per-case remedy — never silently dropped, never blindly killed. Pre-v0.14 handoff files keep the legacy restart behavior.
+- **Atomic state with recovery (M88)** — every `~/.daimon/*.json` the daemon rewrites (state.json, session-state.json, config rewrites via PATCH/pin-health) is written tmp→`.bak`→rename. A corrupt `state.json` recovers from `.bak`; if both are unreadable it's archived as `state.json.corrupt-<ts>` with a fresh start — each path records a self-warn event (mirrors history.db). Crash-recovery order documented and tested: recover state → verify locks → re-adopt/orphan → serve. New `test/lifecycle-torture.test.mjs` (kill-mid-write, double corruption, double-start forensics, restart-under-load re-adoption, skew probe — all under DAIMON_HOME isolation with real daemon spawns).
+- **Version-skew warning (M88)** — every daemon response carries `x-daimon-version`; a CLI seeing a mismatch (or a pre-v0.14 daemon) warns once on stderr with the remedy (`daimon daemon restart`) — never a hard fail.
+- **WCAG AA dashboard audit (M89)** — keyboard-only operation on every route (skip link, focus order, Escape, visible focus), contrast fixed at the `--dm-*` token layer for both themes, ARIA landmarks/labels/aria-live, `prefers-reduced-motion` honored, and an automated axe gate (`@axe-core/playwright`, the release's single sanctioned devDependency) across all routes at 1280px and 390px — zero serious/critical.
+- **`daimon config validate` (M91)** — offline config check: unknown keys warn with the nearest valid name, malformed values report the same field-level warnings the daemon applies at load; exit 0 with warnings / 1 on errors. The daemon now also warns (never fails) on unknown keys at load time — config back-compat is contractually unbreakable (STABILITY.md).
+- **SECURITY.md (M90)** — the posture in writing: loopback-only binding, no telemetry ever, same-tick env-value redaction, state confinement, the plugin trust model, verify-then-kill, and the report channel (GitHub issues / flycotech.com).
+- **Doctor coverage table (M91)** — every recurring failure class from v0.11–v0.14 mapped to its doctor rule, auto-fix, built-in remedy, or documented gap (`DOCTOR_COVERAGE` in doctor.ts, rendered in the docs).
+- **Error-remedy audit (M90)** — every user-facing error now says what to do next (unknown-app 404s suggest the nearest name and `daimon list`; timeouts, stream failures, config fatals, and doctor findings all carry remedies); `test/error-remedies.test.mjs` scans the source and fails on bare errors.
+
+### Fixed
+
+- **`daimon profiles suggest` dispatched as "unknown command" since v0.12** — the alias rewrote the verb to its canonical multi-word name but the dispatch switch never matched it (M91).
+- `daimon list --tag <t> --compact` returned `[]` (compact rows carry no tags to filter on client-side) — see Breaking above.
+- `src/tui/AttachApp.tsx` bypassed `daimonDir()` — the attach token now honors `DAIMON_HOME` (M91).
+- `src/parser.ts` contained literal NUL bytes that made grep treat it as binary; replaced with string escapes (M91).
+- Doctor's `node_modules` check no longer fires for non-JS workspace roots, and its finding now names the remedy (M90).
+- The `history-stress` and `ports` forensics tests are contention-immune: ratio-to-CPU-reference budgets and a generous probe ceiling replace wall-clock-only assertions — budgets were NOT loosened for the quiet-machine case (M91).
+
+### Changed
+
+- npm package now ships `docs/` and `daimon.config.example.json` (the annotated example the config stub copies from); a pack-audit test keeps fixtures/tests/personal-email out of the tarball forever (M91).
+- `GET /api/apps/:name/wait` additionally accepts `?timeoutMs=` (legacy `?timeout=` seconds unchanged).
+- New event: none. New config keys: none — a runway release adds nothing that must then be frozen.
+- Suite: **571 tests** (from 529): contract golden shapes, lifecycle torture, config-validate, pack-audit, error-remedies.
+
+### Migration
+
+See `RELEASE-v0.14.0.md` — two mechanical edits (`uptime` → `uptimeMs`; `--full` on filtered `list` calls if you needed verbose rows), nothing else. Configs are untouched; v0.1 configs still load.
+
 ## [0.13.0] — 2026-07-11
 
 "Daily Rhythm" — v0.12 gave daimon total recall; v0.13 makes it useful across the day: `daimon report` answers "what happened", env fingerprints answer "what changed", a port pool + forensics answer "who has what", and routed/batched/mutable notifications with a scheduled digest close the loop (M81–M86).

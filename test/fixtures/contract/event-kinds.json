@@ -1,0 +1,12 @@
+{
+  "surface": "event kinds (src/types.ts EVENT_KIND_STABILITY)",
+  "note": "Frozen event kinds — may NEVER be removed or demoted.",
+  "cases": {
+    "frozen": [
+      "error-new",
+      "error-recur",
+      "health",
+      "status"
+    ]
+  }
+}

@@ -11,7 +11,9 @@ import type {
   ErrorEntry,
   LogEntry,
 } from './types.js';
+import treeKill from 'tree-kill';
 import { isPathUnder } from './pathScope.js';
+import { isPidAlive } from './daemon.js';
 import { AppProcess } from './appProcess.js';
 import { PortAllocator, isPortFree, parsePortPool } from './ports.js';
 import { DiskLogger } from './diskLogger.js';
@@ -68,6 +70,58 @@ export class Registry extends EventEmitter {
         proc: null,
       });
     }
+  }
+
+  // ── Daemon handoff (M88) ──────────────────────────────────────────────────
+  // writeHandoff() arms this; main.ts's shutdown consults it and leaves
+  // children running for the incoming daemon to re-adopt. Valid for 60s —
+  // the same window consumeHandoff honors — so a snapshot that never led to a
+  // shutdown can't suppress a real `daimon daemon stop` minutes later.
+  private handoffArmedAt: number | null = null;
+
+  beginHandoff(): void {
+    this.handoffArmedAt = Date.now();
+  }
+
+  isHandoffPending(now = Date.now()): boolean {
+    return this.handoffArmedAt != null && now - this.handoffArmedAt <= 60_000;
+  }
+
+  // Re-adopt a verified child from a handoff file: pid is alive and the port
+  // is listening. There is no AppProcess (the stdio pipes died with the old
+  // daemon) — pid+port tracking only; the health probe takes over from here
+  // and log capture resumes on the next restart.
+  adoptChild(name: string, pid: number, port: number, startedAt: number | null): boolean {
+    const e = this.entries.get(name);
+    if (!e) return false;
+    const prev = e.state.status;
+    e.state.status = 'serving';
+    e.state.pid = pid;
+    e.state.port = port;
+    e.state.startedAt = startedAt ?? Date.now();
+    e.state.health = 'unknown';
+    e.state.adopted = true;
+    e.state.lastStatusMessage = `re-adopted after daemon handoff (pid ${pid}); log capture resumes on next restart`;
+    this.recordEvent({ app: name, type: 'status', from: prev, to: 'serving', message: e.state.lastStatusMessage });
+    this.emit('change');
+    return true;
+  }
+
+  // A handoff child that could NOT be verified (pid dead, port silent, or
+  // holder mismatch). Reported with a remedy — never silently dropped and
+  // never blindly killed (the M81 verify-then-kill discipline).
+  markOrphaned(name: string, pid: number | null, port: number | null, remedy: string): void {
+    const e = this.entries.get(name);
+    if (!e) return;
+    const prev = e.state.status;
+    e.state.status = 'orphaned';
+    e.state.pid = pid;
+    e.state.port = port;
+    e.state.adopted = false;
+    e.state.health = 'unknown';
+    e.state.lastStatusMessage = remedy;
+    this.recordEvent({ app: name, type: 'status', from: prev, to: 'orphaned', message: remedy });
+    this.emit('change');
   }
 
   getConfig(): AppmanConfig {
@@ -562,6 +616,12 @@ export class Registry extends EventEmitter {
     const e = this.entries.get(name);
     if (!e) return { ok: false, status: 'unknown', error: 'unknown app' };
     if (e.proc?.isRunning()) return { ok: true, status: e.state.status };
+    // An adopted child (M88) has no AppProcess but is genuinely running —
+    // starting a second instance would fight it for the port.
+    if (e.state.adopted && e.state.pid && isPidAlive(e.state.pid) && e.state.status !== 'stopped') {
+      return { ok: true, status: e.state.status };
+    }
+    if (e.state.adopted) e.state.adopted = false; // adopted pid died — spawn fresh
 
     const prevStatus = e.state.status;
     // Registry row for this app's serverProfile — drives port injection (M81)
@@ -732,6 +792,35 @@ export class Registry extends EventEmitter {
     const e = this.entries.get(name);
     if (!e) return { ok: false, status: 'unknown', error: 'unknown app' };
     this.emit('userStop', { name });
+    // Adopted or orphaned child (M88): no AppProcess to stop — tree-kill the
+    // tracked pid with the same SIGTERM→SIGKILL escalation appProcess.stop
+    // uses. Safe to kill in both cases: an adopted pid was verified at
+    // adoption, and an orphaned entry only carries a pid when it was OUR
+    // handed-off child (markOrphaned stores null for foreign port holders) —
+    // and this is an explicit user action, not a blind takeover. Without the
+    // orphaned case, `daimon stop` would report success while the orphan's
+    // remedy text promised the kill and the process kept running.
+    if ((!e.proc || !e.proc.isRunning()) && (e.state.adopted || e.state.status === 'orphaned') && e.state.pid && isPidAlive(e.state.pid)) {
+      const prev = e.state.status;
+      const pid = e.state.pid;
+      treeKill(pid, 'SIGTERM', () => {});
+      const t0 = Date.now();
+      while (isPidAlive(pid) && Date.now() - t0 < 2000) await new Promise(r => setTimeout(r, 100));
+      if (isPidAlive(pid)) {
+        treeKill(pid, 'SIGKILL', () => {});
+        const t1 = Date.now();
+        while (isPidAlive(pid) && Date.now() - t1 < 2000) await new Promise(r => setTimeout(r, 100));
+      }
+      e.state.adopted = false;
+      e.state.status = 'stopped';
+      e.state.pid = null;
+      e.state.health = 'unknown';
+      if (prev !== 'stopped') {
+        this.recordEvent({ app: name, type: 'status', from: prev, to: 'stopped' });
+      }
+      this.emit('change');
+      return { ok: true, status: 'stopped' };
+    }
     if (!e.proc || !e.proc.isRunning()) {
       if (e.state.status !== 'stopped') {
         this.recordEvent({ app: name, type: 'status', from: e.state.status, to: 'stopped' });
@@ -797,10 +886,23 @@ export class Registry extends EventEmitter {
     }
   }
 
-  async stopAll(timeoutMs = 3000): Promise<void> {
+  // keepManagedChildren (M88): a handoff shutdown leaves dev-server children
+  // running for the incoming daemon to re-adopt, but still stops watch tasks
+  // (not part of the handoff contract) and closes disk loggers.
+  async stopAll(timeoutMs = 3000, opts: { keepManagedChildren?: boolean } = {}): Promise<void> {
     const tasks: Promise<unknown>[] = [];
-    for (const e of this.entries.values()) {
-      if (e.proc?.isRunning()) tasks.push(e.proc.stop());
+    if (!opts.keepManagedChildren) {
+      for (const e of this.entries.values()) {
+        if (e.proc?.isRunning()) tasks.push(e.proc.stop());
+      }
+      // Adopted/orphaned children (M88) have no AppProcess — route through
+      // stop(), which tree-kills the tracked pid (orphans only ever carry a
+      // pid when it was our own handed-off child).
+      for (const [name, e] of this.entries) {
+        if (!e.proc?.isRunning() && (e.state.adopted || e.state.status === 'orphaned') && e.state.pid && isPidAlive(e.state.pid)) {
+          tasks.push(this.stop(name));
+        }
+      }
     }
     for (const wt of this.watchTasks.values()) tasks.push(wt.stop());
     await Promise.race([

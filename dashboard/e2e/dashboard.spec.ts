@@ -10,6 +10,8 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { ROUTE_PATHS } from './routes';
+export { ROUTE_PATHS } from './routes';
 
 // The why-panel drive needs a crash row attached to a REAL registry app (the
 // /api/why route resolves registry names; seed.ts's default fake apps 404).
@@ -49,6 +51,22 @@ const ROUTES: { path: string; expect: (page: Page) => Promise<void> }[] = [
   { path: '/agents',     expect: async p => { await expect(p.locator('main').getByText(/agent/i).first()).toBeVisible(); } },
   { path: '/regressions', expect: async p => { await expect(p.locator('main').getByText(/regression|compile|bundle/i).first()).toBeVisible(); } },
 ];
+
+// Drift guard (M89): ROUTES above and e2e/routes.ts's ROUTE_PATHS (consumed
+// by a11y.spec.ts / keyboard.spec.ts) are two separately-maintained lists —
+// ROUTE_PATHS lives in its own plain-data module specifically so importing
+// it never drags this whole spec file's tests into an unrelated Playwright
+// run (see routes.ts's header comment). This test is the tripwire that
+// catches the two lists drifting apart instead of silently under-covering
+// the a11y gate. '/report' is ROUTE_PATHS's one intentional addition — it
+// gets its own dedicated drive test further down this file rather than a
+// ROUTES table entry.
+test('ROUTES and ROUTE_PATHS stay in sync', () => {
+  const fromRoutes = new Set(ROUTES.map(r => r.path));
+  const fromPaths = new Set(ROUTE_PATHS.filter(p => p !== '/report'));
+  expect([...fromPaths].sort()).toEqual([...fromRoutes].sort());
+  expect(ROUTE_PATHS).toContain('/report');
+});
 
 // Every test below drives routes/keyboard chords against a fresh (isolated)
 // browser context, and the onboarding tour (M79) shows a full-viewport scrim

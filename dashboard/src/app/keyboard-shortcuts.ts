@@ -10,6 +10,9 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
     <h2 mat-dialog-title>Keyboard shortcuts</h2>
     <div mat-dialog-content>
       <table class="dm-keys">
+        <thead>
+          <tr><th scope="col" class="dm-sr-only">Shortcut</th><th scope="col" class="dm-sr-only">Action</th></tr>
+        </thead>
         <tr><td><kbd>⌘K</kbd> / <kbd>Ctrl+K</kbd></td><td>Command palette</td></tr>
         <tr><td><kbd>?</kbd></td><td>This help</td></tr>
         <tr><td><kbd>/</kbd></td><td>Focus filter</td></tr>

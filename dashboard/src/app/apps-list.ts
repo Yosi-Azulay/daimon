@@ -44,9 +44,7 @@ const TAGS_KEY = 'daimon.apps.tags';
           [class.f]="i === focusedIndex"
           [style.--dm-tone]="tone(a.workspaceLabel)"
           (click)="open.emit(a.name)"
-          (mouseenter)="focus.emit(i)"
-          role="button" tabindex="0"
-          (keydown.enter)="open.emit(a.name)">
+          (mouseenter)="focus.emit(i)">
           <div class="ac"></div>
           <div class="sp" [matTooltip]="sparkTooltip(a.name)" aria-hidden="true">
             <dm-sparkline [buckets]="spark(a.name)"></dm-sparkline>
@@ -65,7 +63,9 @@ const TAGS_KEY = 'daimon.apps.tags';
             }
           </div>
           <div class="n">
-            <dm-mono>{{ a.name }}</dm-mono>
+            <button type="button" class="dm-name-link" (click)="$event.stopPropagation(); open.emit(a.name)">
+              <dm-mono>{{ a.name }}</dm-mono>
+            </button>
             @if (fw(a); as f) {
               <dm-framework-badge [badge]="f.badge" [tone]="f.tone" [profileId]="f.id"></dm-framework-badge>
             }
@@ -134,10 +134,15 @@ const TAGS_KEY = 'daimon.apps.tags';
     .h{display:flex;align-items:center;justify-content:space-between;padding:.75rem .875rem 0}
     .n{padding:.375rem .875rem 0;font:500 var(--dm-text-lg)/var(--dm-line-loose) var(--dm-font);display:flex;align-items:center;gap:var(--dm-space-2);flex-wrap:wrap}
     .n .dm-mono{font-size:var(--dm-text-lg);font-weight:500}
+    /* The card itself is a plain (non-interactive-role) mouse-click target;
+       this is the real, keyboard-focusable "open" control nested-interactive
+       axe rule needs — a card that's ALSO role=button around real nested
+       buttons/links is a WCAG violation (M89). */
+    .dm-name-link{all:unset;cursor:pointer;border-radius:var(--dm-radius-xs)}
     .m{padding:.25rem .875rem .5rem;display:flex;flex-wrap:wrap;gap:.75rem;color:var(--mat-sys-on-surface-variant)}
     .mi{display:inline-flex;align-items:center;gap:.25rem;font-size:.8125rem}
     .mi .material-symbols-outlined{font-size:14px}
-    .ml{color:var(--mat-sys-primary);text-decoration:none}
+    .ml{color:var(--mat-sys-primary);text-decoration:underline;text-underline-offset:2px}
     .ml:hover{text-decoration:underline}
     .agr{padding:0 .875rem .5rem;display:flex;flex-wrap:wrap;align-items:center;gap:.25rem}
     .agc,.lkc{display:inline-flex;align-items:center;gap:.25rem;padding:1px 8px;border-radius:999px;font:500 .6875rem/1rem Roboto;background:var(--mat-sys-surface-container);color:var(--mat-sys-on-surface-variant);border:1px solid var(--mat-sys-outline-variant)}
@@ -154,7 +159,7 @@ const TAGS_KEY = 'daimon.apps.tags';
     .ib:hover:not(:disabled){background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface)}
     .ib:disabled{opacity:.55;cursor:not-allowed}
     .ib .material-symbols-outlined{font-size:18px}
-    .eb{display:inline-flex;align-items:center;gap:.25rem;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem var(--dm-mono);background:color-mix(in oklch,var(--mat-sys-error) 14%,transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent)}
+    .eb{display:inline-flex;align-items:center;gap:.25rem;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem var(--dm-mono);background:color-mix(in oklch,var(--mat-sys-error) var(--dm-badge-tint),transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent)}
     .eb .material-symbols-outlined{font-size:14px}
     .mb{display:inline-flex;align-items:center;padding:3px;border-radius:999px;background:color-mix(in oklch,var(--mat-sys-outline) 16%,transparent);color:var(--mat-sys-on-surface-variant)}
     .mb .material-symbols-outlined{font-size:14px}
@@ -230,15 +235,14 @@ export class AppsCardsViewComponent {
   template: `
     <div class="ls" role="table">
       <div class="rw rh" role="row">
-        <div>status</div><div>name</div><div>workspace</div><div>port</div>
-        <div>uptime</div><div>cpu</div><div>mem</div><div>err</div><div class="ar">actions</div>
+        <div role="columnheader">status</div><div role="columnheader">name</div><div role="columnheader">workspace</div><div role="columnheader">port</div>
+        <div role="columnheader">uptime</div><div role="columnheader">cpu</div><div role="columnheader">mem</div><div role="columnheader">err</div><div class="ar" role="columnheader">actions</div>
       </div>
       @for (a of items; track a.name; let i = $index) {
         <div class="rw" role="row"
           [class.f]="i === focusedIndex"
           [style.--dm-tone]="tone(a.workspaceLabel)"
-          (click)="open.emit(a.name)" (mouseenter)="focus.emit(i)"
-          tabindex="0" (keydown.enter)="open.emit(a.name)">
+          (click)="open.emit(a.name)" (mouseenter)="focus.emit(i)">
           <div class="stc">
             <dm-status-pill [status]="a.status" [health]="a.health"></dm-status-pill>
             @if (a.muted) {
@@ -247,7 +251,12 @@ export class AppsCardsViewComponent {
               </span>
             }
           </div>
-          <div class="nm"><span class="tn"></span><dm-mono>{{ a.name }}</dm-mono></div>
+          <div class="nm">
+            <span class="tn"></span>
+            <button type="button" class="dm-name-link" (click)="$event.stopPropagation(); open.emit(a.name)">
+              <dm-mono>{{ a.name }}</dm-mono>
+            </button>
+          </div>
           <div class="ws">{{ a.workspaceLabel || '—' }}</div>
           <div class="sm"><dm-mono>{{ a.port ?? '—' }}</dm-mono></div>
           <div class="sm"><dm-mono>{{ fmtUptime(a.uptimeMs) }}</dm-mono></div>
@@ -298,6 +307,7 @@ export class AppsCardsViewComponent {
     .mb .material-symbols-outlined{font-size:12px}
     .nm{display:flex;align-items:center;gap:.5rem;min-width:0;overflow:hidden}
     .nm .dm-mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .dm-name-link{all:unset;cursor:pointer;min-width:0;overflow:hidden;border-radius:var(--dm-radius-xs)}
     .tn{width:3px;height:18px;border-radius:2px;background:var(--dm-tone,var(--mat-sys-surface-container));flex-shrink:0}
     .ws{font-size:.8125rem;color:var(--mat-sys-on-surface-variant);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .sm{font-size:.8125rem}
@@ -307,7 +317,7 @@ export class AppsCardsViewComponent {
     .ib:hover:not(:disabled){background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface)}
     .ib:disabled{opacity:.55;cursor:not-allowed}
     .ib .material-symbols-outlined{font-size:16px}
-    .eb{display:inline-flex;align-items:center;padding:0 6px;border-radius:999px;font:600 .75rem/1rem var(--dm-mono);background:color-mix(in oklch,var(--mat-sys-error) 14%,transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent)}
+    .eb{display:inline-flex;align-items:center;padding:0 6px;border-radius:999px;font:600 .75rem/1rem var(--dm-mono);background:color-mix(in oklch,var(--mat-sys-error) var(--dm-badge-tint),transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent)}
     @media (max-width:1000px){.rw{grid-template-columns:100px minmax(120px,1fr) 70px 70px 60px 110px}.rw .ws,.rw .sm:nth-of-type(3),.rw .sm:nth-of-type(4){display:none}}
     @media (max-width:640px){.rw{grid-template-columns:auto minmax(0,1fr) auto;gap:.5rem}.rw .ws,.rw .sm,.rw>div:nth-child(8){display:none}}
   `],
@@ -518,7 +528,7 @@ export class AppsListViewComponent {
     .dm-toggle button.active,.dm-chip.active{background:var(--mat-sys-surface);color:var(--mat-sys-primary)}
     .dm-toggle button.active{box-shadow:var(--mat-sys-level1)}
     .dm-chip-count{font:500 .6875rem/1rem var(--dm-mono);padding:0 5px;border-radius:999px;background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface-variant)}
-    .dm-chip.active .dm-chip-count{background:color-mix(in oklch,var(--mat-sys-primary) 16%,transparent);color:var(--mat-sys-primary)}
+    .dm-chip.active .dm-chip-count{background:color-mix(in oklch,var(--mat-sys-primary) var(--dm-badge-tint),transparent);color:var(--mat-sys-primary)}
     .dm-filterbar{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
     .dm-search{position:relative;flex:1;min-width:220px;display:inline-flex;align-items:center;background:var(--mat-sys-surface-container);border:1px solid var(--mat-sys-outline-variant);border-radius:10px}
     .dm-search:focus-within{border-color:var(--mat-sys-primary)}

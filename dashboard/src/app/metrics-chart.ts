@@ -1,4 +1,4 @@
-import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, Input, OnDestroy, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, Input, OnDestroy, ViewChild, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { Chart, registerables, type ChartConfiguration } from 'chart.js';
@@ -7,13 +7,20 @@ Chart.register(...registerables);
 
 interface Sample { ts: number; cpu: number; memMB: number; }
 
+// Canvas can't consume CSS custom properties directly — read the resolved
+// (theme-aware, light-dark()-computed) token value at chart-build time.
+// Same pattern trends-page.ts already uses for its palette.
+function readToken(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 @Component({
   selector: 'dm-metrics-chart',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div style="position:relative;height:220px;">
-      <canvas #canvas></canvas>
+    <div style="position:relative;height:220px;" role="img" [attr.aria-label]="chartSummary()">
+      <canvas #canvas aria-hidden="true"></canvas>
     </div>
   `,
 })
@@ -24,16 +31,19 @@ export class MetricsChartComponent implements AfterViewInit, OnDestroy {
   private samples: Sample[] = [];
   private timer?: ReturnType<typeof setInterval>;
   private readonly http = inject(HttpClient);
+  readonly chartSummary = signal('CPU and memory usage over time: no samples yet');
 
   ngAfterViewInit(): void {
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const cpuColor = readToken('--dm-chart-1');
+    const memColor = readToken('--dm-chart-2');
     const config: ChartConfiguration<'line'> = {
       type: 'line',
       data: {
         labels: [],
         datasets: [
-          { label: 'CPU %', data: [], yAxisID: 'y1', borderColor: 'rgb(96, 165, 250)', backgroundColor: 'rgba(96, 165, 250, 0.12)', tension: 0.25, pointRadius: 0, fill: true },
-          { label: 'Mem MB', data: [], yAxisID: 'y2', borderColor: 'rgb(168, 85, 247)', backgroundColor: 'rgba(168, 85, 247, 0.10)', tension: 0.25, pointRadius: 0, fill: true },
+          { label: 'CPU %', data: [], yAxisID: 'y1', borderColor: cpuColor, backgroundColor: `color-mix(in oklch, ${cpuColor} 12%, transparent)`, tension: 0.25, pointRadius: 0, fill: true },
+          { label: 'Mem MB', data: [], yAxisID: 'y2', borderColor: memColor, backgroundColor: `color-mix(in oklch, ${memColor} 10%, transparent)`, tension: 0.25, pointRadius: 0, fill: true },
         ],
       },
       options: {
@@ -68,6 +78,8 @@ export class MetricsChartComponent implements AfterViewInit, OnDestroy {
       this.chart.data.datasets[0].data = this.samples.map(x => x.cpu);
       this.chart.data.datasets[1].data = this.samples.map(x => x.memMB);
       this.chart.update('none');
+      const last = this.samples[this.samples.length - 1];
+      this.chartSummary.set(`CPU and memory usage over time: latest ${last.cpu.toFixed(1)}% CPU, ${last.memMB.toFixed(0)} MB memory, over ${this.samples.length} samples`);
     } catch {}
   }
 }

@@ -227,7 +227,10 @@ test('EADDRINUSE forensics: non-daimon holder named with pid + advise-only remed
   const srv = http.createServer((_req, res) => { res.writeHead(404); res.end('nope'); });
   await new Promise(res => srv.listen(43470, '127.0.0.1', res));
   try {
-    const f = await inspectApiPort(43470, false);
+    // Contention-immune (M91): the forensics tests assert CLASSIFICATION, not
+    // speed — a generous probe ceiling stops a saturated host from turning a
+    // slow-but-correct response into a false timeout. Production stays 1.5s.
+    const f = await inspectApiPort(43470, false, { probeTimeoutMs: 15000 });
     assert.ok(f.holder, 'holder identified');
     assert.equal(f.holder.pid, process.pid, 'holder pid is the seeding process');
     assert.ok(!f.signature?.daimon, 'not a daimon');
@@ -256,7 +259,7 @@ test('EADDRINUSE forensics: daimon-signature holder gets the auto-fix remedy', a
     const sig = await probeDaimonSignature(43471);
     assert.equal(sig?.daimon, true);
     assert.equal(sig?.version, '9.9.9');
-    const f = await inspectApiPort(43471, false);
+    const f = await inspectApiPort(43471, false, { probeTimeoutMs: 15000 });
     assert.equal(f.signature?.daimon, true);
     const text = renderApiPortConflict(f).join('\n');
     assert.ok(text.includes('responds as a daimon'), text);

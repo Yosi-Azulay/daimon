@@ -166,6 +166,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 export class CommandPaletteComponent implements OnInit, OnDestroy {
   private readonly api = inject(DaimonApi);
   private readonly router = inject(Router);
+  private readonly host = inject(ElementRef);
   @ViewChild('input') input?: ElementRef<HTMLInputElement>;
 
   open = signal(false);
@@ -216,13 +217,22 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     window.addEventListener('daimon:cmdk', this.listener);
+    // Tell the app shell we can hear cmdk now — it replays a first-open
+    // request that arrived before this @defer-mounted component existed.
+    window.dispatchEvent(new CustomEvent('daimon:cmdk-ready'));
   }
   ngOnDestroy(): void {
     window.removeEventListener('daimon:cmdk', this.listener);
     if (this.searchTimer) clearTimeout(this.searchTimer);
   }
 
+  // Remembers whatever had focus before the palette opened (M89) so close()
+  // can restore it — usually the topbar's "Jump to…" button or Ctrl+K
+  // whatever else was focused, but never assumed to be a specific element.
+  private lastFocused: HTMLElement | null = null;
+
   openPalette(): void {
+    this.lastFocused = document.activeElement as HTMLElement | null;
     this.open.set(true);
     this.query = '';
     this.active.set(0);
@@ -233,6 +243,27 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   close(): void {
     this.open.set(false);
     if (this.searchTimer) { clearTimeout(this.searchTimer); this.searchTimer = undefined; }
+    this.lastFocused?.focus();
+    this.lastFocused = null;
+  }
+
+  // Minimal Tab focus trap (M89): keeps keyboard focus cycling within the
+  // dialog's focusable elements instead of escaping into the page behind it.
+  private onTab(e: KeyboardEvent, host: HTMLElement): void {
+    const focusable = Array.from(
+      host.querySelectorAll<HTMLElement>('input, button, [href], [tabindex]:not([tabindex="-1"])'),
+    ).filter(el => !el.hasAttribute('disabled'));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const current = document.activeElement as HTMLElement | null;
+    if (e.shiftKey && current === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && current === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   // Plain methods (not computed()) since `query` is a plain ngModel-bound
@@ -311,6 +342,11 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   onKey(e: KeyboardEvent): void {
     if (!this.open()) return;
     if (e.key === 'Escape') { e.preventDefault(); this.close(); return; }
+    if (e.key === 'Tab') {
+      const dialog = (this.host.nativeElement as HTMLElement).querySelector<HTMLElement>('.dm-palette');
+      if (dialog) this.onTab(e, dialog);
+      return;
+    }
     const count = this.isSearchMode() ? this.flatSearchHits().length : this.visible().length;
     if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) {
       e.preventDefault();

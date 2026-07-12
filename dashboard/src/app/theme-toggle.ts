@@ -55,4 +55,12 @@ export class ThemeToggleComponent implements OnInit {
     if (!this.open()) return;
     if (!(this.host.nativeElement as HTMLElement).contains(ev.target as Node)) this.open.set(false);
   }
+
+  // Escape closes the theme popover and returns focus to its trigger (M89).
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (!this.open()) return;
+    this.open.set(false);
+    (this.host.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.tt-btn')?.focus();
+  }
 }

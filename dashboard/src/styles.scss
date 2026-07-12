@@ -23,11 +23,21 @@ body {
 
 a { color: var(--dm-color-primary); }
 
+// M89 (axe link-in-text-block): a link that sits INSIDE running text must be
+// distinguishable without relying on color — the primary-blue link tone is
+// only ~2.7:1 against body text, invisible to color-blind users. Underline
+// every content-area anchor; navigation chrome (nav rail, topbar, tabs) sits
+// outside <main> and keeps its block/button presentation.
+main a { text-decoration: underline; text-underline-offset: 2px; }
+
 // Design tokens (motion/spacing/type/radii/color aliases) live in
 // src/styles/tokens.css (M70) — loaded ahead of this file via angular.json.
 
-// Fonts: load Roboto Mono for code-y content (ports, paths, logs).
-@import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap');
+// Fonts (M90/SECURITY.md): NO external font CDN — the dashboard must render
+// fully offline and make zero third-party requests (the old Google Fonts
+// import leaked a request to fonts.googleapis.com on every dashboard visit).
+// --dm-mono's stack falls back to the platform's UI monospace, which every
+// target OS ships.
 
 router-outlet + * {
   display: block;
@@ -112,6 +122,14 @@ mat-panel-description { justify-content: flex-end; flex: 1 0 0; padding-right: .
   outline: 2px solid var(--dm-color-primary);
   outline-offset: 2px;
   border-radius: var(--dm-radius-xs);
+}
+
+// Visually-hidden but AT-visible content (M89) — e.g. table headers whose
+// label would be redundant on screen but is needed for programmatic
+// row/column association.
+.dm-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
 // Tables → stacked cards on narrow viewports (M71). Applies to the shared

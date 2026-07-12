@@ -47,7 +47,7 @@ type MenuKey = 'ws' | 'profile' | null;
             @for (p of profiles(); track p) {
               <div class="dm-pop-row" role="menuitem">
                 <span class="dm-pop-label">{{ p }}</span>
-                <button class="dm-pop-go" type="button" (click)="runProfile(p)" title="ensure-up">
+                <button class="dm-pop-go" type="button" (click)="runProfile(p)" [attr.aria-label]="'Run profile ' + p + ' (ensure-up)'" title="ensure-up">
                   <span class="material-symbols-outlined">rocket_launch</span>
                 </button>
               </div>
@@ -60,7 +60,7 @@ type MenuKey = 'ws' | 'profile' | null;
         <span class="dm-scope" [title]="'Scope: ' + ws + (api.cwdHint() ? '  (cwd ' + api.cwdHint() + ')' : '')">
           <span class="material-symbols-outlined">filter_alt</span>
           <span>scope: <strong>{{ ws }}</strong></span>
-          <button type="button" class="dm-scope-x" (click)="setWorkspace(null)" title="Clear scope">×</button>
+          <button type="button" class="dm-scope-x" (click)="setWorkspace(null)" aria-label="Clear workspace scope" title="Clear scope">×</button>
         </span>
       }
 
@@ -78,6 +78,7 @@ type MenuKey = 'ws' | 'profile' | null;
       </button>
 
       <button class="dm-density" type="button" (click)="toggleDensity()"
+              aria-label="Toggle layout density"
               [title]="'Density: ' + density() + ' (click to toggle)'" [attr.aria-pressed]="density() === 'compact'">
         <span class="material-symbols-outlined">{{ density() === 'compact' ? 'density_small' : 'density_medium' }}</span>
       </button>
@@ -232,6 +233,17 @@ export class TopbarComponent implements OnInit, OnDestroy {
     if (!(this.host.nativeElement as HTMLElement).contains(t)) this.openMenu.set(null);
   }
 
+  // Escape closes the workspace/profile popover (M89) and returns focus to
+  // whichever .dm-chip trigger opened it, matching the command palette's
+  // existing Escape behavior.
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    const openIdx = this.openMenu() === 'ws' ? 0 : this.openMenu() === 'profile' ? 1 : -1;
+    if (openIdx === -1) return;
+    this.openMenu.set(null);
+    (this.host.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>('.dm-chip')[openIdx]?.focus();
+  }
+
   private async loadProfiles(): Promise<void> {
     try {
       const r = await fetch('/api/config');
@@ -254,6 +266,13 @@ export class TopbarComponent implements OnInit, OnDestroy {
     if (!host) {
       host = document.createElement('div');
       host.id = 'dm-toast-host';
+      // aria-live (M89): this custom toast host is the only status-message
+      // mechanism in the app that isn't Angular Material's MatSnackBar
+      // (which already announces via its own live region) — role="status" +
+      // aria-live="polite" makes profile-run outcomes audible to AT users.
+      host.setAttribute('role', 'status');
+      host.setAttribute('aria-live', 'polite');
+      host.setAttribute('aria-atomic', 'true');
       host.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none';
       document.body.appendChild(host);
     }

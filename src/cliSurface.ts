@@ -1,3 +1,5 @@
+import type { Stability } from './stability.js';
+
 export type CliGroup =
   | 'lifecycle'
   | 'queries'
@@ -20,6 +22,10 @@ export interface CliSubcommand {
   example: string;
   needsDaemon: boolean;
   group: CliGroup;
+  // Stability tier (M87): frozen verbs' JSON output shapes are additive-only
+  // forever and each has a golden-shape snapshot in test/fixtures/contract.
+  // See STABILITY.md.
+  stability: Stability;
   description: string;
   options?: CliOption[];
   examples?: string[];
@@ -74,6 +80,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
+    stability: 'frozen',
     aliases: ['ls'],
     exitCodes: stdExit,
   },
@@ -89,6 +96,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
+    stability: 'frozen',
     aliases: ['ps'],
     exitCodes: perAppExit,
   },
@@ -109,6 +117,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
+    stability: 'frozen',
     exitCodes: perAppExit,
   },
   {
@@ -124,6 +133,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
+    stability: 'frozen',
     exitCodes: stdExit,
   },
   {
@@ -138,6 +148,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'frozen',
     exitCodes: perAppExitWithTimeout,
   },
   {
@@ -152,6 +163,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: exitWithTimeout,
   },
   {
@@ -166,6 +178,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: exitWithTimeout,
   },
   {
@@ -181,6 +194,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -195,6 +209,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: exitWithTimeout,
   },
   {
@@ -209,6 +224,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: exitWithTimeout,
   },
   {
@@ -225,6 +241,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: exitWithTimeout,
   },
   {
@@ -239,6 +256,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'config',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -255,6 +273,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
+    stability: 'frozen',
     aliases: ['log'],
     exitCodes: perAppExit,
   },
@@ -270,6 +289,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'frozen',
     exitCodes: [...perAppExit, lockCode],
   },
   {
@@ -283,6 +303,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'frozen',
     exitCodes: [...perAppExit, lockCode],
   },
   {
@@ -296,6 +317,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'frozen',
     exitCodes: [...perAppExit, lockCode],
   },
   {
@@ -311,6 +333,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'stable',
     exitCodes: [...exitWithTimeout, collisionCode, lockCode],
   },
   {
@@ -324,6 +347,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: perAppExit,
   },
   {
@@ -340,6 +364,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -354,6 +379,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'queries',
+    stability: 'stable',
     exitCodes: perAppExit,
   },
   {
@@ -364,6 +390,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon agents',
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -374,6 +401,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon handoff web-admin claude-host-1234-abcd',
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -388,6 +416,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon profiles suggest --since 30d --min 5',
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -398,6 +427,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon up fullstack',
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -408,6 +438,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon down',
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -418,6 +449,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon history web-admin',
     needsDaemon: true,
     group: 'queries',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -431,6 +463,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'experimental',
     exitCodes: perAppExit,
   },
   {
@@ -441,6 +474,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon unmute web-admin',
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'experimental',
     exitCodes: perAppExit,
   },
   {
@@ -457,6 +491,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'introspection',
+    stability: 'experimental',
     exitCodes: stdExit,
   },
   {
@@ -472,6 +507,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'introspection',
+    stability: 'experimental',
     exitCodes: perAppExit,
   },
   {
@@ -482,6 +518,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon why web-admin',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: perAppExit,
   },
   {
@@ -492,6 +529,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon why-empty',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -502,6 +540,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon discover',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -512,7 +551,25 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon frameworks',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
+  },
+  {
+    name: 'config validate',
+    // Dispatches on the first token, same pattern as `profiles suggest`.
+    aliases: ['config'],
+    args: '[<path>]',
+    summary: 'Validate a daimon config against the known-key schema: unknown keys warn with the nearest valid name; malformed values listed. Exit 0 with warnings, 1 on errors.',
+    description: 'Validate daimon.config.json (or an explicit <path>) without starting anything. Unknown top-level keys warn with the nearest valid key name; malformed values report the same field-level warnings the daemon applies at load (falling back to defaults). Errors (missing file, invalid JSON) exit 1; warnings alone exit 0 — old configs always stay loadable.',
+    example: 'daimon config validate',
+    examples: ['daimon config validate', 'daimon config validate ./daimon.config.json'],
+    needsDaemon: false,
+    group: 'config',
+    stability: 'experimental',
+    exitCodes: [
+      { code: 0, meaning: 'config loads (possibly with warnings)' },
+      { code: 1, meaning: 'config unusable (missing file or invalid JSON)' },
+    ],
   },
   {
     name: 'export-config',
@@ -525,6 +582,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: false,
     group: 'config',
+    stability: 'frozen',
     exitCodes: stdExit,
   },
   {
@@ -535,6 +593,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon tasks web-admin',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -548,6 +607,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'stable',
     exitCodes: perAppExit,
   },
   {
@@ -558,6 +618,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon snapshot web-admin',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -572,6 +633,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'lifecycle',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -582,6 +644,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon record',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -595,6 +658,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -610,6 +674,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: false,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -620,6 +685,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon ports',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'experimental',
     exitCodes: stdExit,
   },
   {
@@ -633,6 +699,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: false,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -647,6 +714,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: false,
     group: 'lifecycle',
+    stability: 'frozen',
     exitCodes: stdExit,
   },
   {
@@ -657,6 +725,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon claude install --all',
     needsDaemon: false,
     group: 'claude',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -671,6 +740,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: false,
     group: 'config',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -681,6 +751,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon completion bash > /etc/bash_completion.d/daimon',
     needsDaemon: false,
     group: 'config',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -691,6 +762,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon plugin list',
     needsDaemon: true,
     group: 'plugin',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -701,6 +773,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon self',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -711,6 +784,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon workspaces list',
     needsDaemon: true,
     group: 'config',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -721,6 +795,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon dashboard',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
   {
@@ -736,6 +811,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     ],
     needsDaemon: true,
     group: 'agent',
+    stability: 'stable',
     exitCodes: exitWithTimeout,
   },
   {
@@ -746,6 +822,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     example: 'daimon timeline --since 24h --kinds status,error',
     needsDaemon: true,
     group: 'introspection',
+    stability: 'stable',
     exitCodes: stdExit,
   },
 ];

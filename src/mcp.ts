@@ -12,6 +12,40 @@ function headers(): Record<string, string> {
   return { 'x-daimon-agent': AGENT_ID, 'x-daimon-cwd': process.cwd() };
 }
 
+// MCP tool catalog with stability tiers (M87). One entry per registerTool()
+// call below — test/contract.test.mjs fails if the two drift, and every
+// `frozen` tool has a golden result-shape snapshot. build-docs renders this
+// list (name + tier) instead of a hand-maintained copy. See STABILITY.md.
+export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stability> = {
+  list_apps: 'frozen',
+  list_apps_full: 'frozen',
+  get_status: 'frozen',
+  get_status_full: 'frozen',
+  get_errors: 'frozen',
+  get_logs: 'frozen',
+  start_app: 'frozen',
+  stop_app: 'frozen',
+  restart_app: 'frozen',
+  wait_for_app: 'frozen',
+  overview: 'stable',
+  diff_errors: 'stable',
+  try_fix: 'stable',
+  focus: 'stable',
+  ensure: 'stable',
+  orchestrate: 'stable',
+  ensure_up: 'stable',
+  daimon_who_owns: 'stable',
+  daimon_subscribe_events: 'stable',
+  daimon_notify_on_error: 'stable',
+  daimon_frameworks: 'stable',
+  daimon_search: 'stable',
+  daimon_run_tests: 'stable',
+  daimon_why: 'stable',
+  daimon_context: 'stable',
+  daimon_report: 'experimental', // v0.13 (M83)
+  daimon_env: 'experimental', // v0.13 (M82)
+};
+
 function apiPort(): number {
   if (process.env.DAIMON_PORT) {
     const p = Number(process.env.DAIMON_PORT);
@@ -91,7 +125,7 @@ export function buildServer(): McpServer {
   const defaultCwd = process.cwd();
   const cwdField = z.string().optional().describe('Workspace cwd for name disambiguation; defaults to the MCP server cwd. Use an explicit value when invoking from a different workspace.');
 
-  server.registerTool('get_status', { description: 'Compact status: name, status, port, url, health, errCount, lastChangeMs, uptime. Use get_status_full for the verbose v0.4 shape.', inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
+  server.registerTool('get_status', { description: 'Compact status: name, status, port, url, health, errCount, lastChangeMs, uptimeMs. Use get_status_full for the verbose v0.4 shape.', inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
     const qs = new URLSearchParams({ format: 'compact', cwd: cwd ?? defaultCwd });
     const r = await callJson(`/api/apps/${encodeURIComponent(name)}?${qs.toString()}`);
     if (r.status === 0) return err(r.body?.error || 'unknown');

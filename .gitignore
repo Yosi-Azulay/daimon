@@ -10,3 +10,6 @@ vscode-extension/out/
 vscode-extension/*.vsix
 dashboard/playwright-report/
 dashboard/test-results/
+# NuGet restore artifacts that `daimon test`/`dotnet` runs drop into fixtures
+test/fixtures/**/obj/
+test/fixtures/**/bin/

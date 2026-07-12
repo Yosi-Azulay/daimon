@@ -1,0 +1,61 @@
+{
+  "surface": "daimon status",
+  "note": "Golden shape (key sets + types, never values). Regenerate with UPDATE_CONTRACT_SNAPSHOTS=1 and hand-review: keys may be ADDED, never removed or retyped.",
+  "cases": {
+    "compact": {
+      "_meta": {
+        "format": "string"
+      },
+      "errCount": "number",
+      "health": "string",
+      "lastChangeMs": "number",
+      "name": "string",
+      "port": "number",
+      "status": "string",
+      "uptimeMs": "number",
+      "url": "string"
+    },
+    "full": {
+      "_meta": {
+        "format": "string"
+      },
+      "activeEnvFile": "null",
+      "announcedUrl": "null",
+      "baseName": "string",
+      "bundle": "null",
+      "bundleRegressionPct": "null",
+      "compileHistoryMs": {
+        "$array": "unknown"
+      },
+      "cpu": "null",
+      "dependsOn": {
+        "$array": "unknown"
+      },
+      "errorCount": "number",
+      "health": "string",
+      "lastChangeMs": "number",
+      "lastCompileMs": "number",
+      "lastHealthAt": "number",
+      "lastHealthError": "null",
+      "lintCount": "number",
+      "memMB": "null",
+      "muteUntil": "null",
+      "muted": "boolean",
+      "name": "string",
+      "nextRestartAt": "null",
+      "port": "number",
+      "restartAttempts": "number",
+      "serverProfile": "null",
+      "stale": "boolean",
+      "status": "string",
+      "tags": {
+        "$array": "string"
+      },
+      "uptimeMs": "number",
+      "url": "string",
+      "warningCount": "number",
+      "workspaceLabel": "string",
+      "workspaceRoot": "string"
+    }
+  }
+}

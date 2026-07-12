@@ -29,6 +29,9 @@ function deepMerge(target: any, patch: any): any {
 function atomicWrite(p: string, contents: string): void {
   const tmp = p + '.' + process.pid + '.tmp';
   fs.writeFileSync(tmp, contents, 'utf8');
+  // .bak of the config the user had before this daemon-initiated rewrite
+  // (M88): config PATCHes are the one place daimon touches a user-owned file.
+  try { if (fs.existsSync(p)) fs.copyFileSync(p, p + '.bak'); } catch {}
   fs.renameSync(tmp, p);
 }
 

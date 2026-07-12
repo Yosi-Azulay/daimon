@@ -1,0 +1,16 @@
+{
+  "surface": "mcp list_apps",
+  "note": "Golden shape (key sets + types, never values). Regenerate with UPDATE_CONTRACT_SNAPSHOTS=1 and hand-review: keys may be ADDED, never removed or retyped.",
+  "cases": {
+    "default": {
+      "$array": {
+        "errCount": "number",
+        "health": "string",
+        "lastChangeMs": "null|number",
+        "name": "string",
+        "port": "null|number",
+        "status": "string"
+      }
+    }
+  }
+}

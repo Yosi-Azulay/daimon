@@ -1,0 +1,19 @@
+{
+  "surface": "mcp get_status",
+  "note": "Golden shape (key sets + types, never values). Regenerate with UPDATE_CONTRACT_SNAPSHOTS=1 and hand-review: keys may be ADDED, never removed or retyped.",
+  "cases": {
+    "default": {
+      "_meta": {
+        "format": "string"
+      },
+      "errCount": "number",
+      "health": "string",
+      "lastChangeMs": "number",
+      "name": "string",
+      "port": "number",
+      "status": "string",
+      "uptimeMs": "number",
+      "url": "string"
+    }
+  }
+}

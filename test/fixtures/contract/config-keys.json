@@ -1,0 +1,16 @@
+{
+  "surface": "config keys (src/config.ts CONFIG_KEY_STABILITY)",
+  "note": "Frozen config keys — may NEVER be removed or demoted. Additive keys go in CONFIG_KEY_STABILITY with their own tier.",
+  "cases": {
+    "frozen": [
+      "apiPort",
+      "autoStart",
+      "depends",
+      "overrides",
+      "portRange",
+      "profiles",
+      "searchRoots",
+      "tags"
+    ]
+  }
+}

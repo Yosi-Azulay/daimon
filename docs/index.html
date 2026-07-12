@@ -2,13 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v0.13.0 — docs</title>
+<title>daimon v0.14.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
-  :root { --fg: #0f172a; --muted: #475569; --accent: #2563eb; --code-bg: #f1f5f9; --hr: #e2e8f0; }
+  :root { --fg: #0f172a; --muted: #475569; --accent: #2563eb; --code-bg: #f1f5f9; --hr: #e2e8f0;
+          --tier-frozen-bg: #dbeafe; --tier-frozen-fg: #1e40af;
+          --tier-stable-bg: #dcfce7; --tier-stable-fg: #166534;
+          --tier-exp-bg: #fef3c7; --tier-exp-fg: #92400e; }
   @media (prefers-color-scheme: dark) {
-    :root { --fg: #e2e8f0; --muted: #94a3b8; --accent: #60a5fa; --code-bg: #1e293b; --hr: #334155; }
+    :root { --fg: #e2e8f0; --muted: #94a3b8; --accent: #60a5fa; --code-bg: #1e293b; --hr: #334155;
+            --tier-frozen-bg: #1e3a8a; --tier-frozen-fg: #bfdbfe;
+            --tier-stable-bg: #14532d; --tier-stable-fg: #bbf7d0;
+            --tier-exp-bg: #78350f; --tier-exp-fg: #fde68a; }
     body { background: #0f172a; }
   }
   html, body { color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; }
@@ -27,11 +33,21 @@
   hr { border: 0; border-top: 1px solid var(--hr); margin: 2rem 0; }
   a { color: var(--accent); }
   .badge { display: inline-block; background: var(--code-bg); padding: 2px 8px; border-radius: 10px; font-size: 0.8em; color: var(--muted); }
+  .tier { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 0.72em; font-weight: 600; vertical-align: 1px; letter-spacing: 0.02em; }
+  .tier-frozen { background: var(--tier-frozen-bg); color: var(--tier-frozen-fg); }
+  .tier-stable { background: var(--tier-stable-bg); color: var(--tier-stable-fg); }
+  .tier-experimental { background: var(--tier-exp-bg); color: var(--tier-exp-fg); }
+  table.coverage { border-collapse: collapse; width: 100%; font-size: 0.92em; }
+  table.coverage th, table.coverage td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--hr); vertical-align: top; }
+  .cov { white-space: nowrap; font-size: 0.85em; font-weight: 600; }
+  .cov-rule, .cov-auto-fix { color: var(--tier-stable-fg); }
+  .cov-built-in { color: var(--tier-frozen-fg); }
+  .cov-gap { color: var(--tier-exp-fg); }
 </style>
 </head>
 <body>
 
-<h1>daimon <span class="badge">v0.13.0</span></h1>
+<h1>daimon <span class="badge">v0.14.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -39,9 +55,13 @@
   <ul>
     <li><a href="#install">Install</a></li>
     <li><a href="#quickstart">Quickstart (3 min)</a></li>
+    <li><a href="#stability">Stability tiers</a></li>
     <li><a href="#cli">CLI reference</a></li>
+    <li><a href="#http">HTTP API reference</a></li>
     <li><a href="#mcp">MCP reference</a></li>
     <li><a href="#config">Config reference</a></li>
+    <li><a href="#events">Event kinds</a></li>
+    <li><a href="#doctor">Doctor coverage</a></li>
     <li><a href="#faq">FAQ</a></li>
   </ul>
 </nav>
@@ -59,182 +79,432 @@ npx daimon init --auto</code></pre>
   <li>Open the dashboard: <code>daimon dashboard</code>.</li>
 </ol>
 
+<h2 id="stability">Stability tiers</h2>
+<p>Every surface below carries a tier (full contract in <a href="https://github.com/Yosi-Azulay/daimon/blob/main/STABILITY.md">STABILITY.md</a>):</p>
+<ul>
+  <li><span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span> — the shape never breaks; changes are additive only. Guarded by golden-shape contract tests.</li>
+  <li><span class="tier tier-stable" title="stable — see STABILITY.md">stable</span> — breaks only with a major version bump and a migration note.</li>
+  <li><span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span> — may change in any release (the v0.13 surfaces: report, env, ports, notifications, digest).</li>
+</ul>
+<p>Config files are a special case: <em>any</em> config that ever loaded keeps loading, regardless of tier — unknown or legacy keys warn, never fail.</p>
+
 <h2 id="cli">CLI reference</h2>
 <h3>lifecycle</h3>
 <dl class="cli-grid">
-<dt><code>daimon start &lt;name&gt; [--with-deps] [--steal]</code></dt>
+<dt><code>daimon start &lt;name&gt; [--with-deps] [--steal]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Start an app. --steal overrides another agent's soft-lock.</dd>
-<dt><code>daimon stop &lt;name&gt; [--steal]</code></dt>
+<dt><code>daimon stop &lt;name&gt; [--steal]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Stop an app. --steal overrides another agent's soft-lock.</dd>
-<dt><code>daimon restart &lt;name&gt; [--steal]</code></dt>
+<dt><code>daimon restart &lt;name&gt; [--steal]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Restart an app. --steal overrides another agent's soft-lock.</dd>
-<dt><code>daimon test &lt;name&gt; [--timeout &lt;dur&gt;] [--steal] [--json]</code></dt>
+<dt><code>daimon test &lt;name&gt; [--timeout &lt;dur&gt;] [--steal] [--json]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Run the app's own test suite once: resolves the runner (vitest/jest/pytest/go/cargo/dotnet or overrides.&lt;app&gt;.testCommand), parses failures with file:line, records the run in history. Exit 0 all pass, 1 failures, 2 timeout.</dd>
-<dt><code>daimon up [&lt;profile&gt;]</code></dt>
+<dt><code>daimon up [&lt;profile&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Start a profile (or autoStart). Waits for each to reach serving.</dd>
-<dt><code>daimon down [&lt;profile&gt;]</code></dt>
+<dt><code>daimon down [&lt;profile&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Stop a profile (or all apps).</dd>
-<dt><code>daimon mute &lt;name&gt; [--for &lt;dur&gt;]</code></dt>
+<dt><code>daimon mute &lt;name&gt; [--for &lt;dur&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Mute OS notifications for an app (optionally for a duration). Persisted; shown in status and the dashboard.</dd>
-<dt><code>daimon unmute &lt;name&gt;</code></dt>
+<dt><code>daimon unmute &lt;name&gt;</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Lift a notification mute.</dd>
-<dt><code>daimon run &lt;name&gt; &lt;task&gt; [--watch] [-- args...]</code></dt>
+<dt><code>daimon run &lt;name&gt; &lt;task&gt; [--watch] [-- args...]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Run a discovered task.</dd>
-<dt><code>daimon clean &lt;name&gt; [--deep] [--yes]</code></dt>
+<dt><code>daimon clean &lt;name&gt; [--deep] [--yes]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Remove build artifacts for an app.</dd>
-<dt><code>daimon daemon start|stop|status|restart|attach|install-service [--detach] [--headless]</code></dt>
+<dt><code>daimon daemon start|stop|status|restart|attach|install-service [--detach] [--headless]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Manage the daimon daemon.</dd>
 </dl>
 <h3>queries</h3>
 <dl class="cli-grid">
-<dt><code>daimon list [--tag &lt;name&gt;] [--workspace &lt;label&gt;] [--full|--compact] [--stream] [--explain]</code></dt>
+<dt><code>daimon list [--tag &lt;name&gt;] [--workspace &lt;label&gt;] [--full|--compact] [--stream] [--explain]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>List apps. Compact by default; --full for v0.4 shape; --stream for NDJSON; --explain wraps with _meta (searchRoots, scanned, rejected, suggestion).</dd>
-<dt><code>daimon status &lt;name&gt; [--full|--compact]</code></dt>
+<dt><code>daimon status &lt;name&gt; [--full|--compact]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Get the current status of one app. Compact by default.</dd>
-<dt><code>daimon errors &lt;name&gt; [--since 2m] [--since-last] [--client &lt;id&gt;] [--structured] [--full|--compact] | --group</code></dt>
+<dt><code>daimon errors &lt;name&gt; [--since 2m] [--since-last] [--client &lt;id&gt;] [--structured] [--full|--compact] | --group</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}). --group (no name) groups all apps' errors by stack fingerprint.</dd>
-<dt><code>daimon events [--since 1h] [--app &lt;name&gt;] [--stream]</code></dt>
+<dt><code>daimon events [--since 1h] [--app &lt;name&gt;] [--stream]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Get the event log. --stream emits NDJSON until SIGINT.</dd>
-<dt><code>daimon logs &lt;name&gt; [--tail N] [--since 30s] [--grep &lt;regex&gt;] [--stream]</code></dt>
+<dt><code>daimon logs &lt;name&gt; [--tail N] [--since 30s] [--grep &lt;regex&gt;] [--stream]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Recent log lines for an app. --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON.</dd>
-<dt><code>daimon search &lt;query&gt; [--app &lt;a&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events] [--limit N]</code></dt>
+<dt><code>daimon search &lt;query&gt; [--app &lt;a&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Full-text search over everything daimon has seen: log lines, errors, and events. Compact JSON hits {kind,app,ts,snippet,ref}.</dd>
-<dt><code>daimon test-history &lt;name&gt; [--flaky] [--limit N]</code></dt>
+<dt><code>daimon test-history &lt;name&gt; [--flaky] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Recent test runs for an app (totals, exit codes, gitHead, failures). --flaky lists tests that flipped pass↔fail ≥3× at the same gitHead.</dd>
-<dt><code>daimon history &lt;name&gt;</code></dt>
+<dt><code>daimon history &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Summary metrics (uptime%, restarts, compile p50/p95, top errors).</dd>
 </dl>
 <h3>agent verbs</h3>
 <dl class="cli-grid">
-<dt><code>daimon wait &lt;name&gt; [--until serving|healthy|stopped|error] [--timeout 120s]</code></dt>
+<dt><code>daimon wait &lt;name&gt; [--until serving|healthy|stopped|error] [--timeout 120s]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Block until app reaches the given state.</dd>
-<dt><code>daimon ensure &lt;name&gt; [--until serving|healthy] [--timeout 180s]</code></dt>
+<dt><code>daimon ensure &lt;name&gt; [--until serving|healthy] [--timeout 180s]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>One-call: start if needed, block to target state, return terminal state. Idempotent.</dd>
-<dt><code>daimon ensure-up &lt;profile&gt; [--until serving|healthy] [--timeout 300s]</code></dt>
+<dt><code>daimon ensure-up &lt;profile&gt; [--until serving|healthy] [--timeout 300s]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>One-call: cascade-start every app in the profile and wait for each to reach target.</dd>
-<dt><code>daimon overview [--workspace &lt;label&gt;] [--profile &lt;name&gt;] [--budget &lt;tokens&gt;]</code></dt>
+<dt><code>daimon overview [--workspace &lt;label&gt;] [--profile &lt;name&gt;] [--budget &lt;tokens&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Decision-ready snapshot: totals, byStatus, needsAttention (with first parsed error), recentlyChanged. First call in a session. --budget caps the response size for agents; overflow collapses to _meta.omitted.</dd>
-<dt><code>daimon focus &lt;name&gt; [--until serving|healthy|stable] [--timeout 180s]</code></dt>
+<dt><code>daimon focus &lt;name&gt; [--until serving|healthy|stable] [--timeout 180s]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>One round-trip subscribe-then-act: streams NDJSON of status/error/url events for one app until target state or timeout. Designed for agents.</dd>
-<dt><code>daimon try-fix &lt;name&gt; [--until serving|healthy] [--timeout 180s]</code></dt>
+<dt><code>daimon try-fix &lt;name&gt; [--until serving|healthy] [--timeout 180s]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Composite: run doctor --auto-fix on permitted rules, restart the app, wait for target, return {before,after,fixed,stillFailing}. Never edits user source.</dd>
-<dt><code>daimon orchestrate &lt;profile&gt; [--goal serving|healthy|stable] [--timeout 300s] [--dry-run] [--budget &lt;tokens&gt;]</code></dt>
+<dt><code>daimon orchestrate &lt;profile&gt; [--goal serving|healthy|stable] [--timeout 300s] [--dry-run] [--budget &lt;tokens&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Bring up a whole profile in one call: cascade-start, wait for goal, run ONE try-fix round on stragglers. Returns {profile, goal, perApp, totalMs, allReached}. --dry-run reports planned order only. Designed for agents.</dd>
-<dt><code>daimon context &lt;name&gt; [--budget &lt;chars&gt;]</code></dt>
+<dt><code>daimon context &lt;name&gt; [--budget &lt;chars&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Agent context pack: status/framework/uptime, top error groups, last crash, last test run, compile stats, suspect commits, locks — one call instead of six.</dd>
-<dt><code>daimon agents </code></dt>
+<dt><code>daimon agents </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>List active agents touching this daemon and any current per-app soft-locks.</dd>
-<dt><code>daimon handoff &lt;app&gt; &lt;agentId&gt;</code></dt>
+<dt><code>daimon handoff &lt;app&gt; &lt;agentId&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Transfer the soft-lock on &lt;app&gt; to another agent.</dd>
-<dt><code>daimon profiles suggest [--since 30d] [--min 5]</code></dt>
+<dt><code>daimon profiles suggest [--since 30d] [--min 5]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Suggest profile candidates from recurring co-starts.</dd>
-<dt><code>daimon ci start &lt;profile&gt; [--until ready|healthy] [--timeout 5m] [--json]</code></dt>
+<dt><code>daimon ci start &lt;profile&gt; [--until ready|healthy] [--timeout 5m] [--json]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>CI helper: start a profile and block until all apps are healthy. Designed for GitHub Actions / Jenkins steps.</dd>
 </dl>
 <h3>introspection</h3>
 <dl class="cli-grid">
-<dt><code>daimon report [--since 24h|7d] [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--md]</code></dt>
+<dt><code>daimon report [--since 24h|7d] [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--md]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>The digest: per-app uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agent activity, env changes.</dd>
-<dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;] | diff &lt;name&gt; [--from &lt;ts&gt;] [--to &lt;ts&gt;]</code></dt>
+<dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;] | diff &lt;name&gt; [--from &lt;ts&gt;] [--to &lt;ts&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Env-file awareness: convention files (found/missing), key names, snapshot age; `env diff` shows files/keys added/removed/changed between spawns. --use sets the active env file (pre-v0.13 behavior). Values are NEVER shown.</dd>
-<dt><code>daimon why &lt;name&gt;</code></dt>
+<dt><code>daimon why &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>One-shot forensics: status, last crash (exit code + final log lines), grouped 24h errors, regressions, restart-storm state, suspect commit, matching doctor findings.</dd>
-<dt><code>daimon why-empty </code></dt>
+<dt><code>daimon why-empty </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Explain why `daimon list` is empty: configured searchRoots, scanned/rejected counts, suggested next step.</dd>
-<dt><code>daimon discover </code></dt>
+<dt><code>daimon discover </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Run discovery read-only. Prints _meta: searchRoots, scanned, rejected per folder, suggestion.</dd>
-<dt><code>daimon frameworks </code></dt>
+<dt><code>daimon frameworks </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>List framework profiles (built-in + custom): detection markers, command, which apps matched, rejection stats.</dd>
-<dt><code>daimon tasks &lt;name&gt;</code></dt>
+<dt><code>daimon tasks &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>List discovered non-serve tasks.</dd>
-<dt><code>daimon snapshot &lt;name&gt;</code></dt>
+<dt><code>daimon snapshot &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Write a snapshot of app state to ~/.daimon/snapshots.</dd>
-<dt><code>daimon record </code></dt>
+<dt><code>daimon record </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Toggle session recording.</dd>
-<dt><code>daimon replay &lt;session.jsonl&gt; [--speed N]</code></dt>
+<dt><code>daimon replay &lt;session.jsonl&gt; [--speed N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Replay a recorded session.</dd>
-<dt><code>daimon doctor [--auto-fix] [--dry-run] [--self]</code></dt>
+<dt><code>daimon doctor [--auto-fix] [--dry-run] [--self]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Sanity-check config + env. --auto-fix repairs orphan daemon, stale lock, missing search root, corrupt history db. --self checks daimon's own metrics.</dd>
-<dt><code>daimon ports </code></dt>
+<dt><code>daimon ports </code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Port map: app → port → source (pinned|pool|announced) → pid, plus foreign holders of pool/pinned ports.</dd>
-<dt><code>daimon free-port &lt;port&gt; [--force]</code></dt>
+<dt><code>daimon free-port &lt;port&gt; [--force]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Diagnose / free a port.</dd>
-<dt><code>daimon self </code></dt>
+<dt><code>daimon self </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Print daimon's own runtime metrics (pid, version, uptime, rss, heap, event-loop lag, history-db p95).</dd>
-<dt><code>daimon dashboard </code></dt>
+<dt><code>daimon dashboard </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Open the dashboard in your default browser, scoped to the current cwd.</dd>
-<dt><code>daimon timeline [--since 7d] [--app &lt;name&gt;] [--kinds status,error,warning,lint,bundle,task]</code></dt>
+<dt><code>daimon timeline [--since 7d] [--app &lt;name&gt;] [--kinds status,error,warning,lint,bundle,task]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Print a unified chronological event timeline.</dd>
 </dl>
 <h3>config</h3>
 <dl class="cli-grid">
-<dt><code>daimon pin-health &lt;name&gt; [--accept] [--path &lt;p&gt;]</code></dt>
+<dt><code>daimon pin-health &lt;name&gt; [--accept] [--path &lt;p&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Show the auto-discovered health-probe path for an app; --accept persists it as overrides.&lt;name&gt;.healthProbePath in daimon.config.json and soft-reloads. Default behaviour is opt-in: nothing is written without --accept.</dd>
-<dt><code>daimon export-config [--redacted]</code></dt>
+<dt><code>daimon config validate [&lt;path&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Validate a daimon config against the known-key schema: unknown keys warn with the nearest valid name; malformed values listed. Exit 0 with warnings, 1 on errors.</dd>
+<dt><code>daimon export-config [--redacted]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Emit the active config to stdout. --redacted replaces apiToken with "&lt;redacted&gt;" and rewrites home paths to ~/...</dd>
-<dt><code>daimon init [--force] [--auto]</code></dt>
+<dt><code>daimon init [--force] [--auto]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Create a daimon config in cwd; --auto picks safe defaults (no prompts) for workspaces with nx/angular/vite markers.</dd>
-<dt><code>daimon completion &lt;bash|zsh|fish|powershell&gt;</code></dt>
+<dt><code>daimon completion &lt;bash|zsh|fish|powershell&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Emit a shell completion script for the given shell.</dd>
-<dt><code>daimon workspaces list|add [path] [--label &lt;name&gt;] | rm &lt;path&gt; | show [path]</code></dt>
+<dt><code>daimon workspaces list|add [path] [--label &lt;name&gt;] | rm &lt;path&gt; | show [path]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Manage the workspace registry (searchRoots).</dd>
 </dl>
 <h3>claude</h3>
 <dl class="cli-grid">
-<dt><code>daimon claude install|update|uninstall|status [--skill] [--commands] [--agent] [--all] [--dir &lt;path&gt;] [--yes]</code></dt>
+<dt><code>daimon claude install|update|uninstall|status [--skill] [--commands] [--agent] [--all] [--dir &lt;path&gt;] [--yes]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Install/update Claude Code integration artifacts.</dd>
 </dl>
 <h3>plugin</h3>
 <dl class="cli-grid">
-<dt><code>daimon plugin list|show &lt;name&gt;|validate &lt;path&gt;</code></dt>
+<dt><code>daimon plugin list|show &lt;name&gt;|validate &lt;path&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Manage doctor plug-ins.</dd>
+</dl>
+
+<h2 id="http">HTTP API reference</h2>
+<p>Loopback only — the daemon binds <code>127.0.0.1:&lt;apiPort&gt;</code> (default 4999) and rejects cross-origin mutation. <code>:name</code> takes an app name (add <code>?cwd=</code> to disambiguate across workspaces).</p>
+<dl class="cli-grid">
+<dt><code>GET /api/apps</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>List apps (?format=compact|full, ?stream=ndjson, ?explain=1, ?cwd=, ?tag=, ?workspace=).</dd>
+<dt><code>GET /api/apps/:name</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>One app status (?format=compact|full).</dd>
+<dt><code>GET /api/apps/:name/errors</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Deduplicated errors (?since=, ?level=, ?format=).</dd>
+<dt><code>GET /api/apps/:name/errors/since-last</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Errors since the previous call for ?client= cursor.</dd>
+<dt><code>GET /api/apps/:name/logs</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Recent log lines (?tail=, ?since=, ?grep=).</dd>
+<dt><code>GET /api/apps/:name/logs/stream</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Live log tail (SSE; ?grep= filters server-side).</dd>
+<dt><code>POST /api/apps/:name/start</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Start an app (?withDeps=1, ?steal=1). Soft-lock gated.</dd>
+<dt><code>POST /api/apps/:name/stop</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Stop an app (?steal=1). Soft-lock gated.</dd>
+<dt><code>POST /api/apps/:name/restart</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Restart an app (?steal=1). Soft-lock gated.</dd>
+<dt><code>GET /api/apps/:name/wait</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Block until target state (?until=, ?timeout=&lt;s&gt;|?timeoutMs=).</dd>
+<dt><code>GET /api/events</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Event log (?since=, ?app=, ?stream=ndjson, ?waitMs= long-poll).</dd>
+<dt><code>GET /api/config</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Active config (redacted) + etag.</dd>
+<dt><code>GET /api/signature</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Daimon identification: { daimon, version, pid, startedAt }. Frozen despite its v0.13 birth: cross-version port forensics and the v0.14 CLI/daemon skew check both depend on every future daimon answering this exact shape.</dd>
+<dt><code>POST /api/shutdown</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Graceful daemon shutdown.</dd>
+<dt><code>PATCH /api/config</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Config patch with If-Match etag gating.</dd>
+<dt><code>POST /api/config/reload</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Re-read config from disk.</dd>
+<dt><code>GET /api/overview</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Decision-ready snapshot (?workspace=, ?profile=, ?budget=).</dd>
+<dt><code>POST /api/apps/:name/ensure</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Idempotent start+wait (?until=, ?timeoutMs=).</dd>
+<dt><code>POST /api/apps/:name/focus</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Subscribe-then-act NDJSON stream (?until=, ?timeoutMs=).</dd>
+<dt><code>POST /api/apps/:name/try-fix</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Auto-fix + restart + wait composite.</dd>
+<dt><code>POST /api/apps/:name/test</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Run the app's own test suite once (?timeoutMs=, ?steal=1).</dd>
+<dt><code>GET /api/apps/:name/lock</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Soft-lock holder + recent agent interactions.</dd>
+<dt><code>POST /api/apps/:name/handoff</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Transfer the soft-lock ({ to }).</dd>
+<dt><code>POST /api/apps/:name/start-with-deps</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Start with declared deps (alias of /start?withDeps=1).</dd>
+<dt><code>GET /api/apps/:name/tasks</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Discovered non-serve tasks.</dd>
+<dt><code>POST /api/apps/:name/run/:task</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Run a discovered task ({ args, watch }).</dd>
+<dt><code>POST /api/apps/:name/run-stop/:task</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Stop a watch task.</dd>
+<dt><code>GET /api/apps/:name/env</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Legacy env-file activation state ({ candidates, active }).</dd>
+<dt><code>POST /api/apps/:name/env</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Activate an env file for injection ({ use }).</dd>
+<dt><code>GET /api/apps/:name/requests</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Request-log rows when requestLog is enabled.</dd>
+<dt><code>POST /api/apps/:name/clean</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Remove build artifacts (?deep=1, ?yes=1).</dd>
+<dt><code>POST /api/apps/:name/snapshot</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Diagnostic snapshot (?write=1 persists).</dd>
+<dt><code>POST /api/apps/:name/health/pin</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Persist a health-probe path override ({ path }).</dd>
+<dt><code>POST /api/profiles/:profile/ensure-up</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Cascade-start a profile and wait (?until=, ?timeoutMs=).</dd>
+<dt><code>GET /api/profiles/suggest</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Suggest profiles from recurring co-starts.</dd>
+<dt><code>POST /api/orchestrate</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Whole-profile bring-up with one try-fix round (?profile=, ?goal=).</dd>
+<dt><code>GET /api/errors</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>All apps' errors (?group=fingerprint, ?level=).</dd>
+<dt><code>GET /api/context/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Agent context pack (?budget= drops sections).</dd>
+<dt><code>GET /api/search</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=).</dd>
+<dt><code>GET /api/why/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>One-shot crash forensics composition.</dd>
+<dt><code>GET /api/tests</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Recorded test runs (?app=, ?since=, ?limit=).</dd>
+<dt><code>GET /api/tests/flaky</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Flaky tests derived from run history (?app=).</dd>
+<dt><code>POST /api/doctor/auto-fix</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Run permitted auto-fix rules ({ permitted, dryRun }).</dd>
+<dt><code>GET /api/history/events</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Persisted events (?app=, ?since=, ?until=, ?type=, ?limit=).</dd>
+<dt><code>GET /api/history/compile-times</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Compile durations.</dd>
+<dt><code>GET /api/history/tasks</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Task runs.</dd>
+<dt><code>GET /api/history/timeline</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Unified chronological timeline (?kinds=).</dd>
+<dt><code>GET /api/history/bundles</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Bundle-size rows.</dd>
+<dt><code>GET /api/history/trends</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Bucketed trends (?metric=|?metrics=, ?since=24h|7d|30d).</dd>
+<dt><code>GET /api/history/summary/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Summary metrics for one app.</dd>
+<dt><code>GET /api/history/why/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>History-derived why summary (predates /api/why).</dd>
+<dt><code>GET /api/workspaces</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Registered searchRoots with app counts.</dd>
+<dt><code>GET /api/workspaces/resolve</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Which workspace covers ?cwd=.</dd>
+<dt><code>POST /api/workspaces/ensure</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Register a path as a searchRoot ({ path, label }).</dd>
+<dt><code>POST /api/workspaces/remove</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Remove a searchRoot ({ path }).</dd>
+<dt><code>GET /api/discovery/explain</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Read-only discovery pass with per-folder stats.</dd>
+<dt><code>GET /api/frameworks</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Framework adapter registry + match counts.</dd>
+<dt><code>GET /api/agents</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Active agents + per-app soft-locks.</dd>
+<dt><code>GET /api/self</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Daemon self-metrics snapshot.</dd>
+<dt><code>GET /api/self/history</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Persisted self-metrics rows.</dd>
+<dt><code>GET /api/presets</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Built-in config presets.</dd>
+<dt><code>GET /api/plugins</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Installed doctor plug-ins.</dd>
+<dt><code>POST /api/plugins/scan</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Run plug-in scans now.</dd>
+<dt><code>POST /api/session/record</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Toggle session recording (?action=start|stop|toggle).</dd>
+<dt><code>GET /api/session/status</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Session recording state.</dd>
+<dt><code>POST /api/snapshot-state</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Write the daemon-handoff state file.</dd>
+<dt><code>GET /metrics</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Prometheus text export (when metrics.enabled).</dd>
+<dt><code>GET /api/report</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>The digest (?since=, ?app=, ?workspace=, ?md=1).</dd>
+<dt><code>GET /api/env/:name</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Redacted env awareness (names only, never values).</dd>
+<dt><code>GET /api/env/:name/diff</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Env snapshot diff (?from=, ?to=).</dd>
+<dt><code>GET /api/ports</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Port map + foreign holders.</dd>
+<dt><code>POST /api/apps/:name/mute</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Mute OS notifications ({ forMs }).</dd>
+<dt><code>POST /api/apps/:name/unmute</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Lift a notification mute.</dd>
 </dl>
 
 <h2 id="mcp">MCP reference</h2>
 <p>Daimon's MCP server is installed via <code>daimon claude install --all</code>. It exposes the verbs below over stdio so Claude Code can call them.</p>
 <dl class="cli-grid">
-<dt><code>list_apps</code></dt><dd>Compact list of apps (name/status/port/health/errCount/lastChangeMs).</dd>
-<dt><code>list_apps_full</code></dt><dd>Verbose v0.4-shape list.</dd>
-<dt><code>get_status</code></dt><dd>Compact status for one app.</dd>
-<dt><code>get_status_full</code></dt><dd>Verbose status for one app.</dd>
-<dt><code>get_errors</code></dt><dd>Errors for an app — supports --since, --since-last, --level.</dd>
-<dt><code>get_logs</code></dt><dd>Recent log lines for an app.</dd>
-<dt><code>start_app / stop_app / restart_app</code></dt><dd>Lifecycle verbs with cwd-scoped name resolution.</dd>
-<dt><code>overview</code></dt><dd>Decision-ready snapshot for first-call agent sessions.</dd>
-<dt><code>diff_errors</code></dt><dd>Errors since last call (per-client cursor).</dd>
-<dt><code>try_fix</code></dt><dd>Run permitted auto-fixes, restart, wait for target.</dd>
-<dt><code>focus</code></dt><dd>Subscribe-then-act stream of status/error events.</dd>
-<dt><code>ensure</code></dt><dd>One-call lifecycle: start if needed, wait for target.</dd>
-<dt><code>orchestrate</code></dt><dd>Bring up a whole profile; one round of try-fix on stragglers.</dd>
-<dt><code>ensure_up</code></dt><dd>Cascade-start a profile, wait until each app is healthy.</dd>
-<dt><code>wait_for_app</code></dt><dd>Block until app reaches a target state.</dd>
-<dt><code>daimon_who_owns</code></dt><dd>Lock holder + last 3 agent interactions for an app.</dd>
-<dt><code>daimon_subscribe_events</code></dt><dd>Long-poll new events filtered by kind.</dd>
-<dt><code>daimon_notify_on_error</code></dt><dd>Block until next error-new event (or timeout).</dd>
-<dt><code>daimon_frameworks</code></dt><dd>List the framework adapter registry: built-in + custom profiles, match counts, badges.</dd>
-<dt><code>daimon_context</code></dt><dd>The agent context pack: status, error groups, last crash, last test run, compile stats, suspect commits, locks — one call. Budgetable.</dd>
-<dt><code>daimon_run_tests</code></dt><dd>Run the app's own test suite once; parsed failures with file:line + totals. Soft-lock gated.</dd>
-<dt><code>daimon_why</code></dt><dd>Crash forensics: last crash report, grouped errors, regressions, restart-storm state, suspect commit, doctor findings.</dd>
-<dt><code>daimon_search</code></dt><dd>Full-text search over log lines, errors, and events (FTS5 with LIKE fallback).</dd>
-<dt><code>daimon_report</code></dt><dd>The digest: uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agents, env changes.</dd>
-<dt><code>daimon_env</code></dt><dd>Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.</dd>
+<dt><code>list_apps</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Compact list of apps (name/status/port/health/errCount/lastChangeMs).</dd>
+<dt><code>list_apps_full</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Verbose v0.4-shape list.</dd>
+<dt><code>get_status</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Compact status for one app.</dd>
+<dt><code>get_status_full</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Verbose status for one app.</dd>
+<dt><code>get_errors</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Errors for an app — supports --since, --since-last, --level.</dd>
+<dt><code>get_logs</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Recent log lines for an app.</dd>
+<dt><code>start_app</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Start an app (cwd-scoped name resolution, soft-lock gated).</dd>
+<dt><code>stop_app</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Stop an app (soft-lock gated).</dd>
+<dt><code>restart_app</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Restart an app (soft-lock gated).</dd>
+<dt><code>wait_for_app</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd>Block until app reaches a target state.</dd>
+<dt><code>overview</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Decision-ready snapshot for first-call agent sessions.</dd>
+<dt><code>diff_errors</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Errors since last call (per-client cursor).</dd>
+<dt><code>try_fix</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Run permitted auto-fixes, restart, wait for target.</dd>
+<dt><code>focus</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Subscribe-then-act stream of status/error events.</dd>
+<dt><code>ensure</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>One-call lifecycle: start if needed, wait for target.</dd>
+<dt><code>orchestrate</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Bring up a whole profile; one round of try-fix on stragglers.</dd>
+<dt><code>ensure_up</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Cascade-start a profile, wait until each app is healthy.</dd>
+<dt><code>daimon_who_owns</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Lock holder + last 3 agent interactions for an app.</dd>
+<dt><code>daimon_subscribe_events</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Long-poll new events filtered by kind.</dd>
+<dt><code>daimon_notify_on_error</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Block until next error-new event (or timeout).</dd>
+<dt><code>daimon_frameworks</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>List the framework adapter registry: built-in + custom profiles, match counts, badges.</dd>
+<dt><code>daimon_search</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Full-text search over log lines, errors, and events (FTS5 with LIKE fallback).</dd>
+<dt><code>daimon_run_tests</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Run the app's own test suite once; parsed failures with file:line + totals. Soft-lock gated.</dd>
+<dt><code>daimon_why</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>Crash forensics: last crash report, grouped errors, regressions, restart-storm state, suspect commit, doctor findings.</dd>
+<dt><code>daimon_context</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd>The agent context pack: status, error groups, last crash, last test run, compile stats, suspect commits, locks — one call. Budgetable.</dd>
+<dt><code>daimon_report</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>The digest: uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agents, env changes.</dd>
+<dt><code>daimon_env</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.</dd>
 </dl>
 
 <h2 id="config">Config reference</h2>
-<p>The full annotated schema lives in <code>daimon.config.example.json</code>. Highlights:</p>
+<p>The full annotated schema lives in <code>daimon.config.example.json</code>. Validate yours with <code>daimon doctor</code>. All keys with tiers:</p>
+<dl class="cli-grid">
+<dt><code>searchRoots</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>portRange</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>apiPort</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>overrides</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>autoStart</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>profiles</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>tags</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>depends</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>autoRestart</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>healthProbe</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>logs</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>cascadeRestart</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>history</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>notifications</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>staleDetect</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>headless</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>envFiles</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>requestLog</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>metrics</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>editor</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>apiToken</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>output</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>doctor</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>dashboard</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>errorRetention</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>plugins</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>webhooks</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>frameworks</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>tests</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>restartStorm</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>search</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>ports</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+</dl>
+<p>Experimental sub-keys inside stable parents: <code>notifications.kinds</code> / <code>notifications.quietHours</code> / <code>notifications.batchMs</code> and <code>webhooks[].digest</code> (v0.13).</p>
+<p>Highlights:</p>
 <ul>
   <li><code>searchRoots</code> — array of paths (or <code>{path, label}</code>) to scan for projects.</li>
   <li><code>autoStart</code> — apps to start when the daemon launches.</li>
   <li><code>profiles</code> — named sets of apps for <code>daimon up &lt;profile&gt;</code> / <code>daimon ci start &lt;profile&gt;</code>.</li>
   <li><code>healthProbe</code> — toggle and shape the per-app health probe.</li>
-  <li><code>webhooks</code> — outbound notifications: <code>[{url, events?, headers?, filter?, apps?}]</code> with Slack/Discord shaping; <code>apps</code> scopes an entry to specific apps (v0.11).</li>
+  <li><code>webhooks</code> — outbound notifications: <code>[{url, events?, headers?, filter?, apps?, digest?}]</code> with Slack/Discord shaping; <code>apps</code> scopes an entry to specific apps (v0.11); <code>digest: "HH:MM"</code> sends the daily report (v0.13).</li>
   <li><code>frameworks</code> — custom framework profiles (v0.11): data-only rows <code>[{id, detect, command, readiness?, url?, errorParser?}]</code> checked after the built-in registry. Detection markers and regex strings only — never loaded code.</li>
   <li><code>overrides.&lt;app&gt;</code> — per-app port / command / env / webhooks / <code>testCommand</code> (v0.12: explicit test runner, always wins) / <code>logIndex</code> (v0.12: opt this app's log lines out of search indexing), plus tuning knobs like <code>compileRegressionFactor</code>.</li>
   <li><code>history</code> — SQLite retention controls (also prunes v0.12 test runs, crash reports, and the search index).</li>
   <li><code>tests</code> — <code>{ flakyThreshold: 3 }</code> (v0.12): pass↔fail flips at the same git head before a test is flagged flaky.</li>
   <li><code>restartStorm</code> — <code>{ perHour: 20 }</code> (v0.12): unrequested exits per hour before a single <code>restart-storm</code> event fires.</li>
   <li><code>search</code> — <code>{ logIndex: true }</code> (v0.12): global default for per-app log-line indexing; errors/events are always indexed.</li>
+  <li><code>ports</code> — <code>{ pool: "4200-4299" }</code> (v0.13): opt-in auto-assignment; only frameworks whose registry row documents <code>portFlag</code>/<code>portEnv</code> participate.</li>
 </ul>
+
+<h2 id="events">Event kinds</h2>
+<p>Kinds emitted on the event log (<code>daimon events</code>, <code>GET /api/events</code>, webhooks, <code>daimon_subscribe_events</code>):</p>
+<dl class="cli-grid">
+<dt><code>status</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>error-new</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>error-recur</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>health</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt><dd></dd>
+<dt><code>crash</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>warning-new</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>warning-recur</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>lint-new</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>lint-recur</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>restart-scheduled</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>stale</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>bundle-regression</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>compile-regression</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>regression-detected</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>task-run</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>test-run</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>test-failed</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>flaky-test-detected</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>restart-storm</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>self-warn</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
+<dt><code>digest-sent</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+</dl>
+
+<h2 id="doctor">Doctor coverage</h2>
+<p>When something breaks, <code>daimon doctor</code> is the first stop (<code>--auto-fix</code> applies the permitted repairs). Every recurring failure class and what covers it:</p>
+<table class="coverage"><thead><tr><th>Failure class</th><th>Covered by</th><th>How</th></tr></thead><tbody>
+<tr><td>Orphan daimon holding the api port (no daemon.lock)</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>port-holder-no-lock</code> — kills only a holder that answers GET /api/signature as a daimon AND has no live lock, re-verified at fix time (M81 verify-then-kill). Plus EADDRINUSE startup forensics naming the holder + remedy.</td></tr>
+<tr><td>Stale daemon.lock after an unclean exit</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>stale-lock</code>; startup also self-clears any lock whose pid is dead (M88 recovery step 2).</td></tr>
+<tr><td>Corrupt history.db</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>corrupt-history-db</code>; startup independently archives a corrupt db as history.db.corrupt-&lt;ts&gt; and rebuilds, with a self-warn event.</td></tr>
+<tr><td>Corrupt state.json (ports/mutes/digests)</td><td><span class="cov cov-built-in">built-in</span></td><td>Recovered from state.json.bak; if both are unreadable, archived as state.json.corrupt-&lt;ts&gt; + fresh start + self-warn (M88). Repaired before doctor could even run.</td></tr>
+<tr><td>Missing or deleted searchRoot</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>searchRoot exists</code> check; <code>missing-search-root</code> / <code>dead-search-root</code> auto-fixes.</td></tr>
+<tr><td>Workspace not detected as an app</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>searchRoot has marker</code> (checks the full framework registry); <code>daimon frameworks</code> shows per-profile rejection stats; <code>daimon why-empty</code> explains an empty list.</td></tr>
+<tr><td>Invalid custom framework profile (config data row)</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>config-valid</code> — invalid rows are skipped with a field-level warning at load; doctor surfaces the warnings.</td></tr>
+<tr><td>Typo’d or unknown config key</td><td><span class="cov cov-rule">doctor rule</span></td><td>Load-time warning with the nearest valid name (never a failure — old configs stay loadable); <code>daimon config validate</code> reports the same offline; <code>config-valid</code> doctor check surfaces it (M91).</td></tr>
+<tr><td>Pinned-port collision between apps</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>port pin &lt;n&gt;</code> collision check; predicted pool conflicts via <code>port-conflict-pred</code> (M81).</td></tr>
+<tr><td>Restart storm / crash loop</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>restart-storm: &lt;app&gt;</code> (threshold via restartStorm.perHour) + <code>smart-restart-tune</code>; crash reports ring-buffer 10/app and surface in <code>daimon why</code>.</td></tr>
+<tr><td>Flaky tests</td><td><span class="cov cov-gap">by design: no rule</span></td><td>No doctor rule by design: flakiness is derived from run history at each git head, not from config or daemon state — <code>daimon test-history &lt;app&gt; --flaky</code> is the surface.</td></tr>
+<tr><td>Full-text search degraded (FTS5 unavailable)</td><td><span class="cov cov-built-in">built-in</span></td><td>Search degrades to a LIKE scan (fallback:true) and a self-warn event fires; <code>history-db-healthy</code> covers the underlying db.</td></tr>
+<tr><td>Convention env file missing for a framework</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>env-file-missing: &lt;app&gt;</code> — suggest-only; daimon never creates or edits .env files (M82).</td></tr>
+<tr><td>Node version below daimon’s floor</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>node-version-mismatch</code>.</td></tr>
+<tr><td>Orphaned dependency caches (node_modules / venv / bundler / cargo target)</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>orphan-node-modules</code> / <code>orphan-venv</code> / <code>orphan-bundler-cache</code> / <code>orphan-cargo-target</code>.</td></tr>
+<tr><td>Health probe pointed at a 404 path</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>health-probe-missing</code>; <code>daimon pin-health &lt;app&gt; --accept</code> persists the discovered path.</td></tr>
+<tr><td>Child unverifiable after a daemon handoff</td><td><span class="cov cov-gap">by design: no rule</span></td><td>No auto-fix by design (verify-then-kill: daimon never kills what it cannot positively identify). The app surfaces as status <code>orphaned</code> with a per-case remedy in <code>daimon list</code> / <code>daimon why</code> (M88).</td></tr>
+<tr><td>CLI and daemon running different versions</td><td><span class="cov cov-built-in">built-in</span></td><td>Every CLI call compares versions via the x-daimon-version header and warns on stderr with the remedy (<code>daimon daemon restart</code>) — never a hard fail (M88).</td></tr>
+</tbody></table>
 
 <h2 id="faq">FAQ</h2>
 <dl>
