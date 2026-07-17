@@ -30,6 +30,8 @@ const EXPECTED_TOOLS = [
   'daimon_report', 'daimon_env',
   // v1.1 (M98): named app groups.
   'daimon_groups',
+  // v1.3 (M106): live resource table — read-only, warn-never-kill.
+  'daimon_top',
 ].sort();
 
 async function connectedClient() {

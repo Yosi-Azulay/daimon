@@ -45,6 +45,7 @@ export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stabili
   daimon_report: 'experimental', // v0.13 (M83)
   daimon_env: 'experimental', // v0.13 (M82)
   daimon_groups: 'experimental', // v1.1 (M98)
+  daimon_top: 'experimental', // v1.3 (M106)
 };
 
 function apiPort(): number {
@@ -480,6 +481,15 @@ export function buildServer(): McpServer {
     const r = await callJson('/api/report' + (q ? '?' + q : ''));
     if (r.status === 0) return err(r.body?.error || 'unknown');
     if (r.status === 400) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_top', {
+    description: 'Live resource table (v1.3): the running apps daimon owns as { ts, apps: [{ name, pid, rssMB, cpu, uptimeMs, status }] }, sorted by RSS descending, from the live usage poll (not history). An app whose first reading has not arrived carries rssMB/cpu null — never an error. Read-only and warn-only: daimon never kills or throttles a process.',
+    inputSchema: {},
+  }, async () => {
+    const r = await callJson('/api/top');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
     return ok(r.body);
   });
 

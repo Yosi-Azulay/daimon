@@ -134,7 +134,22 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   }, 30_000);
   if (sessionTick.unref) sessionTick.unref();
   const health = new HealthMonitor(registry, config.healthProbe, config);
-  const usage = new UsageMonitor(registry);
+  // Resource sampling (M105): a downsampler riding the existing 2s pidusage
+  // poll — no second timer. Rows go through history's batched write path;
+  // a failing app self-warns once and the others keep sampling.
+  const resourceSampleMs = config.resources?.sampleMs ?? 30_000;
+  const usage = new UsageMonitor(registry, 2000, resourceSampleMs > 0 ? {
+    sampleMs: resourceSampleMs,
+    onSample: (name, ts, rssBytes, cpuPct) => {
+      history.recordResourceSample(name, rssBytes, cpuPct, ts);
+      registry.noteResourceSample(name, ts, rssBytes, cpuPct);
+    },
+    onSampleError: (name, err: any) => {
+      try {
+        registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `resource sampling failed for ${name}: ${err?.message || err} — sampling continues for other apps` });
+      } catch {}
+    },
+  } : undefined);
   const restarter = new Restarter(registry, config.autoRestart);
   const notifier = new Notifier(registry, config.notifications);
   const staleDetector = new StaleDetector(registry, config.staleDetect);

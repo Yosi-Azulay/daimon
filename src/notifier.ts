@@ -152,6 +152,29 @@ export class Notifier {
         if (d.observedPerMin != null) detail = `${d.observedPerMin} lines/min vs baseline ${d.baselinePerMin ?? '?'} — daimon logs ${ev.app} --since 5m --level error`;
       } catch {}
       this.route('log-storm', ev.app, `${ev.app} log storm`, detail);
+    } else if (ev.type === 'resource-leak-suspect' && want('resource-leak-suspect')) {
+      // v1.3 (M107): OPT-IN only, like log-storm — absent notifications.kinds
+      // means zero new noise; the self-event + webhooks flow regardless.
+      let detail = 'RSS growing steadily against its own baseline';
+      try {
+        const d = JSON.parse(ev.message || '{}');
+        if (d.currentRssMB != null) detail = `RSS ${d.currentRssMB}MB, up ${d.growthMB}MB over ${Math.round((d.windowMs ?? 0) / 60000)}m (baseline ${d.baselineRssMB}MB) — daimon only warns, it never kills`;
+      } catch {}
+      this.route('resource-leak-suspect', ev.app, `${ev.app} possible memory leak`, detail);
+    } else if (ev.type === 'cpu-storm' && want('cpu-storm')) {
+      let detail = 'CPU sustained above its own baseline';
+      try {
+        const d = JSON.parse(ev.message || '{}');
+        if (d.windowMeanPct != null) detail = `CPU ${d.windowMeanPct}% sustained for ${Math.round((d.windowMs ?? 0) / 60000)}m (baseline ${d.baselineCpuPct}%) — daimon only warns, it never kills`;
+      } catch {}
+      this.route('cpu-storm', ev.app, `${ev.app} CPU storm`, detail);
+    } else if (ev.type === 'resource-budget-exceeded' && want('resource-budget-exceeded')) {
+      let detail = 'resource budget exceeded';
+      try {
+        const d = JSON.parse(ev.message || '{}');
+        if (d.metric) detail = `${d.metric} ${d.observed}${d.metric === 'rss' ? 'MB' : '%'} over the ${d.budget}${d.metric === 'rss' ? 'MB' : '%'} budget — warn-only, the app keeps running`;
+      } catch {}
+      this.route('resource-budget-exceeded', ev.app, `${ev.app} over budget`, detail);
     }
   };
 

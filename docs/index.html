@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.2.0 — docs</title>
+<title>daimon v1.3.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.2.0</span></h1>
+<h1>daimon <span class="badge">v1.3.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -186,6 +186,8 @@ npx daimon init --auto</code></pre>
 <dd>Sanity-check config + env. --auto-fix repairs orphan daemon, stale lock, missing search root, corrupt history db. --self checks daimon's own metrics.</dd>
 <dt><code>daimon ports </code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Port map: app → port → source (pinned|pool|announced) → pid, plus foreign holders of pool/pinned ports.</dd>
+<dt><code>daimon top [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Live resource table: app → pid → rss → cpu → uptime, sorted by RSS. Watch-and-warn only — daimon never kills.</dd>
 <dt><code>daimon free-port &lt;port&gt; [--force]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Diagnose / free a port.</dd>
 <dt><code>daimon self </code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -366,6 +368,8 @@ npx daimon init --auto</code></pre>
 <dd>Env snapshot diff (?from=, ?to=).</dd>
 <dt><code>GET /api/ports</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Port map + foreign holders.</dd>
+<dt><code>GET /api/top</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Live resource table: app → pid → rssMB → cpu → uptimeMs, RSS-sorted; nulls for apps without a reading (v1.3).</dd>
 <dt><code>POST /api/apps/:name/mute</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Mute OS notifications ({ forMs }).</dd>
 <dt><code>GET /api/groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
@@ -413,6 +417,7 @@ npx daimon init --auto</code></pre>
 <dt><code>daimon_report</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>The digest: uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agents, env changes.</dd>
 <dt><code>daimon_env</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.</dd>
 <dt><code>daimon_groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Named app groups (v1.1): apps, autoStart, status counts, healthy/total per group.</dd>
+<dt><code>daimon_top</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Live resource table (v1.3): running apps with pid, RSS (MB), CPU %, uptime — RSS-sorted, nulls never errors. Warn-only; daimon never kills.</dd>
 </dl>
 
 <h2 id="config">Config reference</h2>
@@ -451,6 +456,7 @@ npx daimon init --auto</code></pre>
 <dt><code>search</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
 <dt><code>ports</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>resources</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 </dl>
 <p>Experimental sub-keys inside stable parents: <code>notifications.kinds</code> / <code>notifications.quietHours</code> / <code>notifications.batchMs</code> and <code>webhooks[].digest</code> (v0.13); <code>logs.storm</code> (v1.2).</p>
 <p>Highlights:</p>
@@ -496,6 +502,9 @@ npx daimon init --auto</code></pre>
 <dt><code>digest-sent</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>log-storm</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>log-storm-end</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>resource-leak-suspect</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>cpu-storm</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>resource-budget-exceeded</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 </dl>
 
 <h2 id="doctor">Doctor coverage</h2>
@@ -512,6 +521,7 @@ npx daimon init --auto</code></pre>
 <tr><td>Pinned-port collision between apps</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>port pin &lt;n&gt;</code> collision check; predicted pool conflicts via <code>port-conflict-pred</code> (M81).</td></tr>
 <tr><td>Restart storm / crash loop</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>restart-storm: &lt;app&gt;</code> (threshold via restartStorm.perHour) + <code>smart-restart-tune</code>; crash reports ring-buffer 10/app and surface in <code>daimon why</code>.</td></tr>
 <tr><td>Log storm (volume spiking against the app’s own baseline)</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>log-storm-active: &lt;app&gt;</code> (M101, v1.2) — suggest-only: names the observed rate, baseline, and the remedy (<code>daimon logs &lt;app&gt; --since 5m --level error</code>, mute, or stop). Detection is always on; tune via <code>logs.storm</code>; OS notification is opt-in via notifications.kinds.</td></tr>
+<tr><td>CPU storm (sustained CPU above the app’s own baseline)</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>cpu-storm-active: &lt;app&gt;</code> (M109, v1.3) — advise-only by contract (warn-never-kill): names the observed mean vs baseline and points at <code>daimon why</code> / <code>daimon logs</code>; a restart recalibrates. Suspicion events: <code>cpu-storm</code>, <code>resource-leak-suspect</code>, <code>resource-budget-exceeded</code> (budgets via resources.rssMb/cpuPct).</td></tr>
 <tr><td>Flaky tests</td><td><span class="cov cov-gap">by design: no rule</span></td><td>No doctor rule by design: flakiness is derived from run history at each git head, not from config or daemon state — <code>daimon test-history &lt;app&gt; --flaky</code> is the surface.</td></tr>
 <tr><td>Full-text search degraded (FTS5 unavailable)</td><td><span class="cov cov-built-in">built-in</span></td><td>Search degrades to a LIKE scan (fallback:true) and a self-warn event fires; <code>history-db-healthy</code> covers the underlying db.</td></tr>
 <tr><td>Convention env file missing for a framework</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>env-file-missing: &lt;app&gt;</code> — suggest-only; daimon never creates or edits .env files (M82).</td></tr>

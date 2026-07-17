@@ -325,6 +325,41 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
     S.env = { note: `unavailable: ${err?.message || err}` };
   }
 
+  // --- resources (M109, v1.3) ------------------------------------------------
+  // Peak RSS + suspicion/budget event counts per app from resource_samples
+  // and the three v1.3 event kinds. Composition only, degrades to a note like
+  // every other section; the report perf budget still holds (one indexed
+  // query per scoped app + one bounded event scan).
+  try {
+    if (!h) {
+      S.resources = { note: 'history disabled — resource samples unavailable' };
+    } else {
+      const evs = h.queryEvents({ app: opts.app, since, until, limit: 10000 })
+        .filter(e => (e.type === 'resource-leak-suspect' || e.type === 'cpu-storm' || e.type === 'resource-budget-exceeded') && inScope(e.app));
+      const rows: { app: string; peakRssMB: number; avgCpuPct: number | null; leakSuspects: number; cpuStorms: number; budgetExceeded: number }[] = [];
+      for (const a of scoped.slice(0, 50)) {
+        const samples = h.queryResourceSamples({ app: a.name, since, until, limit: 5000 });
+        const rss = samples.map(s => s.rss).filter((x): x is number => x != null);
+        const cpu = samples.map(s => s.cpu).filter((x): x is number => x != null);
+        const count = (t: string): number => evs.filter(e => e.app === a.name && e.type === t).length;
+        const leakSuspects = count('resource-leak-suspect');
+        const cpuStorms = count('cpu-storm');
+        const budgetExceeded = count('resource-budget-exceeded');
+        if (!rss.length && !leakSuspects && !cpuStorms && !budgetExceeded) continue;
+        rows.push({
+          app: a.name,
+          peakRssMB: rss.length ? Math.round(Math.max(...rss) / (1024 * 1024)) : 0,
+          avgCpuPct: cpu.length ? Math.round((cpu.reduce((x, y) => x + y, 0) / cpu.length) * 10) / 10 : null,
+          leakSuspects, cpuStorms, budgetExceeded,
+        });
+      }
+      rows.sort((a, b) => b.peakRssMB - a.peakRssMB);
+      S.resources = rows.length ? { apps: rows } : { note: 'no resource samples in the window' };
+    }
+  } catch (err: any) {
+    S.resources = { note: `unavailable: ${err?.message || err}` };
+  }
+
   return report;
 }
 
@@ -411,6 +446,19 @@ export function renderReportMd(r: Report): string {
   else {
     L.push(`${(S.agents.active ?? []).length} active agent${(S.agents.active ?? []).length === 1 ? '' : 's'} · ${S.agents.taskRuns} task run${S.agents.taskRuns === 1 ? '' : 's'}`);
     for (const t of (S.agents.taskRunsByApp ?? []).slice(0, 5)) L.push(`- **${t.app}** ×${t.count}`);
+  }
+  L.push('');
+
+  L.push('## Resources');
+  if (S.resources?.note) L.push(`> ${S.resources.note}`);
+  else {
+    for (const a of (S.resources?.apps ?? []).slice(0, 10)) {
+      const flags: string[] = [];
+      if (a.leakSuspects) flags.push(`${a.leakSuspects} leak suspicion${a.leakSuspects === 1 ? '' : 's'}`);
+      if (a.cpuStorms) flags.push(`${a.cpuStorms} CPU storm${a.cpuStorms === 1 ? '' : 's'}`);
+      if (a.budgetExceeded) flags.push(`${a.budgetExceeded} budget warning${a.budgetExceeded === 1 ? '' : 's'}`);
+      L.push(`- **${a.app}** — peak ${a.peakRssMB}MB · avg CPU ${a.avgCpuPct != null ? a.avgCpuPct + '%' : 'n/a'}${flags.length ? ' · ' + flags.join(' · ') : ''}`);
+    }
   }
   L.push('');
 

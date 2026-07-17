@@ -6,7 +6,7 @@
 
 **One local daemon for all your dev servers.** Daimon discovers the runnable apps in your workspaces — Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri, Deno / Bun, plus a generic `package.json` fallback and custom profiles from config — then starts and stops them, assigns their ports, dedup's their error output, and answers questions about them. You talk to it four ways: a terminal TUI, a loopback HTTP API, a JSON CLI, and an MCP server for AI agents.
 
-Beyond serving, it closes the whole dev loop: `daimon test` runs the project's own test runner and parses the failures, `daimon why` keeps crash forensics that would otherwise evaporate, `daimon search` greps everything the daemon has ever seen, `daimon report` answers "what happened today", `daimon env diff` answers "what changed since it last worked", and `daimon logs --level error` cuts the firehose down to the lines that matter.
+Beyond serving, it closes the whole dev loop: `daimon test` runs the project's own test runner and parses the failures, `daimon why` keeps crash forensics that would otherwise evaporate, `daimon search` greps everything the daemon has ever seen, `daimon report` answers "what happened today", `daimon env diff` answers "what changed since it last worked", and `daimon logs --level error` cuts the firehose down to the lines that matter. `daimon top` answers "what is eating my laptop" for the processes daimon owns — and its guardrails suspect leaks and CPU storms against each app's own baseline, warning with a remedy and never touching the process.
 
 Daimon is built for the **single machine with several agents on it**: you in one terminal, a Claude Code session in another repo, a second Claude in a third. All of them talk to the same daemon, see only their own workspace by default, carry distinct agent identities, and coordinate through per-app soft-locks instead of stepping on each other's dev servers.
 
@@ -280,6 +280,36 @@ Same filters as `?level=`/`?grep=`/`?since=` on `GET /api/apps/:name/logs` (and 
 ### Storm detection
 
 A misbehaving app that starts screaming shouldn't need you to notice. daimon keeps a per-app rolling lines-per-minute baseline; a sustained spike (default 10× the app's own baseline over 60s, tune via `logs.storm`) raises one `log-storm` event, and recovery raises one `log-storm-end` — hysteresis, so a flapping rate can't spam the timeline. A storming app is flagged in `daimon status`, `daimon why`, the dashboard (banner), and `daimon doctor` (`log-storm-active`, suggest-only, with the remedy: `daimon logs <app> --since 5m --level error`). Want an OS notification too? Opt in by adding `"log-storm"` to `notifications.kinds` — absent, storms stay silent self-events. `daimon report` closes the loop with a log-volume line: total lines, error-level share, storms in the window.
+
+## Guardrails (v1.3)
+
+**daimon watches, warns, and points — it never kills.** No resource event stops, restarts, throttles, or nices a process, ever; a grep-style test suite proves the resource code paths cannot signal a process. That promise is the whole feature.
+
+Until v1.3 daimon knew everything an app *said* and nothing about what it *weighed*: a leaking dev server died six hours in as an opaque crash with a perfect log trail and no memory trail. Now the pidusage poll that already feeds the live TUI also keeps a downsampled history (`resource_samples`, one row per app per 30s by default — `resources.sampleMs` tunes it, `0` disables), and three warn-only detectors read it.
+
+### `daimon top` — what is eating my machine
+
+```bash
+daimon top          # app → pid → rss → cpu → uptime, sorted by RSS
+daimon top --json   # compact JSON (GET /api/top, MCP daimon_top)
+```
+
+Live state, not history: an app whose first reading hasn't arrived shows dashes, never an error.
+
+### Leak & CPU-storm suspicion — against the app's *own* baseline
+
+The first 5 minutes after each spawn establish a baseline (median + jitter); every threshold derives from it — there are no magic MB or % numbers to mistune, and the multipliers are deliberately not config. RSS growing monotonically for a full 15-minute window, beyond what jitter explains, raises one `resource-leak-suspect` event with the baseline, the growth rate, and a remedy; CPU pinned above the app's own p95 for a full window raises one `cpu-storm`. One event per episode — it re-arms only when the signal returns to baseline or the app restarts (a restart also recalibrates, so a heavier-but-stable process is judged against its own fresh normal). Sawtooth GC patterns, compile bursts, noisy-but-flat contention, and warm-up climbs never fire; too little data means no verdict at all.
+
+### Budgets that warn
+
+```jsonc
+"resources": { "rssMb": 1500, "cpuPct": 80 },          // global
+"overrides": { "web": { "resources": { "rssMb": 3000 } } }  // per-app wins per key
+```
+
+Crossing a budget for a sustained window raises one `resource-budget-exceeded` event naming the observed value, the budget, and what to do next. Absent keys = no checks. Warn-only, like everything here.
+
+Suspicions surface everywhere the rest of daimon does: `daimon why` notes when a crash fell inside an open suspicion window ("RSS grew 3.1× before this crash"), Trends charts rss/cpu series, `daimon report` gains a resources section (peak RSS + suspicion counts), and `daimon doctor` flags `cpu-storm-active` (advise-only — the warn-never-kill rule extends to doctor). OS notifications for all three kinds are opt-in via `notifications.kinds`; absent, they stay silent self-events + webhooks.
 
 ## Multi-agent on one machine (v0.9 + v0.10)
 
@@ -597,7 +627,7 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes 28 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, and the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored). Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
+The MCP server exposes 29 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored), and the v1.3 `daimon_top` (live RSS/CPU table — warn-only, never kills). Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
 
 ## State files (in `~/.daimon/`)
 

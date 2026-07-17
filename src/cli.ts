@@ -1369,6 +1369,35 @@ async function main() {
       if (!result.ok) process.exit(1);
       return;
     }
+    case 'top': {
+      const r = await call('/api/top');
+      const b: any = r.body;
+      if (!f.json && process.stdout.isTTY && isColorEnabled() && b && typeof b === 'object' && Array.isArray(b.apps)) {
+        const dim = (s: string) => color.dim(s);
+        const fmtUp = (ms: number | null): string => {
+          if (ms == null) return '—';
+          const s = Math.floor(ms / 1000);
+          if (s < 60) return `${s}s`;
+          if (s < 3600) return `${Math.floor(s / 60)}m${s % 60 ? ` ${s % 60}s` : ''}`;
+          const h = Math.floor(s / 3600);
+          return `${h}h ${Math.floor((s % 3600) / 60)}m`;
+        };
+        const L: string[] = [];
+        L.push(color.bold('top') + dim(`  ${b.apps.length} running · sorted by rss`));
+        L.push(dim(`  ${'app'.padEnd(26)} ${'pid'.padStart(7)} ${'rss'.padStart(8)} ${'cpu'.padStart(7)}  uptime`));
+        for (const a of b.apps) {
+          const rss = a.rssMB != null ? `${a.rssMB}MB` : '—';
+          const cpu = a.cpu != null ? `${a.cpu}%` : '—';
+          const tail = a.status && a.status !== 'serving' ? dim(`  ${a.status}`) : '';
+          L.push(`  ${String(a.name).padEnd(26)} ${String(a.pid ?? '—').padStart(7)} ${rss.padStart(8)} ${cpu.padStart(7)}  ${fmtUp(a.uptimeMs)}${tail}`);
+        }
+        if (!b.apps.length) L.push(dim('  (no running apps)'));
+        process.stdout.write(L.join('\n') + '\n');
+        return;
+      }
+      out(b);
+      return;
+    }
     case 'ports': {
       const r = await call('/api/ports');
       const b: any = r.body;

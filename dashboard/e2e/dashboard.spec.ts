@@ -33,6 +33,67 @@ function seedCrashFor(app: string): void {
   execFileSync(process.execPath, ['-e', code, dbPath, app], { cwd: path.resolve(process.cwd(), '..') });
 }
 
+// M109 (v1.3, Guardrails — experimental): seeds resource_samples rows for
+// the Trends page's RSS/CPU series drive. Values are stored the way the
+// real sampler stores them — rss in BYTES, cpu as a raw percent float (see
+// src/history.ts's resource_samples schema); the server's trends() bucket
+// average converts rss to MB and rounds cpu to one decimal, which is what
+// the dashboard renders.
+function seedResourceSamplesFor(app: string): void {
+  const dbPath = process.env.DAIMON_HISTORY_DB || path.join(os.homedir(), '.daimon', 'history.db');
+  const now = Date.now();
+  const samples = [
+    { ts: now - 50 * 60_000, rssMB: 180, cpu: 6.2 },
+    { ts: now - 35 * 60_000, rssMB: 240, cpu: 14.8 },
+    { ts: now - 20 * 60_000, rssMB: 310, cpu: 22.1 },
+    { ts: now - 5 * 60_000, rssMB: 360, cpu: 9.4 },
+  ];
+  const code = [
+    "const Database = require('better-sqlite3');",
+    'const db = new Database(process.argv[1]);',
+    "const ins = db.prepare('INSERT INTO resource_samples (app, ts, rss, cpu) VALUES (?, ?, ?, ?)');",
+    'const app = process.argv[2];',
+    'const rows = JSON.parse(process.argv[3]);',
+    'for (const r of rows) ins.run(app, r.ts, Math.round(r.rssMB * 1024 * 1024), r.cpu);',
+    'db.close();',
+  ].join('\n');
+  execFileSync(process.execPath, ['-e', code, dbPath, app, JSON.stringify(samples)], { cwd: path.resolve(process.cwd(), '..') });
+}
+
+// M109: seeds a resource-leak-suspect event ~10 min ahead of a crash row for
+// the same app, so /api/why's resourceNote composition (server.ts, "open at
+// crash time" = a suspicion event in the hour before the crash with no
+// restart in between) has something to point at. Message shape matches
+// registry.ts's onLeakSuspect payload exactly (baselineRssMB/currentRssMB/
+// growthMB/growthPerMinMB/windowMs/remedy).
+function seedLeakEpisodeFor(app: string): void {
+  const dbPath = process.env.DAIMON_HISTORY_DB || path.join(os.homedir(), '.daimon', 'history.db');
+  const leakPayload = JSON.stringify({
+    baselineRssMB: 200, currentRssMB: 620, growthMB: 420, growthPerMinMB: 42,
+    windowMs: 10 * 60_000, remedy: "restart to reclaim memory; if it recurs, profile with 'daimon top'",
+  });
+  // The server suppresses the note when a `status → starting` event sits
+  // between the suspicion and the crash (a restart recalibrates the baseline
+  // and closes the episode — that's the feature, not a bug). The rest of the
+  // drive restarts this app freely, so the seed anchors the suspicion window
+  // AFTER the app's newest restart event: deterministic against whatever ran
+  // before, no event deletion needed.
+  const code = [
+    "const Database = require('better-sqlite3');",
+    'const db = new Database(process.argv[1]);',
+    'const app = process.argv[2];',
+    "const lastStart = db.prepare(\"SELECT max(ts) AS ts FROM events WHERE app = ? AND type = 'status' AND to_state = 'starting'\").get(app);",
+    'const crashTs = Date.now() - 1_000;',
+    'const leakTs = Math.max((lastStart && lastStart.ts ? lastStart.ts : 0) + 500, crashTs - 10 * 60_000);',
+    "db.prepare('INSERT INTO events (ts, app, type, from_state, to_state, message) VALUES (?, ?, ?, ?, ?, ?)')",
+    "  .run(leakTs, app, 'resource-leak-suspect', null, null, process.argv[3]);",
+    "db.prepare('INSERT INTO crashes (ts, app, exitCode, signal, uptimeMs, lastLines, gitHead) VALUES (?, ?, ?, ?, ?, ?, ?)')",
+    "  .run(crashTs, app, 1, null, 2_400_000, 'FATAL ERROR: Reached heap limit\\n[nodemon] app crashed', 'b2c3d4e');",
+    'db.close();',
+  ].join('\n');
+  execFileSync(process.execPath, ['-e', code, dbPath, app, leakPayload], { cwd: path.resolve(process.cwd(), '..') });
+}
+
 // Landmark assertions are scoped to <main>: at 390px the nav-rail labels are
 // (correctly) hidden in the bottom bar, so an unscoped getByText would match
 // a hidden nav label first and false-fail.
@@ -224,6 +285,64 @@ test.describe('routes (tour pre-dismissed)', () => {
     expect.soft(overflow, 'horizontal overflow on /report').toBeLessThanOrEqual(0);
   });
 
+  // M109 (v1.3, Guardrails — experimental): Trends page RSS/CPU series ride
+  // the same batched perApp fetch as compile/bundle/errors/restarts (M109
+  // dashboard surfacing) — a seeded app's resource_samples should render as
+  // populated line charts, not the page's "No data" empty state.
+  test('Trends page renders RSS and CPU series for an app with seeded resource_samples', async ({ page, request, baseURL }) => {
+    const apps: { name: string }[] = await (await request.get(`${baseURL}/api/apps`)).json();
+    test.skip(!apps.length, 'no registry apps in the driven workspace');
+    const target = apps[0].name;
+    seedResourceSamplesFor(target);
+
+    const consoleErrors: string[] = [];
+    page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+    await page.goto('/trends');
+    await expect(page.locator('main h1', { hasText: 'Trends' })).toBeVisible({ timeout: 10_000 });
+
+    const rssCard = page.locator('mat-card', { hasText: 'RSS (MB)' });
+    const cpuCard = page.locator('mat-card', { hasText: 'CPU (%)' });
+    await expect(rssCard).toBeVisible({ timeout: 10_000 });
+    await expect(cpuCard).toBeVisible();
+
+    // A populated series renders the chart canvas; the "No data" empty
+    // state (dm-empty) is reserved for a metric with zero points.
+    await expect(rssCard.locator('canvas')).toBeVisible({ timeout: 10_000 });
+    await expect(rssCard.locator('dm-empty')).toHaveCount(0);
+    await expect(cpuCard.locator('canvas')).toBeVisible({ timeout: 10_000 });
+    await expect(cpuCard.locator('dm-empty')).toHaveCount(0);
+
+    const fatal = consoleErrors.filter(e => !/favicon|ResizeObserver|chunk-/.test(e));
+    expect.soft(fatal, 'console errors on /trends with seeded resource_samples').toEqual([]);
+  });
+
+  // No-data control: the prior test seeds resource_samples for apps[0] into
+  // the SHARED history db (workers:1, sequential), so this test scopes the
+  // page to a DIFFERENT app — one nothing seeded — and asserts the RSS/CPU
+  // cards render the real empty state (dm-empty, no canvas), never an error.
+  test('Trends page degrades RSS/CPU to the empty state (never an error) with no resource_samples', async ({ page, request, baseURL }) => {
+    const apps: { name: string }[] = await (await request.get(`${baseURL}/api/apps`)).json();
+    test.skip(apps.length < 2, 'needs a second app that has no seeded resource_samples');
+    const noDataApp = apps[1].name; // apps[0] carries the previous test's seed
+
+    const consoleErrors: string[] = [];
+    page.on('pageerror', err => consoleErrors.push(String(err)));
+    page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+    await page.goto('/trends');
+    await expect(page.locator('main h1', { hasText: 'Trends' })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('radio', { name: noDataApp }).click();
+
+    const rssCard = page.locator('mat-card', { hasText: 'RSS (MB)' });
+    const cpuCard = page.locator('mat-card', { hasText: 'CPU (%)' });
+    await expect(rssCard).toBeVisible({ timeout: 10_000 });
+    await expect(rssCard.locator('dm-empty')).toBeVisible({ timeout: 10_000 });
+    await expect(rssCard.locator('canvas')).toHaveCount(0);
+    await expect(cpuCard.locator('dm-empty')).toBeVisible();
+
+    const fatal = consoleErrors.filter(e => !/favicon|ResizeObserver|chunk-/.test(e));
+    expect.soft(fatal, 'console errors rendering Trends with no resource data').toEqual([]);
+  });
+
   test('Report page period switcher accepts a custom since duration', async ({ page }) => {
     await page.goto('/report');
     await page.getByText('Custom', { exact: true }).click();
@@ -248,6 +367,21 @@ test.describe('routes (tour pre-dismissed)', () => {
     await expect(page.locator('.dm-panel-title', { hasText: 'Restart storm' })).toBeVisible();
     // The seeded (or a real) crash card carries exit-code detail rows.
     await expect(page.getByText(/exit/i).or(page.locator('dd', { hasText: '1' })).first()).toBeVisible();
+  });
+
+  // M109 (v1.3, Guardrails — experimental): a crash whose why-lookup window
+  // contains an open leak suspicion gets a resourceNote — rendered as a
+  // highlighted "Resource note" panel, distinct from the raw `resources`
+  // snapshot (which the dashboard never renders).
+  test('Why panel shows a resource note for a crash inside a leak episode', async ({ page, request, baseURL }) => {
+    const apps: { name: string }[] = await (await request.get(`${baseURL}/api/apps`)).json();
+    test.skip(!apps.length, 'no registry apps in the driven workspace');
+    const target = apps[0].name;
+    seedLeakEpisodeFor(target);
+    await page.goto(`/apps/${encodeURIComponent(target)}?tab=why`);
+    await expect(page.locator('.dm-panel-title', { hasText: 'Last crash' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.dm-panel-title', { hasText: 'Resource note' })).toBeVisible();
+    await expect(page.locator('.dm-why-note')).toContainText(/RSS grew from 200MB to 620MB/i);
   });
 
   // M85 — mute indicator (M84 mute): a muted app surfaces a badge on both the

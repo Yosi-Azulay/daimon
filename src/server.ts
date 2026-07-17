@@ -711,10 +711,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           // and restarts. `metric=<single>` continues to work for back-compat.
           const metricsParam = url.searchParams.get('metrics');
           if (metricsParam) {
-            const want = metricsParam.split(',').map(s => s.trim()).filter(Boolean) as ('compile' | 'bundle' | 'errors' | 'restarts')[];
-            const valid: ('compile' | 'bundle' | 'errors' | 'restarts')[] = ['compile', 'bundle', 'errors', 'restarts'];
+            // rss/cpu (M109, v1.3 — experimental): bucket-averaged series from
+            // resource_samples; additive to the v0.9 metric set.
+            const want = metricsParam.split(',').map(s => s.trim()).filter(Boolean) as ('compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu')[];
+            const valid: ('compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu')[] = ['compile', 'bundle', 'errors', 'restarts', 'rss', 'cpu'];
             const filtered = want.filter(m => valid.includes(m));
-            if (!filtered.length) { sendJson(res, 400, { error: 'metrics must include at least one of compile|bundle|errors|restarts' }); return; }
+            if (!filtered.length) { sendJson(res, 400, { error: 'metrics must include at least one of compile|bundle|errors|restarts|rss|cpu' }); return; }
             const out: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }> = {};
             for (const m of filtered) {
               const r = h.trends({ app, metric: m, sinceMs: sinceMsTrend, bucketMs });
@@ -723,9 +725,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             sendJson(res, 200, { app: app ?? null, since: sinceLabel, metrics: out, _meta: { aggregation: sinceLabel === '24h' ? 'hour' : 'day' } });
             return;
           }
-          const metric = (url.searchParams.get('metric') || 'compile') as 'compile' | 'bundle' | 'errors' | 'restarts';
-          if (!['compile', 'bundle', 'errors', 'restarts'].includes(metric)) {
-            sendJson(res, 400, { error: 'metric must be compile|bundle|errors|restarts' });
+          const metric = (url.searchParams.get('metric') || 'compile') as 'compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu';
+          if (!['compile', 'bundle', 'errors', 'restarts', 'rss', 'cpu'].includes(metric)) {
+            sendJson(res, 400, { error: 'metric must be compile|bundle|errors|restarts|rss|cpu' });
             return;
           }
           const { points, count } = h.trends({ app, metric, sinceMs: sinceMsTrend, bucketMs });
@@ -1242,6 +1244,29 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // `daimon top` (M106, v1.3 — experimental): point-in-time resource view
+      // of the running apps, from live UsageMonitor state — this is *now*,
+      // not history. An app whose first reading hasn't arrived carries
+      // rssMB/cpu null, never an error. Read-only: the resource guardrails
+      // have no code path that can touch a process (warn-never-kill).
+      if (parts[0] === 'api' && parts[1] === 'top' && !parts[2] && method === 'GET') {
+        const now = Date.now();
+        const rows = registry.names()
+          .map(n => registry.getState(n))
+          .filter((s): s is NonNullable<typeof s> => !!s && s.pid != null)
+          .map(s => ({
+            name: s.name,
+            pid: s.pid,
+            rssMB: s.memMB ?? null,
+            cpu: s.cpu ?? null,
+            uptimeMs: s.startedAt != null ? now - s.startedAt : null,
+            status: s.status,
+          }))
+          .sort((a, b) => ((b.rssMB ?? -1) - (a.rssMB ?? -1)) || a.name.localeCompare(b.name));
+        sendJson(res, 200, { ts: now, apps: rows });
+        return;
+      }
+
       // `daimon report` (M83): the digest — composition over existing queries,
       // every section independently degradable. ?since=24h|7d|<ms>&app=&workspace=&md=1
       if (parts[0] === 'api' && parts[1] === 'report' && !parts[2] && method === 'GET') {
@@ -1405,6 +1430,33 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           }
         } catch {}
 
+        // resourceNote (M109, v1.3 — experimental): a crash that fell inside
+        // an open leak/storm suspicion window gets a pointer — composition
+        // over existing queries, like envChanged. Re-arms are silent (no
+        // *-end events), so "open at crash time" is approximated by a
+        // suspicion event in the hour before the crash with no restart
+        // between the event and the crash.
+        let resourceNote: string | null = null;
+        try {
+          if (lastCrash) {
+            const hourBefore = lastCrash.ts - 3600_000;
+            const restartsSince = (ts: number): boolean =>
+              (h?.queryEvents({ app: whyName, since: ts, until: lastCrash.ts, type: 'status', limit: 100 }) ?? [])
+                .some(ev => ev.to_state === 'starting');
+            const leak = (h?.queryEvents({ app: whyName, since: hourBefore, until: lastCrash.ts, type: 'resource-leak-suspect', limit: 10 }) ?? [])[0];
+            const cpuStorm = (h?.queryEvents({ app: whyName, since: hourBefore, until: lastCrash.ts, type: 'cpu-storm', limit: 10 }) ?? [])[0];
+            if (leak && !restartsSince(leak.ts)) {
+              const d = JSON.parse(leak.message ?? '{}');
+              const mins = Math.max(1, Math.round((lastCrash.ts - leak.ts + (d.windowMs ?? 0)) / 60_000));
+              const ratio = d.baselineRssMB > 0 && d.currentRssMB != null ? ` (${(d.currentRssMB / d.baselineRssMB).toFixed(1)}× baseline)` : '';
+              resourceNote = `RSS grew from ${d.baselineRssMB}MB to ${d.currentRssMB}MB${ratio} over the ~${mins} min before this crash — a leak suspicion was open when the app died. If it recurs after restart, profile the process; 'daimon top' shows live usage.`;
+            } else if (cpuStorm && !restartsSince(cpuStorm.ts)) {
+              const d = JSON.parse(cpuStorm.message ?? '{}');
+              resourceNote = `CPU was storming (mean ${d.windowMeanPct}% vs baseline ${d.baselineCpuPct}%) in the window before this crash — check for a hot loop; 'daimon logs ${whyName} --since 30m' around the crash.`;
+            }
+          }
+        } catch {}
+
         const { suspectCommitForDir } = await import('./regressions.js');
         const suspectCommit = await suspectCommitForDir(appRow?.workspaceRoot ?? null);
 
@@ -1436,6 +1488,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           // Log-storm state (M101, v1.2 — experimental): lines/min vs the
           // app's own rolling baseline.
           logStorm: registry.logStormState(whyName),
+          // Resource guardrails (M109, v1.3 — experimental): open episodes +
+          // baseline, and a note when the crash fell inside a suspicion window.
+          resources: registry.resourceState(whyName),
+          resourceNote,
           envChanged,
           suspectCommit,
           doctor: doctorFindings,

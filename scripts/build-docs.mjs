@@ -94,6 +94,7 @@ const MCP_DESCRIPTIONS = {
   daimon_report: 'The digest: uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agents, env changes.',
   daimon_env: 'Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.',
   daimon_groups: 'Named app groups (v1.1): apps, autoStart, status counts, healthy/total per group.',
+  daimon_top: 'Live resource table (v1.3): running apps with pid, RSS (MB), CPU %, uptime — RSS-sorted, nulls never errors. Warn-only; daimon never kills.',
 };
 
 function renderMcp() {

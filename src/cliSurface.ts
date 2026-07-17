@@ -704,6 +704,20 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     exitCodes: stdExit,
   },
   {
+    name: 'top',
+    args: '[--json]',
+    summary: 'Live resource table: app → pid → rss → cpu → uptime, sorted by RSS. Watch-and-warn only — daimon never kills.',
+    description: 'Point-in-time resource usage of the running apps daimon owns, from the live usage poll (not history): pid, RSS in MB, CPU percent, and uptime, sorted by RSS descending. An app whose first reading has not arrived yet renders dashes (nulls in JSON) — never an error. Purely informational: no code path here (or anywhere in the resource guardrails) can signal, stop, or restart a process (v1.3).',
+    example: 'daimon top',
+    options: [
+      { flag: '--json', description: 'Emit compact JSON even on a TTY.' },
+    ],
+    needsDaemon: true,
+    group: 'introspection',
+    stability: 'experimental',
+    exitCodes: stdExit,
+  },
+  {
     name: 'free-port',
     args: '<port> [--force]',
     summary: 'Diagnose / free a port.',

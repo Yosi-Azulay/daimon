@@ -138,6 +138,19 @@ export interface AppWhy {
   } | null;
   suspectCommit: string | null;
   doctor: { name: string; ok: boolean; detail?: string }[];
+  // Resource awareness (M105-M109, v1.3 — experimental). `resources` is the
+  // structured snapshot (baseline/leak/cpuStorm/budget/lastSample); the
+  // dashboard never renders it directly. `resourceNote` is the one
+  // human-readable sentence worth surfacing (e.g. an RSS-growth narrative
+  // ahead of a crash) — null when there's nothing notable.
+  resources?: {
+    baseline: unknown;
+    leak: { active: boolean; since: number | null };
+    cpuStorm: { active: boolean; since: number | null };
+    budget: { rss: unknown; cpu: unknown };
+    lastSample: unknown;
+  } | null;
+  resourceNote?: string | null;
 }
 
 const EVENT_BUFFER_MAX = 200;
@@ -359,7 +372,7 @@ export class DaimonApi {
     } catch { return []; }
   }
 
-  async getTrends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts'; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; metric: string; since: string; points: { t: number; v: number; v2?: number }[]; _meta?: { aggregation: string; count: number } } | null> {
+  async getTrends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu'; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; metric: string; since: string; points: { t: number; v: number; v2?: number }[]; _meta?: { aggregation: string; count: number } } | null> {
     try {
       const params = new URLSearchParams();
       if (opts.app) params.set('app', opts.app);
@@ -371,7 +384,7 @@ export class DaimonApi {
 
   // Batched v0.9 trends fetch: one HTTP round-trip returns all four metrics
   // for one app. Cuts the Trends page from 4N parallel calls down to N.
-  async getTrendsMulti(opts: { app?: string; metrics: ('compile' | 'bundle' | 'errors' | 'restarts')[]; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; since: string; metrics: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }>; _meta?: { aggregation: string } } | null> {
+  async getTrendsMulti(opts: { app?: string; metrics: ('compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu')[]; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; since: string; metrics: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }>; _meta?: { aggregation: string } } | null> {
     try {
       const params = new URLSearchParams();
       if (opts.app) params.set('app', opts.app);

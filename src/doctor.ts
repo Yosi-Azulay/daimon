@@ -40,6 +40,7 @@ export const DOCTOR_COVERAGE: DoctorCoverageRow[] = [
   { failure: 'Pinned-port collision between apps', kind: 'rule', coverage: '`port pin <n>` collision check; predicted pool conflicts via `port-conflict-pred` (M81).' },
   { failure: 'Restart storm / crash loop', kind: 'rule', coverage: '`restart-storm: <app>` (threshold via restartStorm.perHour) + `smart-restart-tune`; crash reports ring-buffer 10/app and surface in `daimon why`.' },
   { failure: 'Log storm (volume spiking against the app’s own baseline)', kind: 'rule', coverage: '`log-storm-active: <app>` (M101, v1.2) — suggest-only: names the observed rate, baseline, and the remedy (`daimon logs <app> --since 5m --level error`, mute, or stop). Detection is always on; tune via `logs.storm`; OS notification is opt-in via notifications.kinds.' },
+  { failure: 'CPU storm (sustained CPU above the app’s own baseline)', kind: 'rule', coverage: '`cpu-storm-active: <app>` (M109, v1.3) — advise-only by contract (warn-never-kill): names the observed mean vs baseline and points at `daimon why` / `daimon logs`; a restart recalibrates. Suspicion events: `cpu-storm`, `resource-leak-suspect`, `resource-budget-exceeded` (budgets via resources.rssMb/cpuPct).' },
   { failure: 'Flaky tests', kind: 'gap', coverage: 'No doctor rule by design: flakiness is derived from run history at each git head, not from config or daemon state — `daimon test-history <app> --flaky` is the surface.' },
   { failure: 'Full-text search degraded (FTS5 unavailable)', kind: 'built-in', coverage: 'Search degrades to a LIKE scan (fallback:true) and a self-warn event fires; `history-db-healthy` covers the underlying db.' },
   { failure: 'Convention env file missing for a framework', kind: 'rule', coverage: '`env-file-missing: <app>` — suggest-only; daimon never creates or edits .env files (M82).' },
@@ -304,6 +305,45 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
       if (!anyLogStorm) checks.push({ name: 'log-storm', ok: true });
     } catch (err: any) {
       checks.push({ name: 'log-storm', ok: true, detail: `skipped: ${err?.message || err}` });
+    }
+  }
+
+  // cpu-storm-active (M109, v1.3): the latest cpu-storm event in the last 6h
+  // with no app restart since it (a restart resets the baseline and closes
+  // the episode; re-arms are silent, so this is the honest offline signal).
+  // ADVISE-ONLY, no auto-fix exists: warn-never-kill extends to doctor.
+  if (config.history.enabled) {
+    try {
+      const h = new History(config.history);
+      const since = Date.now() - 6 * 3600_000;
+      const storms = h.queryEvents({ since, type: 'cpu-storm', limit: 1000 });
+      const statuses = h.queryEvents({ since, type: 'status', limit: 2000 });
+      h.close();
+      const lastStart = new Map<string, number>();
+      for (const ev of statuses) {
+        if (ev.to_state === 'starting') lastStart.set(ev.app, Math.max(lastStart.get(ev.app) ?? 0, ev.ts));
+      }
+      let anyCpuStorm = false;
+      const seenApps = new Set<string>();
+      for (const s of storms.sort((a, b) => b.ts - a.ts)) {
+        if (seenApps.has(s.app)) continue;
+        seenApps.add(s.app);
+        if ((lastStart.get(s.app) ?? 0) >= s.ts) continue; // restarted since: episode closed
+        anyCpuStorm = true;
+        let rate = '';
+        try {
+          const d = JSON.parse(s.message ?? '{}');
+          if (d.windowMeanPct != null) rate = `CPU ~${d.windowMeanPct}% vs baseline ${d.baselineCpuPct ?? '?'}% `;
+        } catch {}
+        checks.push({
+          name: `cpu-storm-active: ${s.app}`,
+          ok: false,
+          detail: `${rate}since ${new Date(s.ts).toISOString()} — investigate with 'daimon why ${s.app}' and 'daimon logs ${s.app} --since 15m'; restarting the app recalibrates its baseline. Advise-only: daimon never kills or throttles.`,
+        });
+      }
+      if (!anyCpuStorm) checks.push({ name: 'cpu-storm', ok: true });
+    } catch (err: any) {
+      checks.push({ name: 'cpu-storm', ok: true, detail: `skipped: ${err?.message || err}` });
     }
   }
 

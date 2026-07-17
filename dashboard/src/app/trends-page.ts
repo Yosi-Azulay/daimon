@@ -18,23 +18,17 @@ import { Chart, registerables, type ChartConfiguration, type ChartType } from 'c
 import { DaimonApi } from './daimon-api';
 import { EmptyStateComponent, SkeletonComponent, MonoComponent } from './ui-primitives';
 import type { TestRun } from './tests-page-helpers';
+import {
+  fmtBucketLabel, unionLabels, alignSeries, TREND_METRICS,
+  type Window, type Series, type SeriesPoint, type TrendMetric,
+} from './trends-page-helpers';
 
 Chart.register(...registerables);
 
-type Window = '24h' | '7d' | '30d';
-type Metric = 'compile' | 'bundle' | 'errors' | 'restarts';
-
-interface SeriesPoint { t: number; v: number; v2?: number; }
-interface Series { app: string; points: SeriesPoint[]; }
+type Metric = TrendMetric;
 
 function readToken(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-function fmtBucketLabel(t: number, window: Window): string {
-  const d = new Date(t);
-  if (window === '24h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 @Component({
@@ -151,7 +145,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     <div class="dm-page-header">
       <div>
         <h1>Trends</h1>
-        <div class="dm-page-sub">Historical compile · bundle · error · restart · test pass-rate · flaky trends</div>
+        <div class="dm-page-sub">Historical compile · bundle · error · restart · test pass-rate · flaky · resource trends</div>
       </div>
       <div class="dm-controls">
         <mat-button-toggle-group [value]="window()" (change)="onWindowChange($event.value)" hideSingleSelectionIndicator aria-label="Time window">
@@ -179,6 +173,8 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
       <dm-trend-chart #restartChart></dm-trend-chart>
       <dm-trend-chart #testPassRateChart></dm-trend-chart>
       <dm-trend-chart #flakyChart></dm-trend-chart>
+      <dm-trend-chart #rssChart></dm-trend-chart>
+      <dm-trend-chart #cpuChart></dm-trend-chart>
       @if (showSelf()) {
         <dm-trend-chart #selfChart></dm-trend-chart>
       }
@@ -208,6 +204,8 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
   @ViewChild('restartChart') restartChart?: TrendChartComponent;
   @ViewChild('testPassRateChart') testPassRateChart?: TrendChartComponent;
   @ViewChild('flakyChart') flakyChart?: TrendChartComponent;
+  @ViewChild('rssChart') rssChart?: TrendChartComponent;
+  @ViewChild('cpuChart') cpuChart?: TrendChartComponent;
   @ViewChild('selfChart') selfChart?: TrendChartComponent;
 
   private timer?: ReturnType<typeof setInterval>;
@@ -237,6 +235,8 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       this.restartChart?.setLoading();
       this.testPassRateChart?.setLoading();
       this.flakyChart?.setLoading();
+      this.rssChart?.setLoading();
+      this.cpuChart?.setLoading();
     }
 
     const primary = readToken('--mat-sys-primary') || '#6750a4';
@@ -251,10 +251,10 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
     // page from 4N parallel calls down to N. With three apps that's 3 round-
     // trips instead of 12.
     const perApp = await Promise.all(apps.map(app =>
-      this.api.getTrendsMulti({ app, metrics: ['compile', 'bundle', 'errors', 'restarts'], since: win })
+      this.api.getTrendsMulti({ app, metrics: [...TREND_METRICS], since: win })
         .then(r => ({ app, r })),
     ));
-    const collect = (m: 'compile' | 'bundle' | 'errors' | 'restarts'): Series[] =>
+    const collect = (m: TrendMetric): Series[] =>
       perApp
         .map(({ app, r }) => ({ app, points: (r?.metrics?.[m]?.points ?? []) as SeriesPoint[] }))
         .filter(s => s.points.length > 0);
@@ -263,7 +263,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
     const errorSeries = collect('errors');
     const restartSeries = collect('restarts');
 
-    const labelMap = this.unionLabels([compileSeries, bundleSeries, errorSeries, restartSeries], win);
+    const labelMap = unionLabels([compileSeries, bundleSeries, errorSeries, restartSeries], win);
 
     this.compileChart?.setData({
       title: 'Compile time',
@@ -272,7 +272,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       labels: labelMap.labels,
       datasets: compileSeries.map((s, i) => ({
         label: s.app,
-        data: this.align(s.points, labelMap.buckets, 'v'),
+        data: alignSeries(s.points, labelMap.buckets, 'v'),
         borderColor: palette[i % palette.length],
         backgroundColor: 'transparent',
         borderWidth: 1.4, tension: 0.3, pointRadius: 0,
@@ -284,13 +284,13 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
     bundleSeries.forEach((s, i) => {
       bundleDatasets.push({
         label: s.app + ' Â· initialKB',
-        data: this.align(s.points, labelMap.buckets, 'v'),
+        data: alignSeries(s.points, labelMap.buckets, 'v'),
         backgroundColor: palette[(i * 2) % palette.length],
         stack: s.app,
       });
       bundleDatasets.push({
         label: s.app + ' Â· lazyKB',
-        data: this.align(s.points, labelMap.buckets, 'v2'),
+        data: alignSeries(s.points, labelMap.buckets, 'v2'),
         backgroundColor: palette[(i * 2 + 1) % palette.length],
         stack: s.app,
       });
@@ -312,7 +312,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       labels: labelMap.labels,
       datasets: errorSeries.map((s, i) => ({
         label: s.app,
-        data: this.align(s.points, labelMap.buckets, 'v'),
+        data: alignSeries(s.points, labelMap.buckets, 'v'),
         backgroundColor: palette[i % palette.length],
       })),
       yLabel: 'count',
@@ -325,7 +325,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       labels: labelMap.labels,
       datasets: restartSeries.map((s, i) => ({
         label: s.app,
-        data: this.align(s.points, labelMap.buckets, 'v'),
+        data: alignSeries(s.points, labelMap.buckets, 'v'),
         backgroundColor: palette[i % palette.length],
       })),
       yLabel: 'count',
@@ -356,7 +356,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       if (points.length) passRateByApp.set(app, points);
     }
     const passRateSeries: Series[] = [...passRateByApp.entries()].map(([app, points]) => ({ app, points }));
-    const passRateLabels = this.unionLabels([passRateSeries], win);
+    const passRateLabels = unionLabels([passRateSeries], win);
     this.testPassRateChart?.setData({
       title: 'Test pass rate',
       subtitle: 'passed/total per ' + (win === '24h' ? 'hour' : 'day') + ', from daimon test runs',
@@ -364,7 +364,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       labels: passRateLabels.labels,
       datasets: passRateSeries.map((s, i) => ({
         label: s.app,
-        data: this.align(s.points, passRateLabels.buckets, 'v'),
+        data: alignSeries(s.points, passRateLabels.buckets, 'v'),
         borderColor: palette[i % palette.length],
         backgroundColor: 'transparent',
         borderWidth: 1.4, tension: 0.3, pointRadius: 0,
@@ -389,6 +389,41 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
         backgroundColor: tertiary,
       }],
       yLabel: 'count',
+    });
+
+    // Resource series (M109, v1.3 — experimental): rss/cpu ride the same
+    // batched perApp fetch above (see TREND_METRICS), so this is purely
+    // shaping — no extra round-trip.
+    const rssSeries = collect('rss');
+    const cpuSeries = collect('cpu');
+    const resourceLabels = unionLabels([rssSeries, cpuSeries], win);
+    this.rssChart?.setData({
+      title: 'RSS (MB)',
+      subtitle: 'avg MB per ' + (win === '24h' ? 'hour' : 'day'),
+      chartType: 'line',
+      labels: resourceLabels.labels,
+      datasets: rssSeries.map((s, i) => ({
+        label: s.app,
+        data: alignSeries(s.points, resourceLabels.buckets, 'v'),
+        borderColor: palette[i % palette.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.4, tension: 0.3, pointRadius: 0,
+      })),
+      yLabel: 'MB',
+    });
+    this.cpuChart?.setData({
+      title: 'CPU (%)',
+      subtitle: 'avg % per ' + (win === '24h' ? 'hour' : 'day'),
+      chartType: 'line',
+      labels: resourceLabels.labels,
+      datasets: cpuSeries.map((s, i) => ({
+        label: s.app,
+        data: alignSeries(s.points, resourceLabels.buckets, 'v'),
+        borderColor: palette[i % palette.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.4, tension: 0.3, pointRadius: 0,
+      })),
+      yLabel: '%',
     });
 
     if (this.showSelf()) {
@@ -429,21 +464,4 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
     return d.getTime();
   }
 
-  private unionLabels(seriesGroups: Series[][], win: Window): { buckets: number[]; labels: string[] } {
-    const set = new Set<number>();
-    for (const group of seriesGroups) for (const s of group) for (const p of s.points) set.add(p.t);
-    const buckets = [...set].sort((a, b) => a - b);
-    return { buckets, labels: buckets.map(t => fmtBucketLabel(t, win)) };
-  }
-
-  private align(points: SeriesPoint[], buckets: number[], key: 'v' | 'v2'): number[] {
-    const m = new Map<number, SeriesPoint>();
-    for (const p of points) m.set(p.t, p);
-    return buckets.map(t => {
-      const p = m.get(t);
-      if (!p) return 0;
-      const v = key === 'v' ? p.v : p.v2;
-      return typeof v === 'number' ? v : 0;
-    });
-  }
 }

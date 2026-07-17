@@ -1,11 +1,32 @@
 import pidusage from 'pidusage';
 import type { Registry } from './registry.js';
 
+// Resource sampling (M105): the existing 2s pidusage tick gains a per-app
+// downsampler that hands one reading per app per `sampleMs` to the daemon
+// (history persistence + resource guards). One timer total — sampling rides
+// this poll, never a second one. Live TUI numbers are untouched.
+export interface UsageSampling {
+  // Downsample cadence in ms. 0 disables sampling entirely (the live
+  // usage display is unaffected); readings can never arrive faster than
+  // the poll interval regardless of this value.
+  sampleMs: number;
+  onSample: (name: string, ts: number, rssBytes: number, cpuPct: number) => void;
+  // Called on the FIRST onSample failure per app only, then silence until
+  // that app's sampling recovers — fail-soft, never per-tick noise.
+  onSampleError?: (name: string, err: unknown) => void;
+}
+
 export class UsageMonitor {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private readonly lastSampleTs = new Map<string, number>();
+  private readonly sampleFailed = new Set<string>();
 
-  constructor(private readonly registry: Registry, private readonly intervalMs = 2000) {
+  constructor(
+    private readonly registry: Registry,
+    private readonly intervalMs = 2000,
+    private readonly sampling?: UsageSampling,
+  ) {
     this.timer = setInterval(() => this.tick(), intervalMs);
   }
 
@@ -36,7 +57,10 @@ export class UsageMonitor {
             s.memMB = memMB;
             changed = true;
           }
+          this.maybeSample(name, u.memory, cpu);
         } catch {
+          // Dead pid / pidusage error: clear the live reading and skip the
+          // sample. Sampling for the other apps continues untouched.
           const s = this.registry.getState(name);
           if (s && (s.cpu != null || s.memMB != null)) {
             s.cpu = null;
@@ -47,5 +71,24 @@ export class UsageMonitor {
       })
     );
     if (changed) this.registry.emit('change');
+  }
+
+  private maybeSample(name: string, rssBytes: number, cpuPct: number): void {
+    if (!this.sampling || !(this.sampling.sampleMs > 0)) return;
+    const now = Date.now();
+    const last = this.lastSampleTs.get(name) ?? 0;
+    if (now - last < this.sampling.sampleMs) return;
+    this.lastSampleTs.set(name, now);
+    try {
+      this.sampling.onSample(name, now, rssBytes, cpuPct);
+      this.sampleFailed.delete(name);
+    } catch (err) {
+      // Per-app fail-soft: one error callback on entry into the failed state,
+      // then silence until a sample for this app succeeds again.
+      if (!this.sampleFailed.has(name)) {
+        this.sampleFailed.add(name);
+        try { this.sampling.onSampleError?.(name, err); } catch {}
+      }
+    }
   }
 }

@@ -52,6 +52,7 @@ export const CONFIG_KEY_STABILITY: Record<string, import('./stability.js').Stabi
   search: 'stable',
   ports: 'experimental', // v0.13 (M81)
   groups: 'experimental', // v1.1 (M93)
+  resources: 'experimental', // v1.3 (M105/M108)
   // logs.storm (v1.2, M101) is an experimental SUB-key of the stable `logs`
   // parent — like notifications.kinds/quietHours/batchMs (M84) it is
   // documented in the docs' sub-key note, NOT listed here: a catalog entry
@@ -478,6 +479,42 @@ function validate(raw: unknown, source: string): AppmanConfig {
         }
       }
       cfg.groups = out;
+    }
+  }
+
+  if (obj.resources !== undefined) {
+    // Resource sampling + warn-only budgets (v1.3). A broken field falls back
+    // to "absent" (its default) rather than poisoning the object; budgets are
+    // advisory numbers — enforcement does not exist anywhere (warn-never-kill).
+    const r = obj.resources as any;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) {
+      warn(`"resources" must be an object (${source})`);
+    } else {
+      // Explicit null = "absent" for every field (the ports.pool convention),
+      // so the example config can show the keys without activating them.
+      const out: import('./types.js').ResourcesConfig = {};
+      if (r.sampleMs !== undefined && r.sampleMs !== null) {
+        if (typeof r.sampleMs === 'number' && Number.isFinite(r.sampleMs) && r.sampleMs >= 0) {
+          out.sampleMs = Math.floor(r.sampleMs);
+        } else {
+          warn(`"resources.sampleMs" must be a number >= 0 (0 disables sampling) (${source})`);
+        }
+      }
+      if (r.rssMb !== undefined && r.rssMb !== null) {
+        if (typeof r.rssMb === 'number' && Number.isFinite(r.rssMb) && r.rssMb > 0) {
+          out.rssMb = r.rssMb;
+        } else {
+          warn(`"resources.rssMb" must be a positive number of megabytes (${source})`);
+        }
+      }
+      if (r.cpuPct !== undefined && r.cpuPct !== null) {
+        if (typeof r.cpuPct === 'number' && Number.isFinite(r.cpuPct) && r.cpuPct > 0) {
+          out.cpuPct = r.cpuPct;
+        } else {
+          warn(`"resources.cpuPct" must be a positive percentage (${source})`);
+        }
+      }
+      cfg.resources = out;
     }
   }
 

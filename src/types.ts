@@ -117,6 +117,21 @@ export interface PortsConfig {
   pool?: string | null;
 }
 
+// Resource awareness (v1.3 — experimental). All keys optional; an absent
+// `resources` object = default-cadence sampling and no budget checks.
+// Budgets WARN, NEVER KILL — crossing one raises a resource-budget-exceeded
+// event with a remedy; no code path may touch the process (M108 grep suite).
+export interface ResourcesConfig {
+  // Sampling cadence for resource_samples in ms (M105). Absent = 30000;
+  // 0 disables persistence entirely (live usage display unaffected).
+  sampleMs?: number;
+  // Warn-only budgets (M108): RSS in MB / CPU in percent, crossed for a
+  // full window before one resource-budget-exceeded event fires. Absent
+  // key = no check for that axis.
+  rssMb?: number;
+  cpuPct?: number;
+}
+
 // Named app group (M93). Raw config accepts `name: string[]` (the legacy
 // profiles shorthand) or `name: { apps, autoStart? }`; both normalize to this
 // shape at load. Groups are start units consumed by `up`/`stop <group>`,
@@ -183,6 +198,9 @@ export interface AppmanConfig {
   ports?: PortsConfig;
   // Named app groups (M93, v1.1) — normalized at load; absent = no groups.
   groups?: Record<string, GroupDef>;
+  // Resource sampling + warn-only budgets (v1.3) — absent = v1.2 behavior
+  // with default-cadence sampling.
+  resources?: ResourcesConfig;
 }
 
 export interface SearchRoot {
@@ -207,6 +225,9 @@ export interface AppOverride {
   testCommand?: string;
   // Per-app opt-out of log-line FTS indexing (M77).
   logIndex?: boolean;
+  // Per-app resource budgets (M108) — merged over the global `resources`
+  // budgets key-by-key (override wins per key). sampleMs is global-only.
+  resources?: { rssMb?: number; cpuPct?: number };
 }
 
 // Built-in profile ids. DiscoveredApp.serverProfile is a plain string because
@@ -318,6 +339,9 @@ export const EVENT_KIND_STABILITY = {
   'digest-sent': 'experimental', // v0.13 (M84)
   'log-storm': 'experimental', // v1.2 (M101)
   'log-storm-end': 'experimental', // v1.2 (M101)
+  'resource-leak-suspect': 'experimental', // v1.3 (M107)
+  'cpu-storm': 'experimental', // v1.3 (M108)
+  'resource-budget-exceeded': 'experimental', // v1.3 (M108)
 } as const satisfies Record<string, import('./stability.js').Stability>;
 
 export type AppEventType = keyof typeof EVENT_KIND_STABILITY;

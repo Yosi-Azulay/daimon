@@ -81,7 +81,16 @@ type Op =
   | { kind: 'compile'; row: { ts: number; app: string; ms: number } }
   | { kind: 'bundle'; row: { ts: number; app: string; initialKB: number; lazyKB: number; fileCount: number } }
   | { kind: 'task'; row: { ts: number; app: string; task: string; exit_code: number | null; duration_ms: number | null; summary: string | null } }
-  | { kind: 'log'; row: { ts: number; app: string; line: string; level: string | null } };
+  | { kind: 'log'; row: { ts: number; app: string; line: string; level: string | null } }
+  | { kind: 'resource'; row: { ts: number; app: string; rss: number; cpu: number } };
+
+// One downsampled pidusage reading (M105). rss in bytes, cpu in percent.
+export interface ResourceSampleRow {
+  app: string;
+  ts: number;
+  rss: number | null;
+  cpu: number | null;
+}
 
 export interface SearchHit {
   kind: 'logs' | 'errors' | 'events';
@@ -310,6 +319,13 @@ export class History {
         json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS env_snapshots_app_ts ON env_snapshots(app, ts);
+      CREATE TABLE IF NOT EXISTS resource_samples (
+        app TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        rss INTEGER,
+        cpu REAL
+      );
+      CREATE INDEX IF NOT EXISTS resource_samples_app_ts ON resource_samples(app, ts);
       CREATE TABLE IF NOT EXISTS self_metrics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,
@@ -610,6 +626,26 @@ export class History {
     });
   }
 
+  // Resource samples (M105) ride the batched flush queue like log lines —
+  // sampling must move neither the write path nor the idle-CPU baseline
+  // (both bench-measured in test/resource-sampling.test.mjs).
+  recordResourceSample(app: string, rssBytes: number, cpuPct: number, ts = Date.now()): void {
+    if (!this.db) return;
+    this.queue.push({ kind: 'resource', row: { ts, app, rss: Math.round(rssBytes), cpu: cpuPct } });
+  }
+
+  queryResourceSamples(opts: { app?: string; since?: number; until?: number; limit?: number } = {}): ResourceSampleRow[] {
+    if (!this.db) return [];
+    const wh: string[] = [];
+    const args: any[] = [];
+    if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+    if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+    if (opts.until != null) { wh.push('ts <= ?'); args.push(opts.until); }
+    const sql = `SELECT app, ts, rss, cpu FROM resource_samples ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`;
+    args.push(opts.limit ?? 2000);
+    try { return this.prepared(sql).all(...args) as ResourceSampleRow[]; } catch { return []; }
+  }
+
   recordCompile(app: string, ms: number, ts = Date.now()): void {
     if (!this.db) return;
     this.queue.push({ kind: 'compile', row: { ts, app, ms } });
@@ -644,12 +680,14 @@ export class History {
       const insTk = this.db.prepare('INSERT INTO task_runs (ts,app,task,exit_code,duration_ms,summary) VALUES (?,?,?,?,?,?)');
       const insBd = this.db.prepare('INSERT INTO bundles (ts,app,initialKB,lazyKB,fileCount) VALUES (?,?,?,?,?)');
       const insLg = this.db.prepare('INSERT INTO log_lines (ts,app,line,level) VALUES (?,?,?,?)');
+      const insRs = this.db.prepare('INSERT INTO resource_samples (ts,app,rss,cpu) VALUES (?,?,?,?)');
       const tx = this.db.transaction((ops: Op[]) => {
         for (const op of ops) {
           if (op.kind === 'event') insEv.run(op.row.ts, op.row.app, op.row.type, op.row.from_state, op.row.to_state, op.row.message);
           else if (op.kind === 'compile') insCm.run(op.row.ts, op.row.app, op.row.ms);
           else if (op.kind === 'bundle') insBd.run(op.row.ts, op.row.app, op.row.initialKB, op.row.lazyKB, op.row.fileCount);
           else if (op.kind === 'log') insLg.run(op.row.ts, op.row.app, op.row.line, op.row.level);
+          else if (op.kind === 'resource') insRs.run(op.row.ts, op.row.app, op.row.rss, op.row.cpu);
           else insTk.run(op.row.ts, op.row.app, op.row.task, op.row.exit_code, op.row.duration_ms, op.row.summary);
         }
       });
@@ -685,6 +723,7 @@ export class History {
       this.db.prepare('DELETE FROM test_runs WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM crashes WHERE ts < ?').run(cutoff);
       this.db.prepare('DELETE FROM env_snapshots WHERE ts < ?').run(cutoff);
+      this.db.prepare('DELETE FROM resource_samples WHERE ts < ?').run(cutoff);
       // FTS shadows cascade via the AFTER DELETE triggers.
       this.db.prepare('DELETE FROM log_lines WHERE ts < ?').run(cutoff);
     } catch (err: any) {
@@ -729,7 +768,7 @@ export class History {
     return this.prepared(sql).all(...args) as BundleRow[];
   }
 
-  trends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts'; sinceMs: number; bucketMs: number }): { points: { t: number; v: number; v2?: number }[]; count: number } {
+  trends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu'; sinceMs: number; bucketMs: number }): { points: { t: number; v: number; v2?: number }[]; count: number } {
     if (!this.db) return { points: [], count: 0 };
     const sinceTs = Date.now() - opts.sinceMs;
     const bucket = opts.bucketMs;
@@ -762,6 +801,16 @@ export class History {
         cur.n += 1;
         buckets.set(b, cur);
       }
+    } else if (opts.metric === 'rss' || opts.metric === 'cpu') {
+      // Resource series (M109, v1.3): bucket-averaged rss (MB) / cpu (%)
+      // from resource_samples. Null readings are skipped, not zeroed.
+      const rows = this.queryResourceSamples({ app: opts.app, since: sinceTs, limit: 10000 });
+      for (const r of rows) {
+        const raw = opts.metric === 'rss' ? r.rss : r.cpu;
+        if (raw == null) continue;
+        bumpAvg(r.ts, opts.metric === 'rss' ? raw / (1024 * 1024) : raw);
+        count++;
+      }
     } else if (opts.metric === 'errors') {
       const rows = this.queryEvents({ app: opts.app, since: sinceTs, limit: 10000 });
       for (const r of rows) {
@@ -778,8 +827,10 @@ export class History {
     const points: { t: number; v: number; v2?: number }[] = [];
     const sorted = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
     for (const [t, v] of sorted) {
-      if (opts.metric === 'compile' || opts.metric === 'bundle') {
+      if (opts.metric === 'compile' || opts.metric === 'bundle' || opts.metric === 'rss') {
         points.push({ t, v: Math.round(v.sum / v.n), ...(v.sum2 != null ? { v2: Math.round(v.sum2 / v.n) } : {}) });
+      } else if (opts.metric === 'cpu') {
+        points.push({ t, v: Math.round((v.sum / v.n) * 10) / 10 });
       } else {
         points.push({ t, v: v.sum });
       }

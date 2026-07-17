@@ -95,6 +95,7 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/api/env/:name', stability: 'experimental', summary: 'Redacted env awareness (names only, never values).' },
   { method: 'GET', path: '/api/env/:name/diff', stability: 'experimental', summary: 'Env snapshot diff (?from=, ?to=).' },
   { method: 'GET', path: '/api/ports', stability: 'experimental', summary: 'Port map + foreign holders.' },
+  { method: 'GET', path: '/api/top', stability: 'experimental', summary: 'Live resource table: app → pid → rssMB → cpu → uptimeMs, RSS-sorted; nulls for apps without a reading (v1.3).' },
   { method: 'POST', path: '/api/apps/:name/mute', stability: 'experimental', summary: 'Mute OS notifications ({ forMs }).' },
 
   // ── experimental: v1.1 groups (M93–M95) ───────────────────────────────────

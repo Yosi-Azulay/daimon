@@ -60,6 +60,25 @@ test('load-time: $schema tolerated silently; known keys never trip the unknown-k
   assert.ok(!configValidationWarnings().some(w => w.includes('unknown config key')), 'no known key flagged unknown');
 });
 
+test('resources key (v1.3): valid fields load, nulls mean absent, broken fields warn and fall back', () => {
+  const cfg = validateConfig({ resources: { sampleMs: 15000, rssMb: 800, cpuPct: 75 } }, 'test');
+  assert.deepEqual(cfg.resources, { sampleMs: 15000, rssMb: 800, cpuPct: 75 });
+  // Explicit nulls (the example-config idiom) = absent, zero warnings.
+  const cfg2 = validateConfig({ resources: { sampleMs: null, rssMb: null, cpuPct: null } }, 'test');
+  assert.deepEqual(cfg2.resources, {});
+  assert.ok(!configValidationWarnings().some(w => w.includes('resources')), 'nulls never warn');
+  // Broken fields warn and fall back to absent — never poison the object.
+  const cfg3 = validateConfig({ resources: { sampleMs: -5, rssMb: 'big', cpuPct: 50 } }, 'test');
+  assert.deepEqual(cfg3.resources, { cpuPct: 50 });
+  assert.ok(configValidationWarnings().some(w => w.includes('resources.sampleMs')));
+  assert.ok(configValidationWarnings().some(w => w.includes('resources.rssMb')));
+  // sampleMs 0 (disable) is valid, not a warning.
+  const cfg4 = validateConfig({ resources: { sampleMs: 0 } }, 'test');
+  assert.deepEqual(cfg4.resources, { sampleMs: 0 });
+  // An untouched config has no resources object at all (= v1.2 behavior).
+  assert.equal(validateConfig({}, 'test').resources, undefined);
+});
+
 test('config validate: typo key -> ok:true, warning with suggestion, exit 0', async () => {
   const dir = fs.mkdtempSync(path.join(tmp, 'typo-'));
   fs.writeFileSync(path.join(dir, 'daimon.config.json'), JSON.stringify({ serchRoots: ['./x'], apiPort: 5001 }));

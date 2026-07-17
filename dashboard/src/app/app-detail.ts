@@ -28,6 +28,7 @@ import { MetricsChartComponent } from './metrics-chart';
 import { StatusPillComponent, EmptyStateComponent, MonoComponent, SkeletonComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
 import { groupsForApp } from './groups-helpers';
+import { hasResourceNote } from './app-detail-helpers';
 
 Chart.register(...registerables);
 
@@ -447,6 +448,16 @@ interface EnvInfo {
                   </section>
                 </div>
 
+                @if (showResourceNote(w.resourceNote)) {
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">
+                      <span class="material-symbols-outlined dm-why-note-icon" aria-hidden="true">memory</span>
+                      Resource note
+                    </h3>
+                    <div class="dm-why-note" role="note">{{ w.resourceNote }}</div>
+                  </section>
+                }
+
                 @if (w.errorGroups.length) {
                   <section class="dm-panel">
                     <h3 class="dm-panel-title">Recent error groups (24h)</h3>
@@ -751,6 +762,15 @@ interface EnvInfo {
     .dm-doc-bad { color: var(--mat-sys-error); }
     .dm-why-details { margin-top: .5rem; font-size: .8125rem; color: var(--mat-sys-on-surface-variant); }
     .dm-why-details summary { cursor: pointer; }
+    .dm-why-note-icon { font-size: 18px; vertical-align: middle; color: var(--mat-sys-tertiary); }
+    .dm-why-note {
+      padding: .65rem .85rem;
+      border-radius: 10px;
+      background: color-mix(in oklch, var(--mat-sys-tertiary) 12%, transparent);
+      border: 1px solid color-mix(in oklch, var(--mat-sys-tertiary) 28%, transparent);
+      color: var(--mat-sys-on-surface);
+      font-size: .875rem;
+    }
     .dm-why-lines {
       margin: .5rem 0 0; padding: .5rem .625rem;
       background: var(--mat-sys-surface); border: 1px solid var(--mat-sys-outline-variant); border-radius: 8px;
@@ -972,6 +992,13 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
 
   envChangedCount(ec: NonNullable<AppWhy['envChanged']>): number {
     return ec.keysAdded.length + ec.keysRemoved.length + ec.keysChanged.length;
+  }
+
+  // M109 (v1.3, experimental): show/hide the Why panel's resource note.
+  // Delegates to the pure predicate in app-detail-helpers.ts so it's
+  // testable without booting Angular; the template calls this wrapper.
+  showResourceNote(note: string | null | undefined): boolean {
+    return hasResourceNote(note);
   }
 
   fmtWhyAgo(ts: number): string {

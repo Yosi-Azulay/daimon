@@ -42,6 +42,17 @@ src/
                     # log-storm-end on recovery. Baseline FROZEN at entry, exit at
                     # half the entry threshold (hysteresis) — flapping can't spam.
                     # One 15s unref'd tick only to end storms of silent apps.
+  usage.ts          # UsageMonitor: the ONE 2s pidusage poll (live TUI numbers) +
+                    # the M105 per-app downsampler (resources.sampleMs, default 30s,
+                    # 0 disables) feeding resource_samples + the resource guard.
+                    # Never add a second poller.
+  resources.ts      # Resource guardrails (v1.3, M107/M108): pure, IMPORT-FREE
+                    # detector module — leak suspicion, cpu-storm, warn-only
+                    # budgets. Self-calibrating (warm-up median + MAD per run;
+                    # multipliers are internal constants, never config). One
+                    # event per episode, re-arm on return-to-baseline/restart.
+                    # WARN, NEVER KILL: no resource code path can signal a
+                    # process — test/resource-guardrails.test.mjs greps for it.
   agents.ts         # Agent identity (`<host>-<pid>-<rand4>`) + 30s per-app LockManager.
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
@@ -85,7 +96,7 @@ src/
   mcp.ts            # MCP server. Wraps the HTTP API and forwards X-Daimon-Agent.
   ...
 dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
-test/               # node --test suite. 715 test cases (v1.2); files run in parallel child processes.
+test/               # node --test suite. 772 test cases (v1.3); files run in parallel child processes.
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
 
@@ -94,9 +105,9 @@ vscode-extension/   # VS Code extension (published as flycotech.daimon). Indepen
 | Purpose | Command (repo root unless noted) | Runtime | Success signal |
 |---|---|---|---|
 | Build daemon | `npm run build` | ~5s | exit 0, silent; `dist/*.js` refreshed |
-| Full test suite | `npm test` | ~2 min | TAP tail: `# pass 571`, `# fail 0` |
+| Full test suite | `npm test` | ~1 min | TAP tail: `# pass 772`, `# fail 0` |
 | One test file | `node --test test/<name>.test.mjs` | 3–60s | `# fail 0` |
-| Dashboard unit | `npx vitest run` (in `dashboard/`) | ~5s | `Tests  17 passed` |
+| Dashboard unit | `npx vitest run` (in `dashboard/`) | ~5s | `Tests  68 passed` (count grows; signal is 0 failed) |
 | Dashboard bundle | `npm run build:dashboard` | ~30s | `Application bundle generation complete` → `dist/dashboard` |
 | VS Code ext compile | `npm run compile` (in `vscode-extension/`) | ~3s | exit 0 |
 | Docs regen | `npm run build:docs` | ~1s | `[build-docs] wrote …docs/index.html` (idempotent — needs fresh `dist/`) |
@@ -156,6 +167,36 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 
 - **Log-level classification is registry-declared and fail-soft (M99, v1.2).** A framework's level convention lives in its `FrameworkProfile.logLevelPatterns` row (ordered `{ pattern, level }`, first match wins, compiled once) — set ONLY where the framework documents its output format, fixture-gated like every registry field: a profile shipping patterns without covering `logLines` cases in its fixture fails `test/frameworks.test.mjs`, and so does a pattern no fixture line exercises. Profiles without documented conventions get NO patterns (the shared generic heuristic in logLevels.ts applies — never guess). Classification chains registry rows → generic heuristic → null and is FAIL-SOFT at ingest: any miss or throw stores the line with `level` null — a classifier bug may never drop or delay a log line. Storage is the additive nullable `level` column on `log_lines` (guarded ALTER; old rows read null). `--level` filters exclude unclassified lines by design.
 - **Log-storm detection is hysteresis-gated (M101, v1.2).** `src/logStorm.ts` keeps a per-app rolling lines/min baseline in memory (no tables); entry = observed ≥ `multiplier` × max(baseline, 1 line/min) with the baseline FROZEN at entry; exit at half the entry threshold — a flapping rate cannot spam events. Apps with <3 min of history never storm; `registry.start()` resets the app's rate history (fresh process, fresh baseline). Exactly one `log-storm` and one `log-storm-end` event per episode. The OS-notification kind `log-storm` is opt-in via `notifications.kinds`; the only timer is one 15s unref'd sweep that ends storms of silent apps — never add more.
+
+- **Resource guardrails WARN, NEVER KILL (v1.3, M105–M108).** No enforcement, no
+  auto-restart, no throttling, ever: the resource modules contain no code path
+  that can stop a process — `resources.ts` imports NOTHING (grep-enforced by
+  `test/resource-guardrails.test.mjs`, which also asserts behaviorally that
+  firing every resource event kind moves app state by zero fields). Sampling
+  rides the existing UsageMonitor poll (one timer — the digest-is-not-a-cron
+  ethos); heuristics self-calibrate against each app's own warm-up baseline
+  (median + MAD) with internal-constant multipliers — never a config knob, never
+  a magic absolute (the one floor pattern follows logStorm's 1-line/min
+  precedent). Budgets (`resources.rssMb/cpuPct` + per-app overrides) are the
+  only absolute comparisons because the USER set them — and they still only
+  warn. New notification kinds are opt-in via `notifications.kinds`. Every
+  remedy string restates "daimon only warns — it never kills".
+
+## v1.3 highlights (what landed this release)
+
+- **Guardrails (M105–M110)**: `resource_samples` table (additive, retention-pruned)
+  fed by a downsampler on the UsageMonitor poll (`resources.sampleMs`, 0 disables;
+  fail-soft per app; write-path + sampling-CPU benches in
+  `test/resource-sampling.test.mjs`); `daimon top` / `GET /api/top` / MCP
+  `daimon_top` (29 tools) — live RSS-sorted table, nulls never errors;
+  self-calibrating leak suspicion (`resource-leak-suspect`) and CPU storms
+  (`cpu-storm`) with episode/re-arm semantics; warn-only budgets
+  (`resource-budget-exceeded`); Trends rss/cpu series; `why` gains
+  `resources` + `resourceNote` (crash inside an open suspicion window); doctor
+  `cpu-storm-active` (advise-only); report `resources` section (degradable).
+  All new surfaces `experimental`. Tests: `test/resource-sampling.test.mjs`,
+  `test/resource-top.test.mjs`, `test/resource-leak.test.mjs`,
+  `test/resource-guardrails.test.mjs`, `test/resource-surfacing.test.mjs`.
 
 ## v1.2 highlights (what landed this release)
 

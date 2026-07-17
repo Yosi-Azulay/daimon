@@ -29,6 +29,7 @@ import { detectBundleRegression, detectCompileRegression, detectErrorFlapRegress
 import { allProfiles, type LogLevel } from './frameworks.js';
 import { makeClassifier } from './logLevels.js';
 import { LogStormDetector } from './logStorm.js';
+import { ResourceGuard } from './resources.js';
 import { compileParseContext } from './parser.js';
 import { findFlakyTests, gitHeadForDir, resolveTestCommand, runTestCommand, testFailureFingerprint, type TestFailure, type TestTotals } from './testRunners.js';
 
@@ -79,6 +80,32 @@ export class Registry extends EventEmitter {
       }),
     });
     this.logStormDetector.start();
+    // Resource guardrails (v1.3): verdicts against each app's own baseline,
+    // one event per episode, remedy text in every payload. The notification
+    // kinds are separate opt-ins (notifications.kinds) — with a default
+    // config these stay self-events + webhooks, zero OS noise.
+    this.resourceGuard = new ResourceGuard({
+      budgets: app => {
+        const c = this.getConfig();
+        const g = c.resources ?? {};
+        const o = c.overrides?.[app]?.resources ?? {};
+        const rssMb = o.rssMb ?? g.rssMb;
+        const cpuPct = o.cpuPct ?? g.cpuPct;
+        return rssMb == null && cpuPct == null ? undefined : { rssMb, cpuPct };
+      },
+      onLeakSuspect: info => this.recordEvent({
+        app: info.app, type: 'resource-leak-suspect',
+        message: JSON.stringify({ baselineRssMB: info.baselineRssMB, currentRssMB: info.currentRssMB, growthMB: info.growthMB, growthPerMinMB: info.growthPerMinMB, windowMs: info.windowMs, remedy: info.remedy }),
+      }),
+      onCpuStorm: info => this.recordEvent({
+        app: info.app, type: 'cpu-storm',
+        message: JSON.stringify({ baselineCpuPct: info.baselineCpuPct, baselineP95Pct: info.baselineP95Pct, windowMeanPct: info.windowMeanPct, windowMs: info.windowMs, remedy: info.remedy }),
+      }),
+      onBudgetExceeded: info => this.recordEvent({
+        app: info.app, type: 'resource-budget-exceeded',
+        message: JSON.stringify({ metric: info.metric, observed: info.observed, peak: info.peak, budget: info.budget, windowMs: info.windowMs, remedy: info.remedy }),
+      }),
+    });
     for (const app of apps) {
       this.entries.set(app.name, {
         app,
@@ -228,6 +255,24 @@ export class Registry extends EventEmitter {
   // Log-storm detector (M101). Assigned in the constructor; declared here
   // next to the other cross-cutting monitors.
   private logStormDetector!: LogStormDetector;
+
+  // Resource guardrails (v1.3, M107/M108). Fed by the UsageMonitor downsampler
+  // via noteResourceSample; emits the three warn-only resource event kinds.
+  // WARN, NEVER KILL: neither the guard nor any consumer of its events may
+  // touch a process — test/resource-guardrails.test.mjs greps for violations.
+  private resourceGuard!: ResourceGuard;
+
+  noteResourceSample(name: string, ts: number, rssBytes: number, cpuPct: number): void {
+    this.resourceGuard.note(name, ts, rssBytes, cpuPct);
+  }
+
+  resourceState(name: string): import('./resources.js').ResourceGuardState {
+    return this.resourceGuard.state(name);
+  }
+
+  activeResourceEpisodes(): { app: string; kind: 'leak' | 'cpu-storm' | 'budget-rss' | 'budget-cpu'; since: number }[] {
+    return this.resourceGuard.activeEpisodes();
+  }
 
   logStormState(name: string): import('./logStorm.js').LogStormState {
     return this.logStormDetector.state(name);
@@ -841,8 +886,10 @@ export class Registry extends EventEmitter {
     });
     e.proc = proc;
     // Fresh process, fresh rate history: a restart burst must not compare
-    // against the previous process's baseline (M101).
+    // against the previous process's baseline (M101). Same for the resource
+    // baseline (M107): recalibrate on every restart, episodes re-arm silently.
     this.logStormDetector.reset(name);
+    this.resourceGuard.reset(name);
     this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'starting' });
     proc.start();
     return { ok: true, status: e.state.status };

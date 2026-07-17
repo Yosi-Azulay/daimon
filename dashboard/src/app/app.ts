@@ -19,7 +19,11 @@ const WS_KEY = 'daimon.workspace';
     <div class="dm-shell">
       <dm-nav-rail></dm-nav-rail>
       <dm-topbar></dm-topbar>
-      <main id="dm-main-content" class="dm-main" tabindex="-1">
+      <!-- tabindex 0 (not -1): the main region scrolls, and a scrollable
+           region must be keyboard-reachable (axe scrollable-region-focusable
+           — surfaced on /agents once its content grew past the viewport).
+           Still serves as the skip-link target. -->
+      <main id="dm-main-content" class="dm-main" tabindex="0">
         @if (api.cwdUnknown() && api.cwdHint(); as cwd) {
           <div class="dm-cwd-banner" role="status">
             <span class="material-symbols-outlined">help_outline</span>
