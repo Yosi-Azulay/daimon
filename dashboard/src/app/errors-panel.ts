@@ -182,12 +182,15 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
                       }
                       <span class="eb">{{ g.errors.length }}</span>
                     </mat-panel-title>
-                    <mat-panel-description>
-                      <a class="lnk" [routerLink]="['/apps', g.key]" (click)="$event.stopPropagation()">
-                        Open app<span class="material-symbols-outlined">chevron_right</span>
-                      </a>
-                    </mat-panel-description>
                   </mat-expansion-panel-header>
+                  <!-- Outside the header: a focusable link nested inside the
+                       button-role panel header is an axe nested-interactive
+                       (WCAG A) violation. -->
+                  <div class="lnk-row">
+                    <a class="lnk" [routerLink]="['/apps', g.key]">
+                      Open app<span class="material-symbols-outlined">chevron_right</span>
+                    </a>
+                  </div>
                   <div class="rows" [class.rows-nofile]="g.allMissingFile">
                     @for (e of g.errors; track $index) {
                       <div class="row" [class.is-warning]="e.level === 'warning'" [class.is-lint]="e.level === 'lint'">
@@ -383,6 +386,7 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
     mat-panel-title{display:flex;align-items:center;gap:.5rem;flex:1;min-width:0}
     mat-panel-description{justify-content:flex-end;color:var(--mat-sys-on-surface-variant)}
     .eb{display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;font:600 .75rem/1rem Roboto;background:color-mix(in oklch,var(--mat-sys-error) var(--dm-badge-tint),transparent);color:var(--mat-sys-error);border:1px solid color-mix(in oklch,var(--mat-sys-error) 30%,transparent);margin-left:.25rem}
+    .lnk-row{display:flex;justify-content:flex-end;padding:.25rem .5rem 0}
     .lnk{display:inline-flex;align-items:center;gap:.125rem;color:var(--mat-sys-primary);text-decoration:none;font:500 .8125rem/1.25rem Roboto}
     .lnk:hover{text-decoration:underline}
     .lnk .material-symbols-outlined{font-size:16px}

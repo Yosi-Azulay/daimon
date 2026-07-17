@@ -197,6 +197,39 @@ test('empty history: every section degrades to a note, never an error', () => {
   }
   // uptime with a known app but no events → row with null uptime, no throw.
   assert.ok(r.sections.uptime.apps || r.sections.uptime.note);
+  // M103: empty log history degrades the log-volume line to its own note.
+  assert.ok(r.sections.errors.logVolume?.note, `logVolume note (${JSON.stringify(r.sections.errors.logVolume)})`);
+  h.close();
+});
+
+test('log volume line (M103): matches independently-queried counts; renders in --md', () => {
+  const now = Date.now();
+  const dbPath = path.join(tmp, 'logvolume.db');
+  const h = new History({ enabled: true, path: dbPath, retentionDays: 7 });
+  // 10 lines: 3 error, 2 warn, 5 unclassified — plus one storm event.
+  for (let i = 0; i < 3; i++) h.recordLogLine('alpha', `ERROR boom ${i}`, now - (i + 1) * 60_000, 'error');
+  for (let i = 0; i < 2; i++) h.recordLogLine('alpha', `WARN careful ${i}`, now - (i + 1) * 30_000, 'warn');
+  for (let i = 0; i < 5; i++) h.recordLogLine('beta', `plain ${i}`, now - (i + 1) * 45_000, null);
+  h.recordEvent({ ts: now - HOUR, app: 'alpha', type: 'log-storm', message: JSON.stringify({ observedPerMin: 600, baselinePerMin: 30 }) });
+  h._flushForTest();
+  const cfg = baseCfg({ history: { enabled: true, path: dbPath, retentionDays: 7 } });
+  const reg = new Registry(cfg, [app('alpha'), app('beta')]);
+  reg.setHistory(h);
+
+  const r = buildReport({ registry: reg, history: h }, { since: now - 24 * HOUR, until: now });
+  const lv = r.sections.errors.logVolume;
+  assert.equal(lv.totalLines, 10);
+  assert.equal(lv.errorLines, 3);
+  assert.equal(lv.errorSharePct, 30);
+  assert.equal(lv.storms, 1);
+
+  // App scope narrows the volume.
+  const rAlpha = buildReport({ registry: reg, history: h }, { since: now - 24 * HOUR, until: now, app: 'alpha' });
+  assert.equal(rAlpha.sections.errors.logVolume.totalLines, 5);
+  assert.equal(rAlpha.sections.errors.logVolume.errorSharePct, 60);
+
+  const md = renderReportMd(r);
+  assert.ok(md.includes('log volume: 10 lines · 30% error-level · 1 storm'), `md line rendered (${md.split('\n').find(l => l.startsWith('log volume'))})`);
   h.close();
 });
 

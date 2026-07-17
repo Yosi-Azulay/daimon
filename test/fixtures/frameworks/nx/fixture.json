@@ -27,5 +27,27 @@
       "file": "apps/web/src/app/app.ts",
       "line": 3
     }
-  }
+  },
+  "logLines": [
+    {
+      "raw": "✘ [ERROR] TS2322: Type 'string' is not assignable to type 'number'.",
+      "level": "error"
+    },
+    {
+      "raw": "▲ [WARNING] Polyfill 'zone.js' is deprecated here.",
+      "level": "warn"
+    },
+    {
+      "raw": "ERROR in apps/web/src/main.ts:10:5",
+      "level": "error"
+    },
+    {
+      "raw": "WARNING in configuration 'development' does not set budgets.",
+      "level": "warn"
+    },
+    {
+      "raw": "> nx run web:serve:development",
+      "level": null
+    }
+  ]
 }

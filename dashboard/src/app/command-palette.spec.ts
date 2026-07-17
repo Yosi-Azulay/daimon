@@ -54,7 +54,9 @@ describe('command-palette search helpers', () => {
   });
 
   it('routeForHit sends logs to the app logs page, errors to the app errors tab, events to the timeline at ts', () => {
-    expect(routeForHit(hit({ kind: 'logs', app: 'web' }))).toBe('/logs/web');
+    // '?from=search' (M102) tells the Logs page to clear any active filter so
+    // the deep-linked buffer isn't hidden behind a stale level/regex filter.
+    expect(routeForHit(hit({ kind: 'logs', app: 'web' }))).toBe('/logs/web?from=search');
     expect(routeForHit(hit({ kind: 'errors', app: 'api' }))).toBe('/apps/api?tab=errors');
     expect(routeForHit(hit({ kind: 'events', app: 'api', ts: 12345 }))).toBe('/timeline?at=12345');
   });

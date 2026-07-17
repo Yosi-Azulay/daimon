@@ -247,7 +247,7 @@ ${renderMcp()}
 <h2 id="config">Config reference</h2>
 <p>The full annotated schema lives in <code>daimon.config.example.json</code>. Validate yours with <code>daimon doctor</code>. All keys with tiers:</p>
 ${renderConfigKeys()}
-<p>Experimental sub-keys inside stable parents: <code>notifications.kinds</code> / <code>notifications.quietHours</code> / <code>notifications.batchMs</code> and <code>webhooks[].digest</code> (v0.13).</p>
+<p>Experimental sub-keys inside stable parents: <code>notifications.kinds</code> / <code>notifications.quietHours</code> / <code>notifications.batchMs</code> and <code>webhooks[].digest</code> (v0.13); <code>logs.storm</code> (v1.2).</p>
 <p>Highlights:</p>
 <ul>
   <li><code>searchRoots</code> — array of paths (or <code>{path, label}</code>) to scan for projects.</li>
@@ -262,6 +262,7 @@ ${renderConfigKeys()}
   <li><code>restartStorm</code> — <code>{ perHour: 20 }</code> (v0.12): unrequested exits per hour before a single <code>restart-storm</code> event fires.</li>
   <li><code>search</code> — <code>{ logIndex: true }</code> (v0.12): global default for per-app log-line indexing; errors/events are always indexed.</li>
   <li><code>ports</code> — <code>{ pool: "4200-4299" }</code> (v0.13): opt-in auto-assignment; only frameworks whose registry row documents <code>portFlag</code>/<code>portEnv</code> participate.</li>
+  <li><code>logs.storm</code> — <code>{ multiplier: 10, windowSec: 60 }</code> (v1.2): tunes log-storm detection (a sustained spike vs the app's own lines/min baseline). Optional; detection always runs with the defaults and emits only self-events — the <code>log-storm</code> OS-notification kind is a separate opt-in via <code>notifications.kinds</code>. Custom framework profiles may also declare <code>logLevelPatterns</code> <code>[{pattern, level}]</code> rows (v1.2) for log-level classification — validated data, first match wins, invalid rows are ignored with a warning.</li>
 </ul>
 
 <h2 id="events">Event kinds</h2>

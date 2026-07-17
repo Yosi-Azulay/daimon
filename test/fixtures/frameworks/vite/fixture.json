@@ -25,5 +25,27 @@
       "file": "src/main.ts",
       "line": 3
     }
-  }
+  },
+  "logLines": [
+    {
+      "raw": "✘ [ERROR] Expected \";\" but found \"x\"",
+      "level": "error"
+    },
+    {
+      "raw": "▲ [WARNING] Duplicate key \"name\" in object literal",
+      "level": "warn"
+    },
+    {
+      "raw": "ERROR  Pre-transform error: Failed to load url /src/missing.ts",
+      "level": "error"
+    },
+    {
+      "raw": "WARN  Browserslist: caniuse-lite is outdated.",
+      "level": "warn"
+    },
+    {
+      "raw": "12:34:56 PM [vite] page reload src/App.tsx",
+      "level": null
+    }
+  ]
 }

@@ -116,16 +116,19 @@ export class AppComponent implements OnInit, OnDestroy {
   // old 50ms setTimeout) silently DROPPED the open on a slow machine — the
   // palette announces 'daimon:cmdk-ready' from its ngOnInit instead, and the
   // pending open replays exactly then. Deterministic, no timing gamble.
-  private pendingPaletteOpen = false;
-  private readonly onCmdK = () => {
+  private pendingPaletteOpen: { query?: string } | null = null;
+  private readonly onCmdK = (e: Event) => {
     if (this.paletteActivated()) return;
     this.paletteActivated.set(true);
-    this.pendingPaletteOpen = true;
+    // Keep the event detail (M102's search prefill) — the replay must carry
+    // it or a first-ever open from the Logs page lands blank.
+    this.pendingPaletteOpen = { query: (e as CustomEvent<{ query?: string }>).detail?.query };
   };
   private readonly onPaletteReady = () => {
     if (!this.pendingPaletteOpen) return;
-    this.pendingPaletteOpen = false;
-    window.dispatchEvent(new CustomEvent('daimon:cmdk'));
+    const detail = this.pendingPaletteOpen;
+    this.pendingPaletteOpen = null;
+    window.dispatchEvent(new CustomEvent('daimon:cmdk', { detail }));
   };
 
   ngOnInit(): void {

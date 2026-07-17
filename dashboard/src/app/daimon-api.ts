@@ -4,6 +4,7 @@ import { firstValueFrom } from 'rxjs';
 import type { FlakyTest, TestRun } from './tests-page-helpers';
 import type { SearchHit } from './command-palette-helpers';
 import type { GroupInfo } from './groups-helpers';
+import type { LogLevel } from './logs-page-helpers';
 
 export type StatusKind = 'stopped' | 'starting' | 'compiling' | 'serving' | 'error';
 export type HealthKind = 'unknown' | 'healthy' | 'unhealthy';
@@ -31,6 +32,10 @@ export interface AppRow {
   // Notification mute (M84). muteUntil is null for an indefinite mute.
   muted?: boolean;
   muteUntil?: number | null;
+  // Log-storm marker (M101, v1.2 — experimental): present ONLY while the app
+  // is storming (lines/min vs its own rolling baseline). Drives the Logs
+  // page's dismissable storm banner (M102).
+  logStorm?: { since: number; observedPerMin: number; baselinePerMin: number | null };
 }
 
 export interface FrameworkMeta {
@@ -523,11 +528,16 @@ export class DaimonApi {
     } catch { return []; }
   }
 
-  openLogStream(name: string, onLine: (line: { ts: number; line: string }) => void): () => void {
+  // `?levels=1` (M102) asks the server to carry each SSE payload's classified
+  // level ('error'|'warn'|'info'|'debug'|null for unclassified) alongside the
+  // line — additive over the pre-M102 `{ ts, line }` shape, so the one
+  // existing caller that only destructures `ts`/`line` (app-detail.ts) keeps
+  // working unchanged.
+  openLogStream(name: string, onLine: (line: { ts: number; line: string; level: LogLevel | null }) => void): () => void {
     const ctl = new AbortController();
     (async () => {
       try {
-        const res = await fetch(`/api/apps/${encodeURIComponent(name)}/logs/stream`, { signal: ctl.signal });
+        const res = await fetch(`/api/apps/${encodeURIComponent(name)}/logs/stream?levels=1`, { signal: ctl.signal });
         const reader = res.body?.getReader();
         if (!reader) return;
         const dec = new TextDecoder();
@@ -541,7 +551,10 @@ export class DaimonApi {
           for (const raw of lines) {
             const line = raw.startsWith('data: ') ? raw.slice(6) : raw;
             if (!line.trim()) continue;
-            try { onLine(JSON.parse(line)); } catch {}
+            try {
+              const parsed = JSON.parse(line);
+              onLine({ ts: parsed.ts, line: parsed.line, level: parsed.level ?? null });
+            } catch {}
           }
         }
       } catch {}

@@ -163,6 +163,39 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
     S.errors = { note: `unavailable: ${err?.message || err}` };
   }
 
+  // --- log volume (M103, v1.2 — additive line inside the errors section) --
+  // Total stored lines, error-level share, storms in the window. Degrades to
+  // its own { note } independently of the error groups above; report shapes
+  // are tier experimental, so the extension is additive.
+  try {
+    if (!h) {
+      S.errors.logVolume = { note: 'history disabled — log volume unavailable' };
+    } else {
+      let total = 0;
+      let errorLines = 0;
+      const narrow = !!(opts.workspace || groupSet) && !opts.app;
+      if (narrow) {
+        // Workspace/group scope: sum the scoped apps (bounded like uptime).
+        for (const a of scoped.slice(0, 50)) {
+          const v = h.logVolume({ app: a.name, since, until });
+          total += v.total;
+          errorLines += v.byLevel['error'] ?? 0;
+        }
+      } else {
+        const v = h.logVolume({ app: opts.app, since, until });
+        total = v.total;
+        errorLines = v.byLevel['error'] ?? 0;
+      }
+      const storms = h.queryEvents({ app: opts.app, since, until, type: 'log-storm', limit: 100 })
+        .filter(e => inScope(e.app)).length;
+      S.errors.logVolume = total > 0
+        ? { totalLines: total, errorLines, errorSharePct: Math.round((errorLines / total) * 1000) / 10, storms }
+        : { note: 'no log lines in the window' };
+    }
+  } catch (err: any) {
+    S.errors.logVolume = { note: `unavailable: ${err?.message || err}` };
+  }
+
   // --- tests --------------------------------------------------------------
   try {
     if (!h) {
@@ -334,6 +367,13 @@ export function renderReportMd(r: Report): string {
     L.push(`${S.errors.total} error events · ${S.errors.newCount} new group${S.errors.newCount === 1 ? '' : 's'} · ${S.errors.recurringCount} recurring · ${S.errors.resolvedCount} resolved`);
     for (const g of (S.errors.groups ?? []).slice(0, 8)) {
       L.push(`- [${g.kind}${g.resolved ? ', resolved' : ''}] **${g.app}** ×${g.count}: ${g.message.slice(0, 120)}`);
+    }
+  }
+  {
+    // Log volume (M103, v1.2): renders under Errors whenever data exists.
+    const lv = S.errors?.logVolume;
+    if (lv && !lv.note) {
+      L.push(`log volume: ${lv.totalLines} line${lv.totalLines === 1 ? '' : 's'} · ${lv.errorSharePct != null ? lv.errorSharePct + '%' : 'n/a'} error-level · ${lv.storms} storm${lv.storms === 1 ? '' : 's'}`);
     }
   }
   L.push('');

@@ -81,7 +81,7 @@ type Op =
   | { kind: 'compile'; row: { ts: number; app: string; ms: number } }
   | { kind: 'bundle'; row: { ts: number; app: string; initialKB: number; lazyKB: number; fileCount: number } }
   | { kind: 'task'; row: { ts: number; app: string; task: string; exit_code: number | null; duration_ms: number | null; summary: string | null } }
-  | { kind: 'log'; row: { ts: number; app: string; line: string } };
+  | { kind: 'log'; row: { ts: number; app: string; line: string; level: string | null } };
 
 export interface SearchHit {
   kind: 'logs' | 'errors' | 'events';
@@ -262,7 +262,8 @@ export class History {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,
         app TEXT NOT NULL,
-        line TEXT NOT NULL
+        line TEXT NOT NULL,
+        level TEXT
       );
       CREATE INDEX IF NOT EXISTS log_lines_ts ON log_lines(ts);
       CREATE INDEX IF NOT EXISTS log_lines_app_ts ON log_lines(app, ts);
@@ -319,6 +320,18 @@ export class History {
       );
       CREATE INDEX IF NOT EXISTS self_metrics_ts ON self_metrics(ts);
     `);
+    // Additive v1.2 migration (M99): nullable classified-level column on
+    // log_lines. Guarded ALTER for DBs created before the column existed —
+    // a v1.1 DB opens clean here, and a v1.2 DB opens clean under v1.1
+    // (its INSERTs name their columns). Old rows read back with level null.
+    try {
+      const cols = this.db.prepare(`PRAGMA table_info(log_lines)`).all() as { name: string }[];
+      if (!cols.some(c => c.name === 'level')) {
+        this.db.exec(`ALTER TABLE log_lines ADD COLUMN level TEXT`);
+      }
+    } catch (err: any) {
+      this.warnOnce(`log_lines level migration failed (levels degrade to null): ${err?.message || err}`);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -437,10 +450,11 @@ export class History {
 
   // Per-app log-line capture feeding log_fts. Callers gate on the
   // search.logIndex / overrides.<app>.logIndex config — this just writes.
-  recordLogLine(app: string, line: string, ts = Date.now()): void {
+  // `level` (M99) is the ingest-time classification; null = unclassified.
+  recordLogLine(app: string, line: string, ts = Date.now(), level: string | null = null): void {
     if (!this.db) return;
     if (!line) return;
-    this.queue.push({ kind: 'log', row: { ts, app, line: line.length > 2000 ? line.slice(0, 2000) : line } });
+    this.queue.push({ kind: 'log', row: { ts, app, line: line.length > 2000 ? line.slice(0, 2000) : line, level } });
   }
 
   search(opts: { q: string; app?: string; since?: number; kind?: 'logs' | 'errors' | 'events'; limit?: number }): { hits: SearchHit[]; fallback: boolean } {
@@ -536,6 +550,32 @@ export class History {
     return { hits: hits.slice(0, limit), fallback: true };
   }
 
+  // Log-volume rollup (M99/M103): total stored lines + per-level counts.
+  // Unclassified rows land under 'null'. Flushes queued writes first so a
+  // caller that just recorded sees its own lines (read-your-writes, like search).
+  logVolume(opts: { app?: string; since?: number; until?: number } = {}): { total: number; byLevel: Record<string, number> } {
+    const out = { total: 0, byLevel: {} as Record<string, number> };
+    if (!this.db) return out;
+    try {
+      this.flush();
+      const wh: string[] = [];
+      const args: any[] = [];
+      if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
+      if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+      if (opts.until != null) { wh.push('ts <= ?'); args.push(opts.until); }
+      const rows = this.prepared(
+        `SELECT coalesce(level, 'null') AS level, count(*) AS n FROM log_lines ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} GROUP BY coalesce(level, 'null')`,
+      ).all(...args) as { level: string; n: number }[];
+      for (const r of rows) {
+        out.byLevel[r.level] = r.n;
+        out.total += r.n;
+      }
+    } catch (err: any) {
+      this.warnOnce(`log volume query failed: ${err?.message || err}`);
+    }
+    return out;
+  }
+
   recordSelfMetric(rssMB: number, heapUsedMB: number, eventLoopLagMs: number, historyQueryP95Ms: number, ts = Date.now()): void {
     if (!this.db) return;
     try {
@@ -603,13 +643,13 @@ export class History {
       const insCm = this.db.prepare('INSERT INTO compile_times (ts,app,ms) VALUES (?,?,?)');
       const insTk = this.db.prepare('INSERT INTO task_runs (ts,app,task,exit_code,duration_ms,summary) VALUES (?,?,?,?,?,?)');
       const insBd = this.db.prepare('INSERT INTO bundles (ts,app,initialKB,lazyKB,fileCount) VALUES (?,?,?,?,?)');
-      const insLg = this.db.prepare('INSERT INTO log_lines (ts,app,line) VALUES (?,?,?)');
+      const insLg = this.db.prepare('INSERT INTO log_lines (ts,app,line,level) VALUES (?,?,?,?)');
       const tx = this.db.transaction((ops: Op[]) => {
         for (const op of ops) {
           if (op.kind === 'event') insEv.run(op.row.ts, op.row.app, op.row.type, op.row.from_state, op.row.to_state, op.row.message);
           else if (op.kind === 'compile') insCm.run(op.row.ts, op.row.app, op.row.ms);
           else if (op.kind === 'bundle') insBd.run(op.row.ts, op.row.app, op.row.initialKB, op.row.lazyKB, op.row.fileCount);
-          else if (op.kind === 'log') insLg.run(op.row.ts, op.row.app, op.row.line);
+          else if (op.kind === 'log') insLg.run(op.row.ts, op.row.app, op.row.line, op.row.level);
           else insTk.run(op.row.ts, op.row.app, op.row.task, op.row.exit_code, op.row.duration_ms, op.row.summary);
         }
       });

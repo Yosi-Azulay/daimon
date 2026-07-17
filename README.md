@@ -6,7 +6,7 @@
 
 **One local daemon for all your dev servers.** Daimon discovers the runnable apps in your workspaces — Angular / Nx / Next.js / Nuxt / SvelteKit / Astro / Remix / Vite / Storybook, Django / Rails / FastAPI / Flask / Laravel / Spring Boot / .NET / Express / Nest, Go-air / Rust-trunk, Expo / Flutter / Tauri, Deno / Bun, plus a generic `package.json` fallback and custom profiles from config — then starts and stops them, assigns their ports, dedup's their error output, and answers questions about them. You talk to it four ways: a terminal TUI, a loopback HTTP API, a JSON CLI, and an MCP server for AI agents.
 
-Beyond serving, it closes the whole dev loop: `daimon test` runs the project's own test runner and parses the failures, `daimon why` keeps crash forensics that would otherwise evaporate, `daimon search` greps everything the daemon has ever seen, `daimon report` answers "what happened today", and `daimon env diff` answers "what changed since it last worked".
+Beyond serving, it closes the whole dev loop: `daimon test` runs the project's own test runner and parses the failures, `daimon why` keeps crash forensics that would otherwise evaporate, `daimon search` greps everything the daemon has ever seen, `daimon report` answers "what happened today", `daimon env diff` answers "what changed since it last worked", and `daimon logs --level error` cuts the firehose down to the lines that matter.
 
 Daimon is built for the **single machine with several agents on it**: you in one terminal, a Claude Code session in another repo, a second Claude in a third. All of them talk to the same daemon, see only their own workspace by default, carry distinct agent identities, and coordinate through per-app soft-locks instead of stepping on each other's dev servers.
 
@@ -259,6 +259,28 @@ daimon up day
 
 Groups additively subsume the legacy `profiles` map — the shorthand form *is* the profiles shape, `profiles` keeps loading forever, and nothing changes if you never add a `groups` key. Every new surface ships tier `experimental` (post-1.0 rules: frozen/stable shapes never break).
 
+## Log sense (v1.2)
+
+daimon records every log line an app emits — and until v1.2 treated them all the same. A Vite HMR notice, a Django stack trace, and a webpack deprecation warning were equal citizens in the tail, so finding the line that mattered meant scrolling, and an app suddenly emitting 10,000 lines a minute looked identical to a chatty healthy one. v1.2 is **log sense**: every ingested line gets a level, the tail learns to filter, and a volume spike is an event.
+
+### Log levels
+
+Every line is classified at ingest — `error` / `warn` / `info` / `debug`, or `null` when daimon honestly doesn't know. Classification is declared per framework in the adapter registry (the same M65 registry that declares detection and error parsing — never guessed in code): angular/nx CLI prefixes, vite badges, Next.js `⨯`/`⚠`/`✓` markers, Python logging for django/flask, Ruby Logger for rails, and ASP.NET Core's `crit:`/`fail:`/`warn:` shortnames. Frameworks without a documented convention fall back to one conservative shared heuristic. Classification is fail-soft: a miss stores the line unclassified — it can never drop or delay a log line.
+
+### Filtering
+
+```bash
+daimon logs web --level error                 # only classified-error lines
+daimon logs web --since 15m --grep "EADDR.*"  # filters compose (AND)
+daimon logs web --level error --stream        # they work in follow mode too
+```
+
+Same filters as `?level=`/`?grep=`/`?since=` on `GET /api/apps/:name/logs` (and the group merge), and as optional `level`/`grep` fields on the MCP `get_logs` tool. `--level` returns only lines *classified* at that level; bare `daimon logs <app>` is byte-identical to v1.1. The TUI log pane gets a level-cycle chord (`l`) and a live grep (`/`); the dashboard log viewer gets level chips with live counts and a regex box.
+
+### Storm detection
+
+A misbehaving app that starts screaming shouldn't need you to notice. daimon keeps a per-app rolling lines-per-minute baseline; a sustained spike (default 10× the app's own baseline over 60s, tune via `logs.storm`) raises one `log-storm` event, and recovery raises one `log-storm-end` — hysteresis, so a flapping rate can't spam the timeline. A storming app is flagged in `daimon status`, `daimon why`, the dashboard (banner), and `daimon doctor` (`log-storm-active`, suggest-only, with the remedy: `daimon logs <app> --since 5m --level error`). Want an OS notification too? Opt in by adding `"log-storm"` to `notifications.kinds` — absent, storms stay silent self-events. `daimon report` closes the loop with a log-volume line: total lines, error-level share, storms in the window.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -453,7 +475,7 @@ daimon list [--tag <name>] [--workspace <label>] [--full|--compact] [--stream] [
 daimon status <name> [--full|--compact]
 daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]
 daimon events [--since 1h] [--app <name>] [--stream]
-daimon logs <name> [--tail N] [--since 30s] [--grep <regex>] [--stream]   # --grep/--stream: filtered live tail (v0.12)
+daimon logs <name> [--tail N] [--since 30s] [--level error|warn|info|debug] [--grep <regex>] [--stream]   # --level: classified lines only (v1.2); --grep/--stream: filtered live tail (v0.12)
 daimon history <name>              # uptime%, restart count, compile p50/p95, top errors
 daimon search <query> [--app <a>] [--since <dur>] [--kind logs|errors|events]   # full-text search (v0.12)
 daimon test-history <name> [--flaky] [--limit N]   # recent test runs / flaky tests (v0.12)
@@ -513,8 +535,8 @@ GET  /api/apps                                  # compact by default; ?format=fu
 GET  /api/apps/:name
 GET  /api/apps/:name/errors[?since=2m]
 GET  /api/apps/:name/errors/since-last?client=<id>
-GET  /api/apps/:name/logs?tail=N&since=30s&grep=<regex>
-GET  /api/apps/:name/logs/stream[?grep=<regex>] # Server-Sent Events, filtered live tail (v0.12)
+GET  /api/apps/:name/logs?tail=N&since=30s&grep=<regex>&level=error|warn|info|debug
+GET  /api/apps/:name/logs/stream[?grep=<regex>&level=<lvl>&levels=1]  # SSE filtered live tail (v0.12); level/levels=1: v1.2
 GET  /api/apps/:name/wait?until=serving&timeout=60   # seconds; ?timeoutMs= also accepted (v0.14)
 GET  /api/events[?since=5m&app=<name>&stream=ndjson]
 GET  /api/agents                                # active agents + soft-locks (v0.10)
@@ -613,7 +635,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-529 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
+715 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 

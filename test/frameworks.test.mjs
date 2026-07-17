@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 const { discoverApps } = await import('../dist/discovery.js');
 const { builtinProfiles, allProfiles } = await import('../dist/frameworks.js');
 const { parseLine, compileParseContext } = await import('../dist/parser.js');
+const { compiledPatternsFor, classifyLogLine } = await import('../dist/logLevels.js');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(here, 'fixtures', 'frameworks');
@@ -135,5 +136,43 @@ for (const id of fixtureIds) {
       // re-assert parseLine tolerated every fixture line without throwing).
       assert.ok(before >= 0);
     });
+  }
+
+  // Log-level classification (M99). Gating is two-way: a profile shipping
+  // logLevelPatterns MUST have logLines fixture cases, every declared pattern
+  // MUST be exercised by at least one fixture line (first-match-wins), and
+  // every fixture line MUST classify to its expected level (null included —
+  // fail-soft lines stay unclassified, they are never guessed).
+  {
+    // Gate on the fixture's OWN profile (dir name = profile id) — workspace
+    // enumerator fixtures register member apps under other profiles.
+    const levelRow = allProfiles(undefined).find(p => p.id === id);
+    if (levelRow?.logLevelPatterns?.length) {
+      test(`framework ${id}: logLevelPatterns are fixture-gated`, () => {
+        assert.ok(Array.isArray(fx.logLines) && fx.logLines.length > 0,
+          `profile '${id}' ships logLevelPatterns but its fixture has no logLines cases — a pattern without a fixture line doesn't ship`);
+        const compiled = compiledPatternsFor(levelRow);
+        assert.equal(compiled.length, levelRow.logLevelPatterns.length,
+          `profile '${id}' has logLevelPatterns rows that fail to compile — built-in patterns must all be valid`);
+        const exercised = new Set();
+        for (const c of fx.logLines) {
+          const idx = compiled.findIndex(p => p.rx.test(c.raw));
+          if (idx >= 0) exercised.add(idx);
+        }
+        for (let i = 0; i < compiled.length; i++) {
+          assert.ok(exercised.has(i),
+            `profile '${id}' pattern #${i} (${levelRow.logLevelPatterns[i].pattern}) is exercised by no fixture logLine — dead patterns don't ship`);
+        }
+      });
+    }
+    if (fx.logLines) {
+      test(`framework ${id}: fixture logLines classify to their expected levels`, () => {
+        const compiled = compiledPatternsFor(levelRow);
+        for (const c of fx.logLines) {
+          assert.equal(classifyLogLine(c.raw, compiled), c.level ?? null,
+            `line ${JSON.stringify(c.raw)} expected level ${JSON.stringify(c.level ?? null)}`);
+        }
+      });
+    }
   }
 }

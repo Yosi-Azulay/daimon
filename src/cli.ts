@@ -1785,6 +1785,7 @@ async function main() {
         if (f.tail != null && !Number.isNaN(f.tail)) params.set('tail', String(f.tail));
         if (f.since) params.set('since', f.since);
         if (f.grep) params.set('grep', f.grep);
+        if (f.level) params.set('level', f.level);
         const qs = params.toString();
         const r = await call(`/api/groups/${encodeURIComponent(f.groupName)}/logs${qs ? '?' + qs : ''}`);
         if (r.status === 404) failGroup(f.groupName, r.body);
@@ -1793,12 +1794,13 @@ async function main() {
         return;
       }
       if (f.groupName && name) failHint('pass either an app name or --group <group>, not both', 'usage: daimon logs <name> | daimon logs --group <group>');
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon logs <name> [--tail N] [--since 30s] [--grep <regex>] [--stream] | --group <group>' }));
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon logs <name> [--tail N] [--since 30s] [--level error|warn|info|debug] [--grep <regex>] [--stream] | --group <group>' }));
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
       if (f.tail != null && !Number.isNaN(f.tail)) params.set('tail', String(f.tail));
       if (f.since) params.set('since', f.since);
       if (f.grep) params.set('grep', f.grep);
+      if (f.level) params.set('level', f.level);
       if (f.stream) {
         // Live tail (SSE) with the server-side --grep filter applied; emits
         // NDJSON {ts,line} until SIGINT.

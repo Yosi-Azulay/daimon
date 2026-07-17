@@ -25,5 +25,23 @@
       "file": "app/page.tsx",
       "line": 3
     }
-  }
+  },
+  "logLines": [
+    {
+      "raw": "⨯ ./app/page.tsx:3:1 Module not found: Can't resolve './missing'",
+      "level": "error"
+    },
+    {
+      "raw": "⚠ Fast Refresh had to perform a full reload.",
+      "level": "warn"
+    },
+    {
+      "raw": "✓ Ready in 2.1s",
+      "level": "info"
+    },
+    {
+      "raw": "○ Compiling / ...",
+      "level": null
+    }
+  ]
 }

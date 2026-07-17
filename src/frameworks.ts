@@ -15,6 +15,24 @@ import type { DiscoveredApp } from './types.js';
 export type FrameworkFamily =
   | 'js' | 'python' | 'ruby' | 'go' | 'rust' | 'dotnet' | 'jvm' | 'php' | 'mobile';
 
+// Log levels a classified line can carry (M99). The classifier itself lives
+// in logLevels.ts; the type and per-profile pattern row live here, next to
+// the FrameworkProfile field they describe.
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+export const LOG_LEVELS: readonly LogLevel[] = ['error', 'warn', 'info', 'debug'];
+
+export function isLogLevel(v: unknown): v is LogLevel {
+  return typeof v === 'string' && (LOG_LEVELS as readonly string[]).includes(v);
+}
+
+// One ordered classification row: first matching pattern wins. Patterns are
+// validated regex strings (data, never loaded code), compiled case-
+// insensitively once at profile load.
+export interface LogLevelPattern {
+  pattern: string;
+  level: LogLevel;
+}
+
 export interface FileContainsRule {
   file: string;
   pattern: string; // compiled case-insensitively at match time
@@ -82,6 +100,13 @@ export interface FrameworkProfile {
   // Env-file conventions (M82), in the framework's documented load order.
   // Read-only awareness: daimon fingerprints these at spawn, never edits them.
   envFiles?: string[];
+  // Log-level classification rows (M99) — set ONLY where the framework
+  // DOCUMENTS its output convention (esbuild diagnostics, Python logging,
+  // Ruby Logger, ASP.NET Core console shortnames…). Ordered, first match
+  // wins; unmatched lines fall through to the shared generic heuristic.
+  // Fixture-gated: a profile shipping patterns without covering `logLines`
+  // in its fixture fails the parameterized suite. Never guess a convention.
+  logLevelPatterns?: LogLevelPattern[];
   builtin: boolean;
 }
 
@@ -614,6 +639,82 @@ for (const p of BUILTINS) {
 // with no profile at all).
 export const GENERIC_ENV_FILES: string[] = ['.env'];
 
+// Log-level classification rows (M99). Listed ONLY for frameworks whose docs
+// define the output convention — every row below is justified by the
+// framework's own logging format, and every pattern is exercised by a
+// `logLines` case in the profile's fixture (the parameterized suite fails
+// otherwise). Everything else classifies via the shared generic heuristic in
+// logLevels.ts — explicit non-participation, never guessed.
+const LOG_LEVEL_PATTERNS: Record<string, LogLevelPattern[]> = {
+  // Angular CLI builders: esbuild application-builder diagnostics print
+  // "✘ [ERROR]" / "▲ [WARNING]"; the webpack builder prints "ERROR in" /
+  // "WARNING in". nx serve wraps the same executors.
+  angular: [
+    { pattern: '^\\s*✘\\s*\\[ERROR\\]', level: 'error' },
+    { pattern: '^\\s*▲\\s*\\[WARNING\\]', level: 'warn' },
+    { pattern: '^ERROR in\\b', level: 'error' },
+    { pattern: '^WARNING in\\b', level: 'warn' },
+  ],
+  nx: [
+    { pattern: '^\\s*✘\\s*\\[ERROR\\]', level: 'error' },
+    { pattern: '^\\s*▲\\s*\\[WARNING\\]', level: 'warn' },
+    { pattern: '^ERROR in\\b', level: 'error' },
+    { pattern: '^WARNING in\\b', level: 'warn' },
+  ],
+  // Vite: esbuild diagnostics ("✘ [ERROR]") plus the dev-server logger's
+  // uppercase level badges ("ERROR  Pre-transform error…", "WARN …").
+  vite: [
+    { pattern: '^\\s*✘\\s*\\[ERROR\\]', level: 'error' },
+    { pattern: '^\\s*▲\\s*\\[WARNING\\]', level: 'warn' },
+    { pattern: '^\\s*ERROR\\b', level: 'error' },
+    { pattern: '^\\s*WARN\\b', level: 'warn' },
+  ],
+  // Next.js dev-server output markers (next docs: dev-server logging):
+  // "⨯" prefixes errors, "⚠" warnings, "✓" progress/ready lines.
+  nextjs: [
+    { pattern: '^\\s*⨯', level: 'error' },
+    { pattern: '^\\s*⚠', level: 'warn' },
+    { pattern: '^\\s*✓', level: 'info' },
+  ],
+  // Django (Python logging default format): "LEVEL:logger:message" or
+  // "LEVEL message" for runserver's own console lines.
+  django: [
+    { pattern: '^(?:ERROR|CRITICAL)[:\\s]', level: 'error' },
+    { pattern: '^WARNING[:\\s]', level: 'warn' },
+    { pattern: '^INFO[:\\s]', level: 'info' },
+    { pattern: '^DEBUG[:\\s]', level: 'debug' },
+  ],
+  // Flask: the app logger's documented "[timestamp] ERROR in module: …"
+  // shape, plus plain Python-logging level prefixes (werkzeug).
+  flask: [
+    { pattern: '\\bERROR in \\w+', level: 'error' },
+    { pattern: '^(?:ERROR|CRITICAL)[:\\s]', level: 'error' },
+    { pattern: '^WARNING[:\\s]', level: 'warn' },
+    { pattern: '^INFO[:\\s]', level: 'info' },
+    { pattern: '^DEBUG[:\\s]', level: 'debug' },
+  ],
+  // Rails / Ruby ::Logger default formatter:
+  // "S, [timestamp #pid] SEVERITY -- progname: message".
+  rails: [
+    { pattern: '\\b(?:ERROR|FATAL) -- ', level: 'error' },
+    { pattern: '\\bWARN -- ', level: 'warn' },
+    { pattern: '\\bINFO -- ', level: 'info' },
+    { pattern: '\\bDEBUG -- ', level: 'debug' },
+  ],
+  // ASP.NET Core console logger single-line format (documented level
+  // shortnames): crit/fail/warn/info/dbug/trce followed by ":".
+  dotnet: [
+    { pattern: '^\\s*(?:crit|fail):', level: 'error' },
+    { pattern: '^\\s*warn:', level: 'warn' },
+    { pattern: '^\\s*info:', level: 'info' },
+    { pattern: '^\\s*(?:dbug|trce):', level: 'debug' },
+  ],
+};
+for (const p of BUILTINS) {
+  const rows = LOG_LEVEL_PATTERNS[p.id];
+  if (rows) p.logLevelPatterns = rows;
+}
+
 export function builtinProfiles(): FrameworkProfile[] {
   return BUILTINS;
 }
@@ -1031,6 +1132,19 @@ export function validateCustomProfiles(
       } else {
         warn(`"frameworks.${id}" envFiles must be a non-empty array of workspace-relative file names — skipped`);
         continue;
+      }
+    }
+    if (e.logLevelPatterns !== undefined) {
+      // M99: softer contract than the other fields — a broken classification
+      // row must never cost the profile itself (classification is advisory;
+      // the profile still detects/spawns/parses fine). Invalid field or rows
+      // warn and are ignored; the generic heuristic applies instead.
+      const rows = e.logLevelPatterns;
+      if (Array.isArray(rows) && rows.length > 0
+        && rows.every((r: any) => r && typeof r === 'object' && validPatternString(r.pattern) && isLogLevel(r.level))) {
+        profile.logLevelPatterns = (rows as any[]).map(r => ({ pattern: r.pattern, level: r.level }));
+      } else {
+        warn(`"frameworks.${id}" logLevelPatterns entries must be { pattern, level: error|warn|info|debug } with a valid regex ≤ ${MAX_PATTERN_CHARS} chars — field ignored (generic level heuristic applies)`);
       }
     }
 

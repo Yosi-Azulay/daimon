@@ -52,6 +52,11 @@ export const CONFIG_KEY_STABILITY: Record<string, import('./stability.js').Stabi
   search: 'stable',
   ports: 'experimental', // v0.13 (M81)
   groups: 'experimental', // v1.1 (M93)
+  // logs.storm (v1.2, M101) is an experimental SUB-key of the stable `logs`
+  // parent — like notifications.kinds/quietHours/batchMs (M84) it is
+  // documented in the docs' sub-key note, NOT listed here: a catalog entry
+  // would make a literal top-level "logs.storm" key skip the unknown-key
+  // warning and could surface as a nearest-name suggestion.
 };
 
 export interface ConfigLoadResult {

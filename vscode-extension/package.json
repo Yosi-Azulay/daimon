@@ -2,7 +2,7 @@
   "name": "daimon",
   "displayName": "daimon",
   "description": "Local dev-server manager — status bar, errors panel, and one-click control of daimon-discovered apps.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "license": "SEE LICENSE IN LICENSE",
   "publisher": "flycotech",
   "author": "Yosi Azulay (https://flycotech.com)",
@@ -18,21 +18,39 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished"
   ],
   "contributes": {
     "commands": [
-      { "command": "daimon.start", "title": "Daimon: Start app" },
-      { "command": "daimon.stop", "title": "Daimon: Stop app" },
-      { "command": "daimon.openDashboard", "title": "Daimon: Open dashboard" },
-      { "command": "daimon.showLogs", "title": "Daimon: Show logs for current cwd" }
+      {
+        "command": "daimon.start",
+        "title": "Daimon: Start app"
+      },
+      {
+        "command": "daimon.stop",
+        "title": "Daimon: Stop app"
+      },
+      {
+        "command": "daimon.openDashboard",
+        "title": "Daimon: Open dashboard"
+      },
+      {
+        "command": "daimon.showLogs",
+        "title": "Daimon: Show logs for current cwd"
+      }
     ],
     "views": {
       "explorer": [
-        { "id": "daimonErrors", "name": "Daimon errors", "when": "daimonAttached" }
+        {
+          "id": "daimonErrors",
+          "name": "Daimon errors",
+          "when": "daimonAttached"
+        }
       ]
     },
     "configuration": {

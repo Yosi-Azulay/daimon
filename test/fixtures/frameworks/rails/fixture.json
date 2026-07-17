@@ -25,5 +25,27 @@
       "file": "app/controllers/widgets_controller.rb",
       "line": 14
     }
-  }
+  },
+  "logLines": [
+    {
+      "raw": "E, [2026-07-17T10:00:00.000000 #1234] ERROR -- : Something went wrong",
+      "level": "error"
+    },
+    {
+      "raw": "W, [2026-07-17T10:00:00.000000 #1234] WARN -- : DEPRECATION WARNING: render file",
+      "level": "warn"
+    },
+    {
+      "raw": "I, [2026-07-17T10:00:00.000000 #1234] INFO -- : Started GET \"/\" for 127.0.0.1",
+      "level": "info"
+    },
+    {
+      "raw": "D, [2026-07-17T10:00:00.000000 #1234] DEBUG -- : User Load (0.3ms) SELECT \"users\".*",
+      "level": "debug"
+    },
+    {
+      "raw": "=> Booting Puma",
+      "level": null
+    }
+  ]
 }

@@ -7,6 +7,7 @@ import {
   type ReportPeriod,
   fmtAgo,
   fmtDuration,
+  fmtLogVolumeLine,
   fmtPct,
   fmtTs,
   isValidSince,
@@ -99,6 +100,13 @@ type SectionKey = keyof Report['sections'];
               <div class="dm-note">{{ n }}</div>
             } @else if (errorsSection(); as es) {
               <div class="dm-headline">{{ es.total }} events · {{ es.newCount }} new · {{ es.recurringCount }} recurring · {{ es.resolvedCount }} resolved</div>
+              @if (es.logVolume) {
+                @if (logVolumeNote(es); as n) {
+                  <div class="dm-note">{{ n }}</div>
+                } @else {
+                  <div class="dm-sub2">{{ fmtLogVolumeLine(es.logVolume) }}</div>
+                }
+              }
               <ul class="dm-list">
                 @for (g of es.groups; track g.app + g.message) {
                   <li>
@@ -289,6 +297,7 @@ export class ReportPageComponent implements OnInit, OnDestroy {
   readonly fmtDuration = fmtDuration;
   readonly fmtPct = fmtPct;
   readonly fmtAgo = fmtAgo;
+  readonly fmtLogVolumeLine = fmtLogVolumeLine;
 
   readonly uptimeRows = computed<any[]>(() => this.report()?.sections?.uptime?.apps ?? []);
   readonly errorsSection = computed<any | null>(() => this.dataOf('errors'));
@@ -321,6 +330,13 @@ export class ReportPageComponent implements OnInit, OnDestroy {
 
   note(key: SectionKey): string | null {
     return sectionNote(this.report()?.sections?.[key]);
+  }
+
+  // The errors section's additive `logVolume` sub-field (M103) degrades to
+  // its own { note } independently of the errors section itself — sectionNote()
+  // already handles either shape since it just checks for a `.note` string.
+  logVolumeNote(es: any): string | null {
+    return sectionNote(es?.logVolume);
   }
 
   private dataOf(key: SectionKey): any | null {

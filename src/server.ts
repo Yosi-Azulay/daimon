@@ -20,6 +20,7 @@ import { AgentRegistry, LockManager } from './agents.js';
 import { parsePortPool } from './ports.js';
 import { findPortHolder, scanListeningPorts } from './portDiag.js';
 import { diffEnvSnapshots, resolveEnvFilePath } from './envFiles.js';
+import { isLogLevel, type LogLevel } from './frameworks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -137,6 +138,8 @@ function compactStatus(s: AppSummary): Record<string, unknown> {
   };
   if (s.estimatedReadyAtMs != null) out.estimatedReadyAtMs = s.estimatedReadyAtMs;
   if (s.serverProfile) out.serverProfile = s.serverProfile;
+  // Log-storm marker (M101, v1.2 — experimental): only while storming.
+  if (s.logStorm) out.logStorm = s.logStorm;
   return out;
 }
 
@@ -956,6 +959,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           try { grepRx = new RegExp(grepRaw, 'i'); }
           catch (e: any) { sendJson(res, 400, { error: `invalid grep regex: ${e?.message || e}` }); return; }
         }
+        // ?level= (M100, v1.2): same semantics as the per-app route.
+        const levelRaw = url.searchParams.get('level');
+        if (levelRaw && !isLogLevel(levelRaw)) {
+          sendJson(res, 400, { error: `level must be error|warn|info|debug (got ${JSON.stringify(levelRaw)}) — pick one of the classified levels; lines daimon could not classify are excluded from level filters` });
+          return;
+        }
         const cutoff = sinceMs != null ? Date.now() - sinceMs : null;
         const merged: { ts: number; app: string; line: string }[] = [];
         for (const n of def.apps) {
@@ -964,6 +973,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           for (const e of entries) {
             if (cutoff != null && e.ts < cutoff) continue;
             if (grepRx && !grepRx.test(e.line)) continue;
+            if (levelRaw && e.level !== levelRaw) continue;
             merged.push({ ts: e.ts, app: n, line: e.line });
           }
         }
@@ -1423,6 +1433,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           errorGroups,
           regressions,
           storm,
+          // Log-storm state (M101, v1.2 — experimental): lines/min vs the
+          // app's own rolling baseline.
+          logStorm: registry.logStormState(whyName),
           envChanged,
           suspectCommit,
           doctor: doctorFindings,
@@ -1785,15 +1798,31 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           try { grepRx = new RegExp(grepRaw, 'i'); }
           catch (e: any) { sendJson(res, 400, { error: `invalid grep regex: ${e?.message || e}` }); return; }
         }
+        // ?level= (M100): follow-mode filter, evaluated per line at delivery —
+        // never buffered. Unclassified lines are excluded from level filters.
+        const levelRaw = url.searchParams.get('level');
+        let levelFilter: LogLevel | undefined;
+        if (levelRaw) {
+          if (!isLogLevel(levelRaw)) {
+            sendJson(res, 400, { error: `level must be error|warn|info|debug (got ${JSON.stringify(levelRaw)}) — pick one of the classified levels; lines daimon could not classify are excluded from level filters` });
+            return;
+          }
+          levelFilter = levelRaw;
+        }
+        // ?levels=1 (M102, v1.2 — experimental param): opt-in per-line level
+        // field in the payload. Absent = the classic {ts,line} shape, byte
+        // for byte (the dashboard passes it; CLI --stream does not).
+        const wantLevels = url.searchParams.get('levels') === '1';
         res.writeHead(200, {
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
           'x-daimon-version': DAIMON_VERSION,
         });
-        const initial = (registry.logs(name, { tail: 50 }) ?? []).filter(l => !grepRx || grepRx.test(l));
-        for (const line of initial) {
-          res.write(`data: ${JSON.stringify({ ts: Date.now(), line })}\n\n`);
+        const initial = (registry.logEntries(name, { tail: 50, level: levelFilter }) ?? [])
+          .filter(e => !grepRx || grepRx.test(e.line));
+        for (const e of initial) {
+          res.write(`data: ${JSON.stringify(wantLevels ? { ts: Date.now(), line: e.line, level: e.level ?? null } : { ts: Date.now(), line: e.line })}\n\n`);
         }
         const buffer: string[] = [];
         let dropped = 0;
@@ -1810,11 +1839,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             dropped = 0;
           }
         };
-        const onLog = (ev: { name: string; ts: number; line: string }) => {
+        const onLog = (ev: { name: string; ts: number; line: string; level?: string | null }) => {
           if (ev.name !== name) return;
           if (grepRx && !grepRx.test(ev.line)) return;
+          if (levelFilter && ev.level !== levelFilter) return;
           if (buffer.length >= 200) { dropped++; buffer.shift(); }
-          buffer.push(`data: ${JSON.stringify({ ts: ev.ts, line: ev.line })}\n\n`);
+          buffer.push(`data: ${JSON.stringify(wantLevels ? { ts: ev.ts, line: ev.line, level: ev.level ?? null } : { ts: ev.ts, line: ev.line })}\n\n`);
           flush();
         };
         registry.on('log', onLog);
@@ -1827,9 +1857,21 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       if (sub === 'logs' && method === 'GET') {
         const tail = url.searchParams.get('tail');
         const since = url.searchParams.get('since');
+        // ?level= (M100, v1.2 — experimental param): only lines CLASSIFIED at
+        // that level; unclassified (null-level) lines are excluded by design.
+        const levelRaw = url.searchParams.get('level');
+        let levelFilter: LogLevel | undefined;
+        if (levelRaw) {
+          if (!isLogLevel(levelRaw)) {
+            sendJson(res, 400, { error: `level must be error|warn|info|debug (got ${JSON.stringify(levelRaw)}) — pick one of the classified levels; lines daimon could not classify are excluded from level filters` });
+            return;
+          }
+          levelFilter = levelRaw;
+        }
         let lines = registry.logs(name, {
           tail: tail ? Number(tail) : undefined,
           sinceMs: parseDuration(since),
+          level: levelFilter,
         });
         if (lines == null) { sendJson(res, 404, UNKNOWN_APP); return; }
         const grepRaw = url.searchParams.get('grep');

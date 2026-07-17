@@ -51,6 +51,20 @@ export function sectionNote(section: any): string | null {
   return section && typeof section.note === 'string' ? section.note : null;
 }
 
+// The errors section's additive `logVolume` field (M103, v1.2): itself
+// either/or, same convention as any other report section — sectionNote()
+// already handles the note case since it just checks for a `.note` string.
+export interface LogVolume {
+  totalLines: number;
+  errorLines: number;
+  errorSharePct: number;
+  storms: number;
+}
+
+export function fmtLogVolumeLine(lv: LogVolume): string {
+  return `${lv.totalLines} line${lv.totalLines === 1 ? '' : 's'} · ${lv.errorSharePct}% error-level · ${lv.storms} storm${lv.storms === 1 ? '' : 's'}`;
+}
+
 export function shortCommit(msg: string | null | undefined): string {
   if (!msg) return '—';
   return msg.length > 72 ? msg.slice(0, 72) + '…' : msg;

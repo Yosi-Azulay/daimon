@@ -29,5 +29,27 @@
       "file": "/app/myapp/views.py",
       "line": 12
     }
-  }
+  },
+  "logLines": [
+    {
+      "raw": "ERROR:django.request:Internal Server Error: /api/users",
+      "level": "error"
+    },
+    {
+      "raw": "WARNING:django.security.csrf:Forbidden (CSRF cookie not set.): /login",
+      "level": "warn"
+    },
+    {
+      "raw": "INFO:django.utils.autoreload:Watching for file changes with StatReloader",
+      "level": "info"
+    },
+    {
+      "raw": "DEBUG:django.db.backends:(0.001) SELECT \"auth_user\".\"id\" FROM \"auth_user\"",
+      "level": "debug"
+    },
+    {
+      "raw": "[17/Jul/2026 10:00:00] \"GET / HTTP/1.1\" 200 1234",
+      "level": null
+    }
+  ]
 }

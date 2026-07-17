@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.1.0 — docs</title>
+<title>daimon v1.2.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.1.0</span></h1>
+<h1>daimon <span class="badge">v1.2.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -124,8 +124,8 @@ npx daimon init --auto</code></pre>
 <dd>Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}). --group (no name) groups all apps' errors by stack fingerprint.</dd>
 <dt><code>daimon events [--since 1h] [--app &lt;name&gt;] [--stream]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Get the event log. --stream emits NDJSON until SIGINT.</dd>
-<dt><code>daimon logs &lt;name&gt; [--tail N] [--since 30s] [--grep &lt;regex&gt;] [--stream] | --group &lt;group&gt;</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
-<dd>Recent log lines for an app. --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON; --group merges a group's tails.</dd>
+<dt><code>daimon logs &lt;name&gt; [--tail N] [--since 30s] [--level &lt;lvl&gt;] [--grep &lt;regex&gt;] [--stream] | --group &lt;group&gt;</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Recent log lines for an app. --level filters by classified level; --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON; --group merges a group's tails.</dd>
 <dt><code>daimon search &lt;query&gt; [--app &lt;a&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Full-text search over everything daimon has seen: log lines, errors, and events. Compact JSON hits {kind,app,ts,snippet,ref}.</dd>
 <dt><code>daimon test-history &lt;name&gt; [--flaky] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -233,9 +233,9 @@ npx daimon init --auto</code></pre>
 <dt><code>GET /api/apps/:name/errors/since-last</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Errors since the previous call for ?client= cursor.</dd>
 <dt><code>GET /api/apps/:name/logs</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
-<dd>Recent log lines (?tail=, ?since=, ?grep=).</dd>
+<dd>Recent log lines (?tail=, ?since=, ?grep=, ?level= — v1.2, experimental param).</dd>
 <dt><code>GET /api/apps/:name/logs/stream</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
-<dd>Live log tail (SSE; ?grep= filters server-side).</dd>
+<dd>Live log tail (SSE; ?grep= filters server-side; ?level= filter and ?levels=1 per-line level field — v1.2, experimental params).</dd>
 <dt><code>POST /api/apps/:name/start</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Start an app (?withDeps=1, ?steal=1). Soft-lock gated.</dd>
 <dt><code>POST /api/apps/:name/stop</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
@@ -377,7 +377,7 @@ npx daimon init --auto</code></pre>
 <dt><code>GET /api/groups/:name/status</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Per-member compact statuses + "3/4 healthy" summary.</dd>
 <dt><code>GET /api/groups/:name/logs</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
-<dd>Timestamp-merged log tail across members, each line carrying its app (?tail=, ?since=, ?grep=).</dd>
+<dd>Timestamp-merged log tail across members, each line carrying its app (?tail=, ?since=, ?grep=, ?level=).</dd>
 <dt><code>POST /api/apps/:name/unmute</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Lift a notification mute.</dd>
 </dl>
@@ -452,7 +452,7 @@ npx daimon init --auto</code></pre>
 <dt><code>ports</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 </dl>
-<p>Experimental sub-keys inside stable parents: <code>notifications.kinds</code> / <code>notifications.quietHours</code> / <code>notifications.batchMs</code> and <code>webhooks[].digest</code> (v0.13).</p>
+<p>Experimental sub-keys inside stable parents: <code>notifications.kinds</code> / <code>notifications.quietHours</code> / <code>notifications.batchMs</code> and <code>webhooks[].digest</code> (v0.13); <code>logs.storm</code> (v1.2).</p>
 <p>Highlights:</p>
 <ul>
   <li><code>searchRoots</code> — array of paths (or <code>{path, label}</code>) to scan for projects.</li>
@@ -467,6 +467,7 @@ npx daimon init --auto</code></pre>
   <li><code>restartStorm</code> — <code>{ perHour: 20 }</code> (v0.12): unrequested exits per hour before a single <code>restart-storm</code> event fires.</li>
   <li><code>search</code> — <code>{ logIndex: true }</code> (v0.12): global default for per-app log-line indexing; errors/events are always indexed.</li>
   <li><code>ports</code> — <code>{ pool: "4200-4299" }</code> (v0.13): opt-in auto-assignment; only frameworks whose registry row documents <code>portFlag</code>/<code>portEnv</code> participate.</li>
+  <li><code>logs.storm</code> — <code>{ multiplier: 10, windowSec: 60 }</code> (v1.2): tunes log-storm detection (a sustained spike vs the app's own lines/min baseline). Optional; detection always runs with the defaults and emits only self-events — the <code>log-storm</code> OS-notification kind is a separate opt-in via <code>notifications.kinds</code>. Custom framework profiles may also declare <code>logLevelPatterns</code> <code>[{pattern, level}]</code> rows (v1.2) for log-level classification — validated data, first match wins, invalid rows are ignored with a warning.</li>
 </ul>
 
 <h2 id="events">Event kinds</h2>
@@ -493,6 +494,8 @@ npx daimon init --auto</code></pre>
 <dt><code>restart-storm</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
 <dt><code>self-warn</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt><dd></dd>
 <dt><code>digest-sent</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>log-storm</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>log-storm-end</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 </dl>
 
 <h2 id="doctor">Doctor coverage</h2>
@@ -508,6 +511,7 @@ npx daimon init --auto</code></pre>
 <tr><td>Typo’d or unknown config key</td><td><span class="cov cov-rule">doctor rule</span></td><td>Load-time warning with the nearest valid name (never a failure — old configs stay loadable); <code>daimon config validate</code> reports the same offline; <code>config-valid</code> doctor check surfaces it (M91).</td></tr>
 <tr><td>Pinned-port collision between apps</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>port pin &lt;n&gt;</code> collision check; predicted pool conflicts via <code>port-conflict-pred</code> (M81).</td></tr>
 <tr><td>Restart storm / crash loop</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>restart-storm: &lt;app&gt;</code> (threshold via restartStorm.perHour) + <code>smart-restart-tune</code>; crash reports ring-buffer 10/app and surface in <code>daimon why</code>.</td></tr>
+<tr><td>Log storm (volume spiking against the app’s own baseline)</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>log-storm-active: &lt;app&gt;</code> (M101, v1.2) — suggest-only: names the observed rate, baseline, and the remedy (<code>daimon logs &lt;app&gt; --since 5m --level error</code>, mute, or stop). Detection is always on; tune via <code>logs.storm</code>; OS notification is opt-in via notifications.kinds.</td></tr>
 <tr><td>Flaky tests</td><td><span class="cov cov-gap">by design: no rule</span></td><td>No doctor rule by design: flakiness is derived from run history at each git head, not from config or daemon state — <code>daimon test-history &lt;app&gt; --flaky</code> is the surface.</td></tr>
 <tr><td>Full-text search degraded (FTS5 unavailable)</td><td><span class="cov cov-built-in">built-in</span></td><td>Search degrades to a LIKE scan (fallback:true) and a self-warn event fires; <code>history-db-healthy</code> covers the underlying db.</td></tr>
 <tr><td>Convention env file missing for a framework</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>env-file-missing: &lt;app&gt;</code> — suggest-only; daimon never creates or edits .env files (M82).</td></tr>

@@ -116,11 +116,11 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   }
   // Per-app log-line FTS ingestion (M77). Errors/events are always indexed via
   // the events table; log lines default on with global/per-app opt-out.
-  registry.on('log', ({ name, ts, line }: { name: string; ts: number; line: string }) => {
+  registry.on('log', ({ name, ts, line, level }: { name: string; ts: number; line: string; level?: string | null }) => {
     const cfg2 = registry.getConfig();
     if (cfg2.search?.logIndex === false) return;
     if (cfg2.overrides?.[name]?.logIndex === false) return;
-    history.recordLogLine(name, line, ts);
+    history.recordLogLine(name, line, ts, level ?? null);
   });
 
   // Session preservation (M55): restore error history / log tails from the
@@ -292,6 +292,10 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { requestLog.stop(); } catch {}
     try { digestScheduler?.stop(); } catch {}
     try { webhookDispatcher?.stop(); } catch {}
+    // Close active log-storm episodes (M101) BEFORE history closes so the
+    // log-storm-end events land — an unmatched log-storm would keep doctor's
+    // rule red for its whole lookback window.
+    try { registry.endActiveLogStorms(); } catch {}
     try { history.close(); } catch {}
     try {
       // Handoff shutdown (M88): a snapshot-state call in the last 60s means a

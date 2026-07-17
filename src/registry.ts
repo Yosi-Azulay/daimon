@@ -26,7 +26,9 @@ import { envFileCandidates as resolveEnvCandidates, existingEnvFiles, parseEnvFi
 import { readSecrets, substituteSecrets } from './secrets.js';
 import { SessionRecorder } from './session.js';
 import { detectBundleRegression, detectCompileRegression, detectErrorFlapRegression, suspectCommitForDir } from './regressions.js';
-import { allProfiles } from './frameworks.js';
+import { allProfiles, type LogLevel } from './frameworks.js';
+import { makeClassifier } from './logLevels.js';
+import { LogStormDetector } from './logStorm.js';
 import { compileParseContext } from './parser.js';
 import { findFlakyTests, gitHeadForDir, resolveTestCommand, runTestCommand, testFailureFingerprint, type TestFailure, type TestTotals } from './testRunners.js';
 
@@ -63,6 +65,20 @@ export class Registry extends EventEmitter {
     this.setMaxListeners(0);
     this.config = config;
     this.portAlloc = portAlloc ?? new PortAllocator(parsePortPool(config.ports?.pool) ?? config.portRange);
+    // Log-storm detection (M101): always on with safe defaults; logs.storm
+    // only tunes it. Storms are self-events — the OS-notification kind is a
+    // separate opt-in (notifications.kinds), so absent config adds no noise.
+    this.logStormDetector = new LogStormDetector(config.logs?.storm, {
+      onStorm: info => this.recordEvent({
+        app: info.app, type: 'log-storm',
+        message: JSON.stringify({ observedPerMin: info.observedPerMin, baselinePerMin: info.baselinePerMin, windowSec: info.windowSec, multiplier: info.multiplier }),
+      }),
+      onStormEnd: info => this.recordEvent({
+        app: info.app, type: 'log-storm-end',
+        message: JSON.stringify({ observedPerMin: info.observedPerMin, baselinePerMin: info.baselinePerMin, windowSec: info.windowSec, durationMs: info.durationMs ?? 0 }),
+      }),
+    });
+    this.logStormDetector.start();
     for (const app of apps) {
       this.entries.set(app.name, {
         app,
@@ -207,6 +223,25 @@ export class Registry extends EventEmitter {
 
   getPortAllocator(): PortAllocator {
     return this.portAlloc;
+  }
+
+  // Log-storm detector (M101). Assigned in the constructor; declared here
+  // next to the other cross-cutting monitors.
+  private logStormDetector!: LogStormDetector;
+
+  logStormState(name: string): import('./logStorm.js').LogStormState {
+    return this.logStormDetector.state(name);
+  }
+
+  activeLogStorms(): { app: string; state: import('./logStorm.js').LogStormState }[] {
+    return this.logStormDetector.activeStorms();
+  }
+
+  // Daemon shutdown (main.ts): close every active storm episode so its
+  // log-storm-end reaches history before the DB closes.
+  endActiveLogStorms(): void {
+    this.logStormDetector.endAll();
+    this.logStormDetector.stop();
   }
 
   // Per-app notification mutes (M84). app → until-ts (null = indefinite).
@@ -462,6 +497,14 @@ export class Registry extends EventEmitter {
       serverProfile: e.app.serverProfile ?? null,
       muted: this.isMuted(name),
       muteUntil: this.mutes.get(name) ?? null,
+      ...(() => {
+        // Log-storm marker (M101): only present while storming — absent is
+        // the common case, keeping compact shapes byte-identical to v1.1.
+        const ls = this.logStormDetector.state(name);
+        return ls.active
+          ? { logStorm: { since: ls.since, observedPerMin: ls.observedPerMin, baselinePerMin: ls.baselinePerMin } }
+          : {};
+      })(),
     };
   }
 
@@ -485,7 +528,15 @@ export class Registry extends EventEmitter {
     return [...s.errors.values()].filter(e => e.lastSeen > sinceMs).sort((a, b) => b.lastSeen - a.lastSeen);
   }
 
-  logs(name: string, opts: { tail?: number; sinceMs?: number } = {}): string[] | null {
+  logs(name: string, opts: { tail?: number; sinceMs?: number; level?: LogLevel } = {}): string[] | null {
+    return this.logEntries(name, opts)?.map(e => e.line) ?? null;
+  }
+
+  // Entry-shaped variant (M99/M100): same filters, but keeps ts + level for
+  // surfaces that render them (dashboard chips, level filtering). ?level=
+  // includes only lines CLASSIFIED at that level — null-level lines are
+  // excluded by design (documented in the CLI/HTTP surface).
+  logEntries(name: string, opts: { tail?: number; sinceMs?: number; level?: LogLevel } = {}): LogEntry[] | null {
     const s = this.getState(name);
     if (!s) return null;
     let entries = s.logBuffer;
@@ -493,8 +544,10 @@ export class Registry extends EventEmitter {
       const cutoff = Date.now() - opts.sinceMs;
       entries = entries.filter(e => e.ts >= cutoff);
     }
+    if (opts.level) entries = entries.filter(e => e.level === opts.level);
     if (opts.tail && opts.tail > 0) entries = entries.slice(-opts.tail);
-    return entries.map(e => e.line);
+    // Never hand out the live ring buffer — callers must not see appends.
+    return entries === s.logBuffer ? entries.slice() : entries;
   }
 
   events(opts: { sinceMs?: number; app?: string } = {}): AppEvent[] {
@@ -739,7 +792,12 @@ export class Registry extends EventEmitter {
         if (!stopping) this.captureCrash(name, code, signal);
         this.emit('childExit', { name, code, signal, stopping });
       },
-      onLogLine: line => { e.logger?.write(line); this.emit('log', { name, ts: Date.now(), line }); },
+      classifyLine: makeClassifier(profileRow),
+      onLogLine: (line, level) => {
+        e.logger?.write(line);
+        this.logStormDetector.note(name);
+        this.emit('log', { name, ts: Date.now(), line, level });
+      },
       onCompile: ms => {
         const compileTs = Date.now();
         this.history?.recordCompile(name, ms, compileTs);
@@ -782,6 +840,9 @@ export class Registry extends EventEmitter {
       },
     });
     e.proc = proc;
+    // Fresh process, fresh rate history: a restart burst must not compare
+    // against the previous process's baseline (M101).
+    this.logStormDetector.reset(name);
     this.recordEvent({ app: name, type: 'status', from: prevStatus, to: 'starting' });
     proc.start();
     return { ok: true, status: e.state.status };

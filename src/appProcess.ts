@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import treeKill from 'tree-kill';
 import stripAnsi from 'strip-ansi';
 import type { AppState, AppStatus, DiscoveredApp, ErrorEntry } from './types.js';
+import type { LogLevel } from './frameworks.js';
 import { parseLine, type ProfileParseContext } from './parser.js';
 import { isSafeAppName } from './shellSafe.js';
 
@@ -22,7 +23,11 @@ export interface AppProcessDeps {
   onStatusChange?: (from: AppStatus, to: AppStatus, message?: string) => void;
   onErrorRecorded?: (entry: ErrorEntry, isNew: boolean) => void;
   onExit?: (code: number | null, signal: NodeJS.Signals | null, stopping: boolean) => void;
-  onLogLine?: (line: string) => void;
+  onLogLine?: (line: string, level: LogLevel | null) => void;
+  // Log-level classifier (M99), compiled per profile by the registry.
+  // FAIL-SOFT: any throw is treated as level null — classification may never
+  // drop or delay a line.
+  classifyLine?: (line: string) => LogLevel | null;
   onCompile?: (ms: number) => void;
   onBundleUpdate?: () => void;
   // Per-profile readiness/url/error-parser context (M67).
@@ -139,11 +144,15 @@ export class AppProcess {
       const ts = Date.now();
       state.lastLogTs = ts;
       if (state.stale) state.stale = false;
-      state.logBuffer.push({ ts, line: clean });
+      // Level classification (M99) is fail-soft: a classifier throw stores
+      // the line with level null — never dropped, never delayed.
+      let level: LogLevel | null = null;
+      try { level = this.deps.classifyLine?.(clean) ?? null; } catch { level = null; }
+      state.logBuffer.push(level == null ? { ts, line: clean } : { ts, line: clean, level });
       if (state.logBuffer.length > LOG_BUFFER_MAX) {
         state.logBuffer.splice(0, state.logBuffer.length - LOG_BUFFER_MAX);
       }
-      this.deps.onLogLine?.(clean);
+      this.deps.onLogLine?.(clean, level);
       const prev = state.status;
       const r = parseLine(state, clean, this.deps.parseCtx);
       if (r?.statusChanged) {

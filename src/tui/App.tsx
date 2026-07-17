@@ -495,7 +495,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
           </Box>
         ) : null}
         {statusMsg ? <Text color="cyan">[i] {statusMsg}</Text> : null}
-        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  {TEST_CHORD_HELP}  [O] orchestrate  [o] open URL  [/] filter  {GROUP_CHORD_HELP}  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [q] quit</Text>
+        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  {TEST_CHORD_HELP}  [O] orchestrate  [o] open URL  [/] filter  {GROUP_CHORD_HELP}  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log (level/grep inside)  [q] quit</Text>
       </Box>
     </Box>
   );

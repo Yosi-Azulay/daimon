@@ -60,11 +60,14 @@ export function flattenGroups(groups: SearchHitGroup[]): SearchHit[] {
 //  - events land on the Timeline page, anchored at the hit's ts via `?at=`
 //    so the timeline scrolls to and highlights the nearest row;
 //  - logs land on that app's Logs page (the live tailer has no historical-ts
-//    seek, so there's no `ts` param to pass — app is the most it can target);
+//    seek, so there's no `ts` param to pass — app is the most it can target).
+//    `?from=search` (M102) tells the Logs page to clear any active
+//    level/regex filter so the live buffer isn't hidden behind whatever
+//    filter happened to be set before the deep-link landed;
 //  - errors land on the app's detail page with its Errors tab preselected.
 export function routeForHit(hit: SearchHit): string {
   if (hit.kind === 'events') return `/timeline?at=${hit.ts}`;
-  if (hit.kind === 'logs') return `/logs/${hit.app}`;
+  if (hit.kind === 'logs') return `/logs/${hit.app}?from=search`;
   return `/apps/${hit.app}?tab=errors`;
 }
 

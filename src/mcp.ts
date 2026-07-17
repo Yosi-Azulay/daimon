@@ -173,13 +173,22 @@ export function buildServer(): McpServer {
   });
 
   server.registerTool('get_logs', {
-    description: 'Get recent log lines for an app.',
-    inputSchema: { name: z.string(), tail: z.number().int().positive().optional(), since: z.string().optional(), cwd: cwdField },
-  }, async ({ name, tail, since, cwd }) => {
+    description: 'Get recent log lines for an app. Optional filters (v1.2): level keeps only lines classified at that level (unclassified lines are excluded), grep applies a case-insensitive server-side regex.',
+    inputSchema: {
+      name: z.string(),
+      tail: z.number().int().positive().optional(),
+      since: z.string().optional(),
+      level: z.enum(['error', 'warn', 'info', 'debug']).optional(),
+      grep: z.string().max(512).optional(),
+      cwd: cwdField,
+    },
+  }, async ({ name, tail, since, level, grep, cwd }) => {
     const qs = new URLSearchParams();
     qs.set('cwd', cwd ?? defaultCwd);
     if (tail) qs.set('tail', String(tail));
     if (since) qs.set('since', since);
+    if (level) qs.set('level', level);
+    if (grep) qs.set('grep', grep);
     const q = qs.toString();
     const r = await callJson(`/api/apps/${encodeURIComponent(name)}/logs${q ? '?' + q : ''}`);
     if (r.status === 0) return err(r.body?.error || 'unknown');

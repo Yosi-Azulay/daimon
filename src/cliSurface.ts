@@ -263,13 +263,14 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'logs',
-    args: '<name> [--tail N] [--since 30s] [--grep <regex>] [--stream] | --group <group>',
-    summary: 'Recent log lines for an app. --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON; --group merges a group\'s tails.',
-    description: 'Recent log lines for an app. --grep applies a case-insensitive regex filter on the daemon (length-capped at 512 chars). --stream follows the live tail (SSE under the hood) and emits NDJSON {ts,line} until SIGINT — combine with --grep for a filtered live tail. With --group <group> (v1.1, experimental) and no app name: a timestamp-merged tail across the group\'s members, each line carrying its app.',
-    example: 'daimon logs web-admin --grep "ERROR|ECONNREFUSED" --stream',
+    args: '<name> [--tail N] [--since 30s] [--level <lvl>] [--grep <regex>] [--stream] | --group <group>',
+    summary: 'Recent log lines for an app. --level filters by classified level; --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON; --group merges a group\'s tails.',
+    description: 'Recent log lines for an app. --level <error|warn|info|debug> (v1.2, experimental) keeps only lines classified at that level — lines daimon could not classify are excluded from level filters. --grep applies a case-insensitive regex filter on the daemon (length-capped at 512 chars). --since takes the usual duration grammar (15m, 2h, 1d). Filters compose (AND) and all apply in --stream follow mode too, evaluated per line at delivery. --stream follows the live tail (SSE under the hood) and emits NDJSON {ts,line} until SIGINT. With --group <group> (v1.1, experimental) and no app name: a timestamp-merged tail across the group\'s members, each line carrying its app. Without flags the output shape is unchanged (frozen).',
+    example: 'daimon logs web-admin --level error --grep "EADDR.*" --stream',
     options: [
       { flag: '--tail', arg: '<N>', description: 'Last N lines (default 50).' },
       { flag: '--since', arg: '<duration>', description: 'Time window.' },
+      { flag: '--level', arg: '<lvl>', description: 'Only lines classified error|warn|info|debug (v1.2, experimental); unclassified lines are excluded.' },
       { flag: '--grep', arg: '<regex>', description: 'Server-side case-insensitive regex filter (max 512 chars).' },
       { flag: '--stream', description: 'Follow the live tail; NDJSON until SIGINT.' },
       { flag: '--group', arg: '<group>', description: 'Merged tail across a named group\'s members (v1.1, experimental).' },

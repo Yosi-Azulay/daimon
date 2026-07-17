@@ -25,5 +25,31 @@
       "file": "src/app/app.component.ts",
       "line": 12
     }
-  }
+  },
+  "logLines": [
+    {
+      "raw": "✘ [ERROR] TS2304: Cannot find name 'foo'. [plugin angular-compiler]",
+      "level": "error"
+    },
+    {
+      "raw": "▲ [WARNING] TS6133: 'unused' is declared but its value is never read. [plugin angular-compiler]",
+      "level": "warn"
+    },
+    {
+      "raw": "ERROR in src/app/app.component.ts:5:3",
+      "level": "error"
+    },
+    {
+      "raw": "WARNING in budgets: initial exceeded maximum budget.",
+      "level": "warn"
+    },
+    {
+      "raw": "Error: Cannot GET /missing",
+      "level": "error"
+    },
+    {
+      "raw": "Application bundle generation complete. [1.234 seconds]",
+      "level": null
+    }
+  ]
 }

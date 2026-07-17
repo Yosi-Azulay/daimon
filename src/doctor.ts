@@ -39,6 +39,7 @@ export const DOCTOR_COVERAGE: DoctorCoverageRow[] = [
   { failure: 'Typo’d or unknown config key', kind: 'rule', coverage: 'Load-time warning with the nearest valid name (never a failure — old configs stay loadable); `daimon config validate` reports the same offline; `config-valid` doctor check surfaces it (M91).' },
   { failure: 'Pinned-port collision between apps', kind: 'rule', coverage: '`port pin <n>` collision check; predicted pool conflicts via `port-conflict-pred` (M81).' },
   { failure: 'Restart storm / crash loop', kind: 'rule', coverage: '`restart-storm: <app>` (threshold via restartStorm.perHour) + `smart-restart-tune`; crash reports ring-buffer 10/app and surface in `daimon why`.' },
+  { failure: 'Log storm (volume spiking against the app’s own baseline)', kind: 'rule', coverage: '`log-storm-active: <app>` (M101, v1.2) — suggest-only: names the observed rate, baseline, and the remedy (`daimon logs <app> --since 5m --level error`, mute, or stop). Detection is always on; tune via `logs.storm`; OS notification is opt-in via notifications.kinds.' },
   { failure: 'Flaky tests', kind: 'gap', coverage: 'No doctor rule by design: flakiness is derived from run history at each git head, not from config or daemon state — `daimon test-history <app> --flaky` is the surface.' },
   { failure: 'Full-text search degraded (FTS5 unavailable)', kind: 'built-in', coverage: 'Search degrades to a LIKE scan (fallback:true) and a self-warn event fires; `history-db-healthy` covers the underlying db.' },
   { failure: 'Convention env file missing for a framework', kind: 'rule', coverage: '`env-file-missing: <app>` — suggest-only; daimon never creates or edits .env files (M82).' },
@@ -266,6 +267,43 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
       if (!anyStorm) checks.push({ name: 'restart-storm', ok: true });
     } catch (err: any) {
       checks.push({ name: 'restart-storm', ok: true, detail: `skipped: ${err?.message || err}` });
+    }
+  }
+
+  // log-storm-active (M101, v1.2): an app whose log volume is currently
+  // storming — the latest log-storm event in the last 6h has no matching
+  // log-storm-end. Suggest-only, never auto-fixed: the remedy is to read the
+  // spike, mute it, or stop the app.
+  if (config.history.enabled) {
+    try {
+      const h = new History(config.history);
+      const since = Date.now() - 6 * 3600_000;
+      const storms = h.queryEvents({ since, type: 'log-storm', limit: 1000 });
+      const ends = h.queryEvents({ since, type: 'log-storm-end', limit: 1000 });
+      h.close();
+      const lastEnd = new Map<string, number>();
+      for (const e of ends) lastEnd.set(e.app, Math.max(lastEnd.get(e.app) ?? 0, e.ts));
+      let anyLogStorm = false;
+      const seenApps = new Set<string>();
+      for (const s of storms.sort((a, b) => b.ts - a.ts)) {
+        if (seenApps.has(s.app)) continue;
+        seenApps.add(s.app);
+        if ((lastEnd.get(s.app) ?? 0) >= s.ts) continue;
+        anyLogStorm = true;
+        let rate = '';
+        try {
+          const d = JSON.parse(s.message ?? '{}');
+          if (d.observedPerMin != null) rate = `${d.observedPerMin} lines/min vs baseline ${d.baselinePerMin ?? '?'} `;
+        } catch {}
+        checks.push({
+          name: `log-storm-active: ${s.app}`,
+          ok: false,
+          detail: `${rate}since ${new Date(s.ts).toISOString()} — inspect with 'daimon logs ${s.app} --since 5m --level error', 'daimon mute ${s.app}' to silence notifications, or 'daimon stop ${s.app}'`,
+        });
+      }
+      if (!anyLogStorm) checks.push({ name: 'log-storm', ok: true });
+    } catch (err: any) {
+      checks.push({ name: 'log-storm', ok: true, detail: `skipped: ${err?.message || err}` });
     }
   }
 

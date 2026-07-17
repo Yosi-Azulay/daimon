@@ -143,6 +143,15 @@ export class Notifier {
       this.route('test-failed', ev.app, `${ev.app} tests failed`, ev.message || '');
     } else if (ev.type === 'flaky-test-detected' && want('flaky-test-detected')) {
       this.route('flaky-test-detected', ev.app, `${ev.app} flaky test`, ev.message || '');
+    } else if (ev.type === 'log-storm' && want('log-storm')) {
+      // M101 (v1.2): OPT-IN only — 'log-storm' is not in DEFAULT_KINDS, so a
+      // config without notifications.kinds never hears about storms.
+      let detail = 'log volume spiking against its own baseline';
+      try {
+        const d = JSON.parse(ev.message || '{}');
+        if (d.observedPerMin != null) detail = `${d.observedPerMin} lines/min vs baseline ${d.baselinePerMin ?? '?'} — daimon logs ${ev.app} --since 5m --level error`;
+      } catch {}
+      this.route('log-storm', ev.app, `${ev.app} log storm`, detail);
     }
   };
 

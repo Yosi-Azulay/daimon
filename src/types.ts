@@ -137,6 +137,11 @@ export interface LogsConfig {
   dir: string;
   maxFiles: number;
   maxBytesPerFile: number;
+  // Log-storm tuning (M101, v1.2 — experimental). Optional with safe
+  // defaults; absent = detection still runs with { multiplier: 10,
+  // windowSec: 60 } and emits only the self-events (the OS-notification
+  // kind is a separate opt-in via notifications.kinds).
+  storm?: { multiplier?: number; windowSec?: number };
 }
 
 import type { FrameworkProfile } from './frameworks.js';
@@ -279,6 +284,9 @@ export interface ErrorEntry {
 export interface LogEntry {
   ts: number;
   line: string;
+  // Classified log level (M99), absent/null when classification found nothing
+  // — additive: pre-v1.2 session snapshots round-trip without it.
+  level?: import('./frameworks.js').LogLevel | null;
 }
 
 // Event-kind catalog with stability tiers (M87). This const is the single
@@ -308,6 +316,8 @@ export const EVENT_KIND_STABILITY = {
   'restart-storm': 'stable',
   'self-warn': 'stable',
   'digest-sent': 'experimental', // v0.13 (M84)
+  'log-storm': 'experimental', // v1.2 (M101)
+  'log-storm-end': 'experimental', // v1.2 (M101)
 } as const satisfies Record<string, import('./stability.js').Stability>;
 
 export type AppEventType = keyof typeof EVENT_KIND_STABILITY;
@@ -409,4 +419,7 @@ export interface AppSummary {
   // Notification mute (M84): true while muted; muteUntil null = indefinite.
   muted?: boolean;
   muteUntil?: number | null;
+  // Log-storm marker (M101, v1.2 — experimental): present only while the app
+  // is storming (lines/min vs its own rolling baseline; see logStorm.ts).
+  logStorm?: { since: number | null; observedPerMin: number; baselinePerMin: number | null };
 }

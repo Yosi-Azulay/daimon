@@ -24,8 +24,8 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/api/apps/:name', stability: 'frozen', summary: 'One app status (?format=compact|full).' },
   { method: 'GET', path: '/api/apps/:name/errors', stability: 'frozen', summary: 'Deduplicated errors (?since=, ?level=, ?format=).' },
   { method: 'GET', path: '/api/apps/:name/errors/since-last', stability: 'frozen', summary: 'Errors since the previous call for ?client= cursor.' },
-  { method: 'GET', path: '/api/apps/:name/logs', stability: 'frozen', summary: 'Recent log lines (?tail=, ?since=, ?grep=).' },
-  { method: 'GET', path: '/api/apps/:name/logs/stream', stability: 'frozen', summary: 'Live log tail (SSE; ?grep= filters server-side).' },
+  { method: 'GET', path: '/api/apps/:name/logs', stability: 'frozen', summary: 'Recent log lines (?tail=, ?since=, ?grep=, ?level= — v1.2, experimental param).' },
+  { method: 'GET', path: '/api/apps/:name/logs/stream', stability: 'frozen', summary: 'Live log tail (SSE; ?grep= filters server-side; ?level= filter and ?levels=1 per-line level field — v1.2, experimental params).' },
   { method: 'POST', path: '/api/apps/:name/start', stability: 'frozen', summary: 'Start an app (?withDeps=1, ?steal=1). Soft-lock gated.' },
   { method: 'POST', path: '/api/apps/:name/stop', stability: 'frozen', summary: 'Stop an app (?steal=1). Soft-lock gated.' },
   { method: 'POST', path: '/api/apps/:name/restart', stability: 'frozen', summary: 'Restart an app (?steal=1). Soft-lock gated.' },
@@ -102,6 +102,6 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'POST', path: '/api/groups/:name/up', stability: 'experimental', summary: 'Start a group: members ∪ depends closure in topo order; readiness summary (?until=, ?timeoutMs=, ?steal=1). Soft-lock gated per member.' },
   { method: 'POST', path: '/api/groups/:name/stop', stability: 'experimental', summary: 'Stop a group\'s members in reverse depends order (?steal=1). Soft-lock gated per member.' },
   { method: 'GET', path: '/api/groups/:name/status', stability: 'experimental', summary: 'Per-member compact statuses + "3/4 healthy" summary.' },
-  { method: 'GET', path: '/api/groups/:name/logs', stability: 'experimental', summary: 'Timestamp-merged log tail across members, each line carrying its app (?tail=, ?since=, ?grep=).' },
+  { method: 'GET', path: '/api/groups/:name/logs', stability: 'experimental', summary: 'Timestamp-merged log tail across members, each line carrying its app (?tail=, ?since=, ?grep=, ?level=).' },
   { method: 'POST', path: '/api/apps/:name/unmute', stability: 'experimental', summary: 'Lift a notification mute.' },
 ];

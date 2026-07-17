@@ -213,7 +213,11 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     return this.allItems().filter(i => i.label.toLowerCase().includes(q) || (i.hint ?? '').toLowerCase().includes(q)).slice(0, 30);
   });
 
-  private listener = () => this.openPalette();
+  // M102: a caller (e.g. the Logs page's "search" affordance) can pre-fill
+  // the palette straight into search mode via the event's `detail.query` —
+  // every other dispatcher (keyboard-shortcuts.ts's Ctrl+K, the topbar
+  // button) fires the bare event with no detail, which opens blank as before.
+  private listener = (e: Event) => this.openPalette((e as CustomEvent<{ query?: string }>).detail?.query);
 
   ngOnInit(): void {
     window.addEventListener('daimon:cmdk', this.listener);
@@ -231,13 +235,18 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   // whatever else was focused, but never assumed to be a specific element.
   private lastFocused: HTMLElement | null = null;
 
-  openPalette(): void {
+  openPalette(presetQuery?: string): void {
     this.lastFocused = document.activeElement as HTMLElement | null;
     this.open.set(true);
-    this.query = '';
+    this.query = presetQuery ?? '';
     this.active.set(0);
     this.resetSearch();
-    setTimeout(() => this.input?.nativeElement.focus(), 0);
+    setTimeout(() => {
+      this.input?.nativeElement.focus();
+      // A preset query is set programmatically (no ngModelChange fires for
+      // it), so kick off search mode's debounce/fetch by hand.
+      if (this.query) this.onQuery(this.query);
+    }, 0);
   }
 
   close(): void {

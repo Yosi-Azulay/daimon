@@ -34,6 +34,14 @@ src/
                     # Groups READ the depends graph (topoLevels/transitiveClosure),
                     # never change it; they additively subsume the legacy profiles
                     # map (group wins name collisions, with a validate warning).
+  logLevels.ts      # Log-level classification (M99, v1.2): registry patterns first
+                    # (first match wins) chained to a conservative generic heuristic;
+                    # FAIL-SOFT — any miss/throw stores level null, never drops a line.
+  logStorm.ts       # Log-storm detection (M101, v1.2): per-app rolling lines/min
+                    # baseline in memory; one log-storm event on entry, one
+                    # log-storm-end on recovery. Baseline FROZEN at entry, exit at
+                    # half the entry threshold (hysteresis) — flapping can't spam.
+                    # One 15s unref'd tick only to end storms of silent apps.
   agents.ts         # Agent identity (`<host>-<pid>-<rand4>`) + 30s per-app LockManager.
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
@@ -77,7 +85,7 @@ src/
   mcp.ts            # MCP server. Wraps the HTTP API and forwards X-Daimon-Agent.
   ...
 dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
-test/               # node --test suite. 571 test cases (v0.14); files run in parallel child processes.
+test/               # node --test suite. 715 test cases (v1.2); files run in parallel child processes.
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
 
@@ -138,7 +146,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - **The digest is not a cron engine (M84).** One 1-minute interval in `DigestScheduler`; catch-up at most once; per-webhook last-sent persisted in state.json. Don't add more timers.
 - **New test runner = parser + fixture, same convention (M74).** Add the parser in `src/testRunners.ts`, its id to `KNOWN_TEST_RUNNER_IDS`, and a fixture in `test/fixtures/testrunners/<id>/` (marker files + `fixture.json` with pass/fail/mixed cases). `test/testrunners.test.mjs` fails on a runner without a fixture. Parsers are fail-soft: no totals is acceptable, fabricated totals are not.
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
-- **History migrations are additive** (`CREATE TABLE IF NOT EXISTS` only) — a v0.11 DB must open cleanly under v0.12 and vice versa.
+- **History migrations are additive** — `CREATE TABLE IF NOT EXISTS`, plus (since v1.2) a guarded nullable `ALTER TABLE … ADD COLUMN` (check `PRAGMA table_info` first; column must be nullable; every INSERT names its columns so an older daimon keeps writing the same table). Never a rename, drop, retype, or NOT NULL addition — a v0.11 DB must open cleanly under v1.2 and vice versa.
 - **Every surface declares a stability tier (M87).** New CLI verbs, HTTP endpoints, MCP tools, config keys, and event kinds MUST carry `frozen`/`stable`/`experimental` at their source of truth (`cliSurface.ts` / `httpSurface.ts` / `mcp.ts` MCP_TOOL_STABILITY / `config.ts` CONFIG_KEY_STABILITY / `types.ts` EVENT_KIND_STABILITY). New work defaults to experimental. A `frozen` surface needs a golden-shape snapshot in `test/fixtures/contract/` — `test/contract.test.mjs` fails without one, and fails forever on a frozen-shape change (regenerate with `UPDATE_CONTRACT_SNAPSHOTS=1` only for reviewed ADDITIVE changes). See STABILITY.md.
 - **State writes are atomic with a .bak (M88).** Every `~/.daimon/*.json` the daemon rewrites (state.json, session-state.json, config rewrites) goes tmp → copy-current-to-.bak → rename. `state.json` load order: main → `.bak` → archive as `state.json.corrupt-<ts>` + fresh start, with a self-warn event (never silent). Torture coverage: `test/lifecycle-torture.test.mjs`.
 - **Daemon handoff is verify-then-adopt (M88).** `daimon daemon restart` leaves children RUNNING (registry handoff flag, 60s window); the incoming daemon re-adopts a child only when the handoff-recorded LISTENING pid is alive AND still the port's listener. Anything else → status `orphaned` + a per-case remedy, never a blind kill. The handoff file records the listener pid (findPortHolder at snapshot time), NOT the spawn/shell pid — on Windows the wrapper dies with the daemon's pipes.
@@ -146,7 +154,14 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - **Error strings carry remedies (M90).** Every user-facing error says what to do next; `test/error-remedies.test.mjs` scans cli.ts/server.ts/main.ts and fails on bare errors. EADDRINUSE forensics is the model.
 - **Groups subsume profiles additively (M93, v1.1).** The `groups` config key's shorthand form is exactly the legacy `profiles` shape; `profiles` keeps loading forever and its behavior is byte-identical. Precedence: groups resolve first on `up`/`down`; on the frozen `stop` verb an APP of the name always wins and the group resolves only where the verb previously errored. Name collisions warn ("group wins") in `daimon config validate`. Groups consume the depends graph via depends.ts — never add ordering logic outside src/groups.ts/orchestrate.ts. On `daimon errors`, bare `--group` keeps fingerprint grouping; `--group <name>` filters (value `fingerprint` reserved). Post-1.0 rule: every new surface declares a stability tier at its source of truth and ships `experimental`.
 
-## v1.1 highlights (what landed this release)
+- **Log-level classification is registry-declared and fail-soft (M99, v1.2).** A framework's level convention lives in its `FrameworkProfile.logLevelPatterns` row (ordered `{ pattern, level }`, first match wins, compiled once) — set ONLY where the framework documents its output format, fixture-gated like every registry field: a profile shipping patterns without covering `logLines` cases in its fixture fails `test/frameworks.test.mjs`, and so does a pattern no fixture line exercises. Profiles without documented conventions get NO patterns (the shared generic heuristic in logLevels.ts applies — never guess). Classification chains registry rows → generic heuristic → null and is FAIL-SOFT at ingest: any miss or throw stores the line with `level` null — a classifier bug may never drop or delay a log line. Storage is the additive nullable `level` column on `log_lines` (guarded ALTER; old rows read null). `--level` filters exclude unclassified lines by design.
+- **Log-storm detection is hysteresis-gated (M101, v1.2).** `src/logStorm.ts` keeps a per-app rolling lines/min baseline in memory (no tables); entry = observed ≥ `multiplier` × max(baseline, 1 line/min) with the baseline FROZEN at entry; exit at half the entry threshold — a flapping rate cannot spam events. Apps with <3 min of history never storm; `registry.start()` resets the app's rate history (fresh process, fresh baseline). Exactly one `log-storm` and one `log-storm-end` event per episode. The OS-notification kind `log-storm` is opt-in via `notifications.kinds`; the only timer is one 15s unref'd sweep that ends storms of silent apps — never add more.
+
+## v1.2 highlights (what landed this release)
+
+- **Log sense (M99–M104)**: registry-declared `logLevelPatterns` for angular/nx/vite/nextjs/django/flask/rails/dotnet + generic fallback, additive nullable `level` column; `daimon logs --level` (+ `?level=` on `/api/apps/:name/logs`, its SSE stream (also `?levels=1` per-line level field), `/api/groups/:name/logs`; MCP `get_logs` gains `level`/`grep`); log-storm detector (`logs.storm` config, `log-storm`/`log-storm-end` events, opt-in notification kind, doctor `log-storm-active` suggest-only rule, `logStorm` in `why` + status summaries); report errors section gains a `logVolume` line (degrades to a note); TUI level-cycle + inline-grep chords; dashboard level chips / regex filter / storm banner / search deep-links. All new surfaces `experimental`. Tests: `test/log-levels.test.mjs`, `test/logs-filtering.test.mjs`, `test/log-storm.test.mjs`, `test/tui-log-chord.test.mjs`.
+
+## v1.1 highlights
 
 - **Named app groups (M93–M98)**: `groups` config key (shorthand string[] or `{ apps, autoStart }`, normalized at load; `src/groups.ts` resolution module); `daimon up/stop/down <group>` with depends-aware topo order, `"3/4 healthy"` readiness summary, per-member soft-lock gating, exit 0/2 semantics; `POST /api/groups/:name/up|stop` (audit-logged) + `GET /api/groups` and `/api/groups/:name/status|logs`; `--group <g>` filters on list/status/errors/report (`?group=` server-side, byte-identical shapes when absent); autoStart groups at boot (dedup at resolution — one spawn, one log line naming every source); TUI `G` chord + dashboard group chips/sections/detail row; MCP `ensure_up` group-first + `daimon_groups` (28 tools). All new surfaces `experimental`. Tests live in `test/groups.test.mjs`, `test/group-updown.test.mjs`, `test/group-filters.test.mjs`, `test/group-autostart.test.mjs`.
 

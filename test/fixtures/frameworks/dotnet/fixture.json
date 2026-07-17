@@ -24,5 +24,31 @@
       "file": "Program.cs",
       "line": 12
     }
-  }
+  },
+  "logLines": [
+    {
+      "raw": "fail: Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddleware[1]",
+      "level": "error"
+    },
+    {
+      "raw": "crit: Microsoft.AspNetCore.Hosting.Diagnostics[6]",
+      "level": "error"
+    },
+    {
+      "raw": "warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]",
+      "level": "warn"
+    },
+    {
+      "raw": "info: Microsoft.Hosting.Lifetime[14]",
+      "level": "info"
+    },
+    {
+      "raw": "dbug: Microsoft.Extensions.Hosting.Internal.Host[1]",
+      "level": "debug"
+    },
+    {
+      "raw": "      Now listening on: http://localhost:5000",
+      "level": null
+    }
+  ]
 }

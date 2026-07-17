@@ -99,7 +99,8 @@
     "enabled": false,
     "dir": "~/.daimon/logs",
     "maxFiles": 5,
-    "maxBytesPerFile": 10000000
+    "maxBytesPerFile": 10000000,
+    "storm": { "multiplier": 10, "windowSec": 60 }
   },
 
   "envFiles": {},

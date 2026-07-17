@@ -96,3 +96,42 @@ test.describe('axe: named app groups states', () => {
     await axeCheck(page);
   });
 });
+
+// M102 — Log Sense (v1.2) dashboard states the ROUTE_PATHS sweep never
+// reaches: the level-chip row and a regex filter's inline error, both of
+// which only render once a specific app is selected (bare '/logs' from
+// ROUTE_PATHS never has an app, so never shows either). Storm banner is
+// deliberately not covered here — see logs.spec.ts's header comment for why
+// it can't be seeded deterministically in this harness.
+test.describe('axe: log-sense states', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('daimon.tourDismissed', '1'));
+  });
+
+  const axeCheck = async (page: import('@playwright/test').Page) => {
+    await page.waitForLoadState('networkidle').catch(() => {});
+    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+    const blocking = results.violations.filter(v => v.impact === 'serious' || v.impact === 'critical');
+    expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
+  };
+
+  test('axe: logs page with level chips visible has no serious/critical violations', async ({ page, request }) => {
+    const apps: { name: string }[] = await (await request.get('/api/apps')).json();
+    test.skip(!apps.length, 'no registry apps in the driven workspace');
+    await page.goto(`/logs/${encodeURIComponent(apps[0].name)}`);
+    await expect(page.locator('.dm-lvl-chip').first()).toBeVisible({ timeout: 10_000 });
+    await axeCheck(page);
+  });
+
+  test('axe: logs page with an active level chip and an invalid-regex inline error has no serious/critical violations', async ({ page, request }) => {
+    const apps: { name: string }[] = await (await request.get('/api/apps')).json();
+    test.skip(!apps.length, 'no registry apps in the driven workspace');
+    await page.goto(`/logs/${encodeURIComponent(apps[0].name)}`);
+    await expect(page.locator('.dm-lvl-chip').first()).toBeVisible({ timeout: 10_000 });
+    await page.locator('.dm-lvl-chip[data-lvl="error"]').click();
+    await page.getByRole('button', { name: /regex/i }).click();
+    await page.locator('.dm-filter input').fill('(unterminated');
+    await expect(page.locator('.dm-rxerr')).toBeVisible({ timeout: 5_000 });
+    await axeCheck(page);
+  });
+});
