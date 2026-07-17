@@ -10,6 +10,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { seedRealGroups } from './seed-groups.ts';
 
 const requireCjs = createRequire(import.meta.url);
 
@@ -83,3 +84,13 @@ console.log(`[seed] inserted events, test runs, a crash, and log lines into ${db
 console.log('[seed] note: agent records are in-memory; have >=2 agents hit the daemon (e.g., daimon list from two terminals) before running the drive.');
 
 db.close();
+
+// 7) v1.1: named app groups (M97 dashboard drive) -- see seed-groups.ts for
+// why this goes through the live daemon's own HTTP API instead of a DB
+// insert like everything above.
+const seeded = await seedRealGroups(process.env.DAIMON_BASE_URL || 'http://127.0.0.1:4999');
+if (seeded) {
+  console.log(`[seed] seeded groups 'web' (${seeded.web.length} app(s)) and 'day' (${seeded.day.length} app(s)) over the live registry`);
+} else {
+  console.log("[seed] group seed skipped (no live daemon reachable at DAIMON_BASE_URL, no registry apps, or a pre-v1.1 daemon) -- the group dashboard specs will exercise the no-groups fallback instead");
+}

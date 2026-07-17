@@ -11,6 +11,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { ROUTE_PATHS } from './routes';
+import { seedRealGroups } from './seed-groups.ts';
 
 test.beforeEach(async ({ page }) => {
   // Same pre-dismiss as dashboard.spec.ts — the onboarding tour's full-
@@ -55,3 +56,43 @@ for (const path of ROUTE_PATHS) {
     expect.soft(nonBlocking, `moderate/minor axe violations on ${path}`).toEqual([]);
   });
 }
+
+// M97 — named app groups: three extra page states the ROUTE_PATHS sweep
+// above never exercises (chip-filtered list, grouped sections, the
+// app-detail group row). Self-seeded via seedRealGroups rather than relying
+// on ROUTE_PATHS-driven `npm run e2e:seed` timing/ordering — same
+// independence dashboard.spec.ts's seedCrashFor / mute-badge tests have from
+// the rest of the seed data.
+test.describe('axe: named app groups states', () => {
+  let seededApp: string | null = null;
+
+  test.beforeAll(async ({ baseURL }) => {
+    const seeded = await seedRealGroups(baseURL!);
+    seededApp = seeded?.day[0] ?? null;
+  });
+
+  const axeCheck = async (page: import('@playwright/test').Page) => {
+    await page.waitForLoadState('networkidle').catch(() => {});
+    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+    const blocking = results.violations.filter(v => v.impact === 'serious' || v.impact === 'critical');
+    expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
+  };
+
+  test('axe: / with grouped sections (no chip filter) has no serious/critical violations', async ({ page }) => {
+    test.skip(!seededApp, 'no registry apps in the driven workspace, or daemon predates /api/groups');
+    await page.goto('/');
+    await axeCheck(page);
+  });
+
+  test('axe: /?group=web (chip-filtered list) has no serious/critical violations', async ({ page }) => {
+    test.skip(!seededApp, 'no registry apps in the driven workspace, or daemon predates /api/groups');
+    await page.goto('/?group=web');
+    await axeCheck(page);
+  });
+
+  test('axe: app detail with group chips has no serious/critical violations', async ({ page }) => {
+    test.skip(!seededApp, 'no registry apps in the driven workspace, or daemon predates /api/groups');
+    await page.goto(`/apps/${encodeURIComponent(seededApp!)}`);
+    await axeCheck(page);
+  });
+});

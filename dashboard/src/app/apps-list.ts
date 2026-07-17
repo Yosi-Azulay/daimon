@@ -7,6 +7,7 @@ import {
   EventEmitter,
   HostListener,
   Input,
+  OnInit,
   Output,
   ViewChild,
   computed,
@@ -22,6 +23,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { AppRow, DaimonApi, LockSnapshot } from './daimon-api';
 import { SkeletonComponent, EmptyStateComponent, MonoComponent, StatusPillComponent, FrameworkBadgeComponent, SparklineComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
+import { filterByGroup, groupChips, groupSections, sectionOffsets, type GroupSection } from './groups-helpers';
 
 type ViewMode = 'cards' | 'list';
 type StatusFilter = 'all' | 'serving' | 'errors' | 'stopped';
@@ -408,6 +410,7 @@ export class AppsListViewComponent {
           <div class="dm-page-sub">
             {{ filtered().length }} of {{ api.apps().length }} visible
             @if (workspace()) { · workspace <dm-mono>{{ workspace() }}</dm-mono> }
+            @if (activeGroup()) { · group <dm-mono>{{ activeGroup() }}</dm-mono> }
           </div>
         </div>
         <div class="dm-header-actions">
@@ -441,6 +444,16 @@ export class AppsListViewComponent {
             </button>
           }
         </div>
+        @if (groupChipsList().length) {
+          <div class="dm-chips dm-group-chip-row" role="group" aria-label="Group filter">
+            @for (g of groupChipsList(); track g.name) {
+              <button type="button" class="dm-chip" [class.active]="activeGroup() === g.name"
+                      [attr.aria-pressed]="activeGroup() === g.name" (click)="toggleGroup(g.name)">
+                {{ g.name }}<span class="dm-chip-count">{{ g.healthy }}/{{ g.total }}</span>
+              </button>
+            }
+          </div>
+        }
         @if (allTags().length) {
           <div class="dm-chips dm-tag-row" role="group" aria-label="Tag filter">
             @for (t of allTags(); track t) {
@@ -482,6 +495,28 @@ export class AppsListViewComponent {
       } @else if (filtered().length === 0) {
         <dm-empty icon="search_off" title="No matches"
                   hint="No apps match the current filters. Clear them or try a different query."></dm-empty>
+      } @else if (sections().length) {
+        <div class="dm-groups">
+          @for (sec of sections(); track sec.name; let si = $index) {
+            <section class="dm-group-section" [attr.aria-labelledby]="'dm-group-h-' + si">
+              <h2 class="dm-group-heading" [id]="'dm-group-h-' + si">
+                {{ sec.name ?? 'Ungrouped' }}
+                <span class="dm-group-heading-count">{{ sec.apps.length }}</span>
+              </h2>
+              @if (view() === 'cards') {
+                <dm-apps-cards
+                  [items]="sec.apps" [focusedIndex]="focusedIndex() - sectionOffsetsList()[si]" [busy]="busyMap()"
+                  (open)="open($event)" (focus)="onSectionFocus(si, $event)" (act)="act($event.name, $event.kind)">
+                </dm-apps-cards>
+              } @else {
+                <dm-apps-list-view
+                  [items]="sec.apps" [focusedIndex]="focusedIndex() - sectionOffsetsList()[si]" [busy]="busyMap()"
+                  (open)="open($event)" (focus)="onSectionFocus(si, $event)" (act)="act($event.name, $event.kind)">
+                </dm-apps-list-view>
+              }
+            </section>
+          }
+        </div>
       } @else if (view() === 'cards') {
         <dm-apps-cards
           [items]="filtered()" [focusedIndex]="focusedIndex()" [busy]="busyMap()"
@@ -545,18 +580,29 @@ export class AppsListViewComponent {
     .dm-empty-actions{margin-top:.75rem}
     .dm-link-btn{display:inline-flex;align-items:center;gap:.375rem;padding:6px 14px;border-radius:10px;background:var(--mat-sys-primary);color:var(--mat-sys-on-primary);text-decoration:none;font:500 .875rem/1.25rem Roboto}
     .dm-link-btn .material-symbols-outlined{font-size:18px}
-    .dm-tag-row{flex-wrap:wrap;gap:4px;max-width:100%}
+    .dm-tag-row,.dm-group-chip-row{flex-wrap:wrap;gap:4px;max-width:100%}
     .dm-chip-clear{padding:5px 6px;color:var(--mat-sys-on-surface-variant)}
     .dm-chip-clear .material-symbols-outlined{font-size:16px}
+    .dm-groups{display:flex;flex-direction:column;gap:1.5rem}
+    .dm-group-section{display:flex;flex-direction:column;gap:.75rem}
+    .dm-group-heading{margin:0;display:flex;align-items:center;gap:.5rem;font:500 1rem/1.5rem Roboto;color:var(--mat-sys-on-surface)}
+    .dm-group-heading-count{font:600 .6875rem/1rem var(--dm-mono);padding:0 7px;border-radius:999px;background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface-variant)}
   `],
 })
-export class AppsListComponent implements AfterViewInit {
+export class AppsListComponent implements OnInit, AfterViewInit {
   readonly api = inject(DaimonApi);
   private readonly router = inject(Router);
   private readonly snack = inject(MatSnackBar);
   private readonly destroyRef = inject(DestroyRef);
 
   @ViewChild('searchInput') searchInput?: ElementRef<HTMLInputElement>;
+
+  // `?group=<name>` deep-link (M97), bound automatically by
+  // withComponentInputBinding() — same one-shot-read-on-init convention
+  // app-detail.ts's `tab` and timeline-page.ts's `at` use. Read in ngOnInit
+  // to seed `activeGroup`; toggling a chip afterwards writes the param back
+  // via router.navigate so the filter survives a reload.
+  @Input() group?: string;
 
   readonly view = signal<ViewMode>('cards');
   readonly query = signal<string>('');
@@ -565,12 +611,17 @@ export class AppsListComponent implements AfterViewInit {
   readonly focusedIndex = signal<number>(0);
   readonly busyMap = signal<Record<string, Record<string, boolean>>>({});
   readonly selectedTags = signal<Set<string>>(new Set<string>());
+  readonly activeGroup = signal<string | null>(null);
 
   readonly allTags = computed<string[]>(() => {
     const seen = new Set<string>();
     for (const a of this.api.apps()) for (const t of a.tags ?? []) seen.add(t);
     return Array.from(seen).sort();
   });
+
+  // Group chips (M97) — [] hides the chip row entirely, which also covers a
+  // pre-v1.1 daemon (GET /api/groups 404s → DaimonApi.groups stays `{}`).
+  readonly groupChipsList = computed(() => groupChips(this.api.groups()));
 
   readonly skeletonItems = Array.from({ length: 6 }, (_, i) => i);
   readonly statusFilters: { key: StatusFilter; label: string }[] = [
@@ -585,7 +636,7 @@ export class AppsListComponent implements AfterViewInit {
     const s = this.status();
     const ws = this.workspace();
     const tags = this.selectedTags();
-    return this.api.apps().filter(a => {
+    const base = this.api.apps().filter(a => {
       if (ws && a.workspaceLabel !== ws) return false;
       if (s === 'serving' && a.status !== 'serving') return false;
       if (s === 'errors' && a.status !== 'error' && a.errorCount === 0) return false;
@@ -600,6 +651,28 @@ export class AppsListComponent implements AfterViewInit {
       }
       return true;
     });
+    return filterByGroup(base, this.activeGroup(), this.api.groups());
+  });
+
+  // Grouped presentation (M97): one section per group (config order, members
+  // in group order) plus a trailing ungrouped section, over whatever
+  // `filtered()` already allows through. [] whenever a single group chip is
+  // active (the flat filtered list already covers that) or there are no
+  // groups at all — either way the template falls back to the plain
+  // cards/list rendering.
+  readonly sections = computed<GroupSection<AppRow>[]>(() => {
+    if (this.activeGroup()) return [];
+    return groupSections(this.filtered(), this.api.groups());
+  });
+  readonly sectionOffsetsList = computed<number[]>(() => sectionOffsets(this.sections()));
+
+  // Flat display order used for keyboard nav (j/k/s/x/r): the sections view
+  // is just `filtered()` split into groups, so flattening it back (with
+  // whatever duplication a multi-group app produces) keeps focusedIndex
+  // meaningful across both presentations without two separate code paths.
+  readonly displayOrder = computed<AppRow[]>(() => {
+    const secs = this.sections();
+    return secs.length ? secs.flatMap(s => s.apps) : this.filtered();
   });
 
   constructor() {
@@ -609,7 +682,7 @@ export class AppsListComponent implements AfterViewInit {
     if (storedTags.length) this.selectedTags.set(new Set(storedTags));
 
     effect(() => {
-      const max = this.filtered().length;
+      const max = this.displayOrder().length;
       if (this.focusedIndex() >= max) this.focusedIndex.set(Math.max(0, max - 1));
     });
 
@@ -620,6 +693,10 @@ export class AppsListComponent implements AfterViewInit {
       this.workspace.set(detail ?? null);
     });
     this.bindWindow('daimon:key', (e: Event) => this.onKey((e as CustomEvent).detail as string));
+  }
+
+  ngOnInit(): void {
+    this.activeGroup.set(this.group ?? null);
   }
 
   async ngAfterViewInit(): Promise<void> {
@@ -667,6 +744,24 @@ export class AppsListComponent implements AfterViewInit {
     else localStorage.removeItem(TAGS_KEY);
   }
 
+  // Single-select: clicking the active chip clears the filter. Writes
+  // `?group=` back onto the URL (merge, dropping the key on null) so the
+  // filter survives a reload — the deep-link half of the `@Input() group`
+  // read in ngOnInit.
+  toggleGroup(name: string): void {
+    const next = this.activeGroup() === name ? null : name;
+    this.activeGroup.set(next);
+    this.focusedIndex.set(0);
+    void this.router.navigate(['/'], { queryParams: { group: next }, queryParamsHandling: 'merge' });
+  }
+
+  // A section's child list emits a LOCAL index (0-based within that
+  // section); translate it back to the flat focusedIndex displayOrder()
+  // uses for j/k nav and the s/x/r action shortcuts.
+  onSectionFocus(sectionIndex: number, localIndex: number): void {
+    this.focusedIndex.set((this.sectionOffsetsList()[sectionIndex] ?? 0) + localIndex);
+  }
+
   onQuery(q: string): void {
     this.query.set(q);
     this.focusedIndex.set(0);
@@ -705,7 +800,7 @@ export class AppsListComponent implements AfterViewInit {
   }
 
   private onKey(key: string): void {
-    const list = this.filtered();
+    const list = this.displayOrder();
     if (!list.length) return;
     const cur = Math.max(0, Math.min(this.focusedIndex(), list.length - 1));
     if (key === 'j') this.focusedIndex.set((cur + 1) % list.length);

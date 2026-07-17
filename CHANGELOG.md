@@ -4,6 +4,26 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-17
+
+"Morning Start" — named app groups so one command starts the whole day's working set (M93–M98). First post-1.0-freeze feature release: **everything here is additive**, every new surface ships tier `experimental`, and no frozen or stable shape changed. A config that loaded under any earlier version loads unchanged.
+
+### Added
+
+- **`groups` config key (M93, experimental)** — named app groups: `"day": ["api", "web"]` (shorthand — exactly the legacy `profiles` shape) or `"day": { "apps": [...], "autoStart": true }`. Both forms normalize at load. Groups additively subsume `profiles`: a name defined in both resolves to the group (with a `config validate` warning); `profiles` keeps loading forever. New resolution module `src/groups.ts` (depends-aware ordering via the existing graph — groups read the graph, never change it).
+- **`GET /api/groups` (experimental)** — name → `{ apps, autoStart, statusCounts, healthy, total }`.
+- **`daimon up <group>` / `stop <group>` / `down <group>` (M94)** — groups resolve first, then legacy profiles (documented precedence; legacy invocations byte-identical). `up` starts members ∪ their depends closure in topological order, waits per level, and returns a per-app readiness summary with a `"3/4 healthy"` tail — exit 0 all reached, 2 otherwise (existing meanings). `stop`/`down` stop members only (never shared external deps), in reverse depends order. On the frozen `stop` verb, app-name precedence is absolute — the group resolves only where the verb previously errored. Per-member soft-lock gating: a lock-refused member counts unhealthy and never aborts the rest. Cyclic members are reported, not started. HTTP: `POST /api/groups/:name/up|stop` (experimental, audit-logged).
+- **`--group <g>` read filters (M95, experimental)** — additive flag on `list`, `status`, `errors`, `report` (+ `?group=` on `/api/apps`, `/api/errors`, `/api/report`) and new `GET /api/groups/:name/status|logs`. Shapes are byte-identical when the flag is absent. `daimon logs --group day` merges member log tails by timestamp with app attribution. Unknown group → exit 1 naming the valid groups. Frozen-verb guard: with NO groups configured, `--group <token>` parses exactly as v0.14 did (token = positional, flag = bare boolean) — defining groups is the opt-in to the value form. On `errors`, bare `--group` keeps its historical fingerprint-grouping meaning; `--group <name>` filters (the value `fingerprint` stays reserved). `report --group` names the group in the header. Group stop keeps `stop`'s exit codes: a lock-blocked member exits 5, any member left running exits 1.
+- **autoStart groups (M96)** — `"autoStart": true` groups start at daemon boot after the per-app `autoStart` list, same semantics. Dedup happens at resolution, before any spawn: an app named by several sources (two groups, or list + group) spawns exactly once with one log line naming every source. Per-member failure degrades; boot never blocks. A config without autoStart groups boots exactly as v1.0 did.
+- **TUI group filter (M97)** — `G` on the app list cycles the group filter (none → each group → none); header shows `group: <name> · 3/4 healthy`. Pane-scoped: LogPane's local `G` (jump to end) is untouched.
+- **Dashboard group surfaces (M97)** — group filter chips on the apps list (keyboard-operable, both themes), grouped app list (one section per group + "ungrouped"), group membership on the app detail card, deep-linkable filter. Data from `GET /api/groups`; a pre-v1.1 daemon simply shows no chips.
+- **MCP (M98)** — `ensure_up` resolves groups first (same precedence as `daimon up`); `stop_app` falls back to a group only where the app name previously errored; `daimon_report` gains an optional `group` param; new `daimon_groups` tool (experimental). 28 tools.
+- **`daimon config validate` group checks (M93)** — unknown app name in a group warns with a nearest-name suggestion; an app in two autoStart sources gets a "starts once" note; a group/profile collision warns that the group wins.
+
+### Changed
+
+- `daimon.config.example.json` documents the empty `groups` map; docs regenerated with tier badges for every new surface (all experimental).
+
 ## [0.14.0] — 2026-07-12
 
 "Runway" — the release before 1.0. No new feature surfaces: v0.14 inventories, repairs, labels, and hardens what exists (M87–M92). Every public surface now carries a stability tier enforced by contract tests, the daemon survives its own restart without killing your dev servers, the dashboard passed its first WCAG AA audit, and this is the **last release with a breaking-changes section**. v1.0.0 will be tagged later, after a real-usage soak, as a near-empty release.

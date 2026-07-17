@@ -19,6 +19,7 @@ Loopback CLI at `http://127.0.0.1:{{api_port}}`. Compact JSON on stdout, errors 
 - `daimon status <name>` → compact `{name,status,port,url,health,errCount,lastChangeMs,uptimeMs}`. `--full` for events/metrics.
 - `daimon ensure <name> [--until serving|healthy] [--timeout 180]` → one call: starts if stopped, blocks to target, returns terminal state.
 - `daimon ensure-up <profile>` → same for an entire profile; cascades dependencies.
+- `daimon up <group>` → start a named group (config `groups`, v1.1): depends-aware order + `"3/4 healthy"` readiness summary (exit 2 if not all reached). `daimon stop <group>` stops members in reverse depends order (an app of the same name wins). `--group <g>` filters `list`/`status`/`errors`/`report`; `daimon logs --group <g>` merges member tails.
 - `daimon errors <name> [--since 5m|--since-last --client claude] [--structured]` → dedup'd errors, compact `{file,line,col,code,message}`. `daimon errors --group` (no name) → all apps' errors grouped by stack fingerprint.
 - `daimon frameworks` → the framework adapter registry: built-in + custom profiles, which apps each matched, rejection stats.
 - `daimon logs <name> [--tail N] [--since 30s]` → recent log lines.

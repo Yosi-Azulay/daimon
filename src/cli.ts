@@ -92,6 +92,35 @@ async function suggestUnknownApp(name: string): Promise<never> {
   failHint(`unknown app: ${name}`, hint);
 }
 
+// Frozen-verb guard for the `--group <value>` form (M95): every verb accepted
+// a bare `--group` before v1.1, so `--group web-admin` used to parse the
+// value as a positional. parseFlags can't know which was meant — only config
+// can. Rule: with NO groups configured, restore the v0.14 parse exactly (the
+// value becomes the leading positional, the flag stays bare) so every
+// previously-valid invocation is byte-identical. Defining groups is the
+// user's opt-in to the value form — from then on an unknown name errors with
+// the valid group list (M95) instead of degrading silently.
+async function resolveGroupFlag(f: Flags): Promise<void> {
+  if (!f.groupName) return;
+  const groups = (await loadCfg()).config.groups ?? {};
+  if (Object.keys(groups).length === 0) {
+    f.positional.unshift(f.groupName);
+    f.groupName = undefined;
+  }
+}
+
+// Unknown-group exit (M95): always names the valid groups (the daemon's 400/
+// 404 bodies carry them as `known`).
+function failGroup(name: string, body: any): never {
+  const known: string[] = Array.isArray(body?.known) ? body.known : [];
+  failHint(
+    `unknown group: ${name}`,
+    known.length
+      ? `known groups: ${known.join(', ')}`
+      : (body?.hint ?? "no groups configured — add a 'groups' map to daimon.config.json (name → [app, ...])"),
+  );
+}
+
 function readApiPort(): number {
   if (process.env.DAIMON_PORT) {
     const p = Number(process.env.DAIMON_PORT);
@@ -106,7 +135,7 @@ function readApiPort(): number {
   return 4999;
 }
 
-async function loadCfg(): Promise<{ config: { autoStart?: string[]; profiles?: Record<string, string[]> } }> {
+async function loadCfg(): Promise<{ config: { autoStart?: string[]; profiles?: Record<string, string[]>; groups?: Record<string, { apps: string[]; autoStart: boolean }> } }> {
   try {
     const r = loadConfig();
     if (r.kind === 'loaded') return { config: r.config };
@@ -259,6 +288,10 @@ interface Flags {
   since?: string;
   sinceLast?: boolean;
   group?: boolean;
+  // `--group <name>` (M95): the value form filters read verbs to a named
+  // group's members. Bare `--group` (no value) keeps its legacy meaning on
+  // `errors` (fingerprint grouping).
+  groupName?: string;
   client?: string;
   structured?: boolean;
   until?: string;
@@ -321,7 +354,14 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--since') f.since = args[++i];
     else if (a === '--min' || a === '--min-occurrences') f.min = Number(args[++i]);
     else if (a === '--since-last') f.sinceLast = true;
-    else if (a === '--group') f.group = true;
+    else if (a === '--group') {
+      // Value form (M95): `--group <name>` filters to a group's members.
+      // Bare `--group` (next token missing or another flag) stays the legacy
+      // boolean — `daimon errors --group` keeps fingerprint grouping.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith('-')) f.groupName = args[++i];
+      f.group = true;
+    }
     else if (a === '--client') f.client = args[++i];
     else if (a === '--structured') f.structured = true;
     else if (a === '--until') f.until = args[++i];
@@ -776,8 +816,20 @@ async function main() {
       out({ path: target, ok: false, errors: ['config must be a JSON object'], warnings: [] });
       process.exit(1);
     }
-    validateConfig(raw, target);
+    const validated = validateConfig(raw, target);
     const warnings = configValidationWarnings();
+    // Group checks (M93): unknown app names (against a discovery scan),
+    // dual-autoStart membership, group/profile collisions. Discovery failing
+    // degrades to skipping the unknown-app check — never a validate error.
+    if (validated.groups && Object.keys(validated.groups).length) {
+      const { validateGroups } = await import('./groups.js');
+      let knownNames: string[] | null = null;
+      try {
+        const apps = discoverApps(validated);
+        knownNames = [...new Set(apps.flatMap(a => [a.name, ...(a.baseName ? [a.baseName] : [])]))];
+      } catch { knownNames = null; }
+      warnings.push(...validateGroups(validated, knownNames));
+    }
     out({ path: target, ok: true, errors: [], warnings, ...(warnings.length ? { hint: 'warnings never block loading — the daemon falls back to defaults for these' } : {}) });
     return;
   }
@@ -889,15 +941,18 @@ async function main() {
       // M87 last-call fix: --tag/--workspace filter on the DAEMON (where the
       // full rows live) instead of silently switching the output to the full
       // shape client-side. The output shape now depends only on --full/--compact.
+      await resolveGroupFlag(f);
       const params = new URLSearchParams();
       if (f.full) params.set('format', 'full');
       else if (f.compact) params.set('format', 'compact');
       for (const t of f.tags) params.append('tag', t);
       if (f.workspace) params.set('workspace', f.workspace);
+      if (f.groupName) params.set('group', f.groupName);
       if (f.explain) params.set('explain', '1');
       // Default: only show apps under the current cwd. Pass --all to see every app the
-      // daemon knows about (across all registered searchRoots).
-      if (!f.all) {
+      // daemon knows about (across all registered searchRoots). A --group names
+      // a global working set, so it skips the cwd scope like --all does.
+      if (!f.all && !f.groupName) {
         await ensureCurrentWorkspace();
         params.set('cwd', process.cwd());
       }
@@ -909,6 +964,7 @@ async function main() {
       }
       const qs = params.toString();
       const r = await call('/api/apps' + (qs ? '?' + qs : ''));
+      if (r.status === 400 && r.body?.error) fail(JSON.stringify(r.body));
       if (f.explain) {
         // explain returns { apps, _meta }; filters already applied server-side.
         out(r.body);
@@ -920,6 +976,12 @@ async function main() {
       // fields (full shape). Harmless when the daemon already filtered.
       if (f.tags.length) arr = arr.filter((a: any) => !Array.isArray(a.tags) || f.tags.every(t => a.tags.includes(t)));
       if (f.workspace) arr = arr.filter((a: any) => !('workspaceLabel' in a) || a.workspaceLabel === f.workspace);
+      if (f.groupName) {
+        // Same skew belt-and-braces for ?group= (a pre-v1.1 daemon ignores
+        // it): the member list lives in local config, so re-intersect.
+        const g = (await loadCfg()).config.groups?.[f.groupName];
+        if (g) arr = arr.filter((a: any) => g.apps.includes(a.name) || (a.baseName && g.apps.includes(a.baseName)));
+      }
       out(arr);
       return;
     }
@@ -931,7 +993,17 @@ async function main() {
     case 'status':
     case 'stop':
     case 'restart': {
+      if (cmd === 'status') await resolveGroupFlag(f);
       const name = f.positional[0];
+      // `status --group <g>` (M95): per-member statuses + a "3/4 healthy"
+      // summary, no app name needed.
+      if (cmd === 'status' && f.groupName && !name) {
+        const r = await call(`/api/groups/${encodeURIComponent(f.groupName)}/status`);
+        if (r.status === 404) failGroup(f.groupName, r.body);
+        out(r.body);
+        return;
+      }
+      if (cmd === 'status' && f.groupName && name) failHint('pass either an app name or --group <group>, not both', 'usage: daimon status <name> | daimon status --group <group>');
       if (!name) failHint(`missing app name`, `usage: daimon ${cmd} <name>`);
       if (!f.all) await ensureCurrentWorkspace();
       const suffix = cmd === 'status' ? '' : '/' + cmd;
@@ -948,7 +1020,35 @@ async function main() {
         process.stderr.write(`hint: pass --steal to override, or wait\n`);
         process.exit(5);
       }
-      if (r.status === 404) await suggestUnknownApp(name);
+      if (r.status === 404) {
+        // Group fallback on `stop` (M94): app-name precedence is absolute —
+        // this branch only fires where the frozen verb previously errored.
+        // No app of that name + a group of that name → stop the group's
+        // members in reverse depends order.
+        if (cmd === 'stop') {
+          const knownConfig = (await loadCfg()).config;
+          if (knownConfig.groups?.[name]) {
+            const gp = new URLSearchParams();
+            if (f.steal) gp.set('steal', '1');
+            const gr = await call(`/api/groups/${encodeURIComponent(name)}/stop?${gp.toString()}`, 'POST');
+            if (gr.status === 404) failHint(`unknown group: ${name}`, "the daemon's config may be older than the CLI's — run 'daimon daemon restart', then 'daimon config validate'");
+            out(gr.body);
+            // Keep stop's documented exit codes on the group path: a
+            // lock-blocked member is the per-app 409 case (exit 5, same as a
+            // single stop), any other member left running is an error (1).
+            const rows: any[] = Array.isArray(gr.body?.apps) ? gr.body.apps : [];
+            const locked = rows.filter(r => r.lockedBy);
+            if (locked.length) {
+              process.stderr.write(`error: ${locked.map(r => `'${r.name}' is locked by agent ${r.lockedBy}`).join('; ')}\n`);
+              process.stderr.write(`hint: pass --steal to override, or wait\n`);
+              process.exit(5);
+            }
+            if (gr.body?.allStopped === false) process.exit(1);
+            return;
+          }
+        }
+        await suggestUnknownApp(name);
+      }
       out(r.body);
       return;
     }
@@ -1098,12 +1198,15 @@ async function main() {
       return;
     }
     case 'report': {
+      await resolveGroupFlag(f);
       const params = new URLSearchParams();
       if (f.since) params.set('since', f.since);
       if (f.app) params.set('app', f.app);
       if (f.workspace) params.set('workspace', f.workspace);
+      if (f.groupName) params.set('group', f.groupName);
       const qs = params.toString();
       const r = await call(`/api/report${qs ? '?' + qs : ''}`);
+      if (r.status === 400 && f.groupName && r.body?.error) failGroup(f.groupName, r.body);
       if (f.md && r.body && typeof r.body === 'object') {
         const { renderReportMd } = await import('./report.js');
         process.stdout.write(renderReportMd(r.body as any) + '\n');
@@ -1333,8 +1436,20 @@ async function main() {
       return;
     }
     case 'errors': {
+      await resolveGroupFlag(f);
       const name = f.positional[0];
-      // Global grouped view (M72): `daimon errors --group` needs no app name.
+      // Named-group filter (M95): `errors --group <g>` — all member apps'
+      // errors, flat shape, no app name needed.
+      if (!name && f.groupName) {
+        const params = new URLSearchParams({ group: f.groupName });
+        if (f.level) params.set('level', f.level);
+        const r = await call('/api/errors?' + params.toString());
+        if (r.status === 400 && r.body?.error) failGroup(f.groupName, r.body);
+        out(r.body);
+        return;
+      }
+      // Global grouped view (M72): bare `daimon errors --group` (no value)
+      // keeps its historical fingerprint-grouping meaning.
       if (!name && f.group) {
         const params = new URLSearchParams({ group: 'fingerprint' });
         if (f.level) params.set('level', f.level);
@@ -1582,9 +1697,38 @@ async function main() {
     case 'up':
     case 'down': {
       const profile = f.positional[0];
+      const knownConfig = (await loadCfg()).config;
+      // Groups resolve first (M94) — documented precedence over the legacy
+      // profiles map. The daemon runs the depends-aware plan server-side and
+      // returns the readiness summary; legacy profile invocations below stay
+      // byte-identical.
+      if (profile && knownConfig.groups?.[profile]) {
+        const params = new URLSearchParams();
+        if (f.steal) params.set('steal', '1');
+        if (cmd === 'up') {
+          const until = (f.until || 'healthy').toLowerCase();
+          if (until !== 'serving' && until !== 'healthy') fail(JSON.stringify({ error: 'up --until must be serving|healthy' }));
+          params.set('until', until);
+          let timeoutSec = 300;
+          if (f.timeout) {
+            const t = durationToSeconds(f.timeout);
+            if (t == null) failHint(`invalid --timeout: ${f.timeout}`, 'durations look like 30s, 5m, 2h');
+            timeoutSec = Math.min(t, 1200);
+          }
+          params.set('timeoutMs', String(Math.ceil(timeoutSec * 1000)));
+        }
+        const action = cmd === 'up' ? 'up' : 'stop';
+        const r = await call(`/api/groups/${encodeURIComponent(profile)}/${action}?${params.toString()}`, 'POST');
+        if (r.status === 404) failHint(`unknown group: ${profile}`, "the daemon's config may be older than the CLI's — run 'daimon daemon restart', then 'daimon config validate'");
+        out(r.body);
+        if (cmd === 'up' && r.body?.allReached === false) process.exit(2);
+        // down <group>: a member still running (lock-refused or stop timeout)
+        // is an error, not a silent 0.
+        if (cmd === 'down' && r.body?.allStopped === false) process.exit(1);
+        return;
+      }
       const listRes = await call('/api/apps');
       const all: any[] = Array.isArray(listRes.body) ? listRes.body : [];
-      const knownConfig = (await loadCfg()).config;
       let targets: string[];
       if (!profile) {
         targets = knownConfig.autoStart || [];
@@ -1632,8 +1776,24 @@ async function main() {
       return;
     }
     case 'logs': {
+      await resolveGroupFlag(f);
       const name = f.positional[0];
-      if (!name) fail(JSON.stringify({ error: 'usage: daimon logs <name> [--tail N] [--since 30s] [--grep <regex>] [--stream]' }));
+      // `logs --group <g>` (M95): ts-merged tail across the group's members,
+      // each line carrying its app. --tail/--since/--grep apply to the merge.
+      if (f.groupName && !name) {
+        const params = new URLSearchParams();
+        if (f.tail != null && !Number.isNaN(f.tail)) params.set('tail', String(f.tail));
+        if (f.since) params.set('since', f.since);
+        if (f.grep) params.set('grep', f.grep);
+        const qs = params.toString();
+        const r = await call(`/api/groups/${encodeURIComponent(f.groupName)}/logs${qs ? '?' + qs : ''}`);
+        if (r.status === 404) failGroup(f.groupName, r.body);
+        if (r.status === 400) fail(JSON.stringify(r.body));
+        out(r.body);
+        return;
+      }
+      if (f.groupName && name) failHint('pass either an app name or --group <group>, not both', 'usage: daimon logs <name> | daimon logs --group <group>');
+      if (!name) fail(JSON.stringify({ error: 'usage: daimon logs <name> [--tail N] [--since 30s] [--grep <regex>] [--stream] | --group <group>' }));
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
       if (f.tail != null && !Number.isNaN(f.tail)) params.set('tail', String(f.tail));

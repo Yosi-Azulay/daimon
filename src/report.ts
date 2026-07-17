@@ -16,6 +16,11 @@ export interface ReportOpts {
   until?: number;
   app?: string;
   workspace?: string;
+  // Group scope (M95, v1.1): the group's name (for the header) and its
+  // resolved member list — resolution stays at the call site so report.ts
+  // never reads config.
+  group?: string;
+  groupApps?: string[];
 }
 
 export interface ReportInputs {
@@ -32,6 +37,8 @@ export interface Report {
   until: number;
   app: string | null;
   workspace: string | null;
+  // Named group scope (M95, v1.1) — additive; null when unscoped.
+  group?: string | null;
   sections: Record<string, any>;
 }
 
@@ -48,15 +55,18 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
   const since = opts.since;
   const windowMs = Math.max(1, until - since);
 
-  // App scope: single app, workspace label, or everything the registry knows.
+  // App scope: single app, workspace label, group members, or everything the
+  // registry knows.
+  const groupSet = opts.groupApps ? new Set(opts.groupApps) : null;
   const allApps = registry.list();
   const scoped = allApps.filter(a => {
     if (opts.app && a.name !== opts.app && a.baseName !== opts.app) return false;
     if (opts.workspace && a.workspaceLabel !== opts.workspace) return false;
+    if (groupSet && !groupSet.has(a.name) && !(a.baseName && groupSet.has(a.baseName))) return false;
     return true;
   });
   const scopedNames = new Set(scoped.map(a => a.name));
-  const inScope = (app: string): boolean => scopedNames.has(app) || (!opts.app && !opts.workspace);
+  const inScope = (app: string): boolean => scopedNames.has(app) || (!opts.app && !opts.workspace && !groupSet);
 
   const report: Report = {
     generatedAt: until,
@@ -64,6 +74,7 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
     until,
     app: opts.app ?? null,
     workspace: opts.workspace ?? null,
+    group: opts.group ?? null,
     sections: {},
   };
   const S = report.sections;
@@ -301,7 +312,7 @@ function fmtTs(ts: number): string {
 export function renderReportMd(r: Report): string {
   const L: string[] = [];
   const windowH = Math.round((r.until - r.since) / 3600_000);
-  const scope = [r.app ? `app \`${r.app}\`` : null, r.workspace ? `workspace \`${r.workspace}\`` : null].filter(Boolean).join(', ');
+  const scope = [r.app ? `app \`${r.app}\`` : null, r.workspace ? `workspace \`${r.workspace}\`` : null, r.group ? `group \`${r.group}\`` : null].filter(Boolean).join(', ');
   L.push(`# daimon report — last ${windowH >= 48 ? `${Math.round(windowH / 24)}d` : `${windowH}h`}${scope ? ` (${scope})` : ''}`);
   L.push(`_generated ${fmtTs(r.generatedAt)}_`);
   L.push('');

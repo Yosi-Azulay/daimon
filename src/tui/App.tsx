@@ -11,6 +11,7 @@ import LogPane from './LogPane.js';
 import { computeRibbon, renderRibbon } from './ribbon.js';
 import { allProfiles, profileBadge } from '../frameworks.js';
 import { TEST_CHORD_KEY, TEST_CHORD_HELP, canStartTestRun, formatTestSummary } from './testChord.js';
+import { GROUP_CHORD_KEY, GROUP_CHORD_HELP, cycleGroupFilter, filterByGroup, computeGroupHealth, formatGroupHeader } from './groupChord.js';
 
 // Framework badge tags for TUI rows (M72): [next], [flask], ...
 const BADGE_BY_ID = new Map(allProfiles(undefined).map(p => [p.id, profileBadge(p)]));
@@ -71,6 +72,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   const [logScroll, setLogScroll] = useState(0);
   const [fullLog, setFullLog] = useState(false);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [groupFilter, setGroupFilter] = useState<string | null>(null);
   const [tagPicking, setTagPicking] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [editing, setEditing] = useState<{ name: string; field: 'command' | 'port' | 'env'; cmd: string; port: string; env: string } | null>(null);
@@ -203,6 +205,10 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     else if (input === 'O') { setOrchestrateAsking(true); }
     else if (input === 'L') setFullLog(true);
     else if (input === 't') { setTagPicking(true); setTagInput(tagFilter.join(' ')); }
+    else if (input === GROUP_CHORD_KEY) {
+      const names = Object.keys(registry.getConfig().groups ?? {});
+      setGroupFilter(f => cycleGroupFilter(names, f));
+    }
     else if (input === 'e') {
       const cfg = registry.getConfig();
       const app = registry.getApp(current.name);
@@ -328,10 +334,13 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   };
 
   const filterLc = filterText.trim().toLowerCase();
-  const visibleApps = (tagFilter.length === 0
-    ? apps
-    : apps.filter(a => tagFilter.every(t => a.tags.includes(t))))
-    .filter(a => !filterLc || a.name.toLowerCase().includes(filterLc));
+  // `groupMembers` null = no group filter active; [] = the active group is
+  // empty or vanished from config (filters the list down to nothing).
+  const groupMembers = groupFilter ? (registry.getConfig().groups?.[groupFilter]?.apps ?? []) : null;
+  const visibleApps = filterByGroup(
+    tagFilter.length === 0 ? apps : apps.filter(a => tagFilter.every(t => a.tags.includes(t))),
+    groupMembers,
+  ).filter(a => !filterLc || a.name.toLowerCase().includes(filterLc));
   const current = visibleApps[Math.min(selected, Math.max(0, visibleApps.length - 1))];
   const state = current ? registry.getState(current.name) : null;
   const recentLogs = state
@@ -357,6 +366,9 @@ export default function App({ registry, apiPort, onQuit }: Props) {
       <Box flexDirection="row">
         <Box flexDirection="column" width={leftWidth} borderStyle="single" borderColor="gray" paddingX={1}>
           <Text bold>Apps {tagFilter.length ? <Text dimColor>(tags: {tagFilter.join(', ')})</Text> : null}</Text>
+          {groupFilter ? (
+            <Text dimColor>{formatGroupHeader(groupFilter, computeGroupHealth(apps, groupMembers ?? []).healthy, (groupMembers ?? []).length)}</Text>
+          ) : null}
           {visibleApps.length === 0 ? (
             <Text dimColor>{apps.length === 0 ? '(no apps discovered)' : '(no apps match filter)'}</Text>
           ) : visibleApps.map((a, i) => {
@@ -483,7 +495,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
           </Box>
         ) : null}
         {statusMsg ? <Text color="cyan">[i] {statusMsg}</Text> : null}
-        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  {TEST_CHORD_HELP}  [O] orchestrate  [o] open URL  [/] filter  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [q] quit</Text>
+        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  {TEST_CHORD_HELP}  [O] orchestrate  [o] open URL  [/] filter  {GROUP_CHORD_HELP}  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log  [q] quit</Text>
       </Box>
     </Box>
   );

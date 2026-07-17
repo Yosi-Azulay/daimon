@@ -228,6 +228,37 @@ The release before 1.0 added nothing new to learn — it froze what exists:
 
 v1.0.0 is not this release: it will be tagged after the freeze survives a real-usage soak, as a near-empty release — the version number catching up to what the contract tests already enforce.
 
+## Morning start (v1.1)
+
+Every morning starts the same way: start the api, wait for it, start the two frontends, run `daimon status`, repeat tomorrow. daimon already knew everything it needed — the apps, their depends graph, even which apps you co-start — but the day's working set still lived in your head and your shell history. v1.1 makes it a first-class noun: a named **group**.
+
+```jsonc
+// daimon.config.json
+{
+  "groups": {
+    "day": ["api", "web-admin", "storefront"],          // shorthand — exactly the old profiles shape
+    "night": { "apps": ["api", "worker"], "autoStart": true }  // object form: starts at daemon boot
+  }
+}
+```
+
+One command starts the day:
+
+```bash
+daimon up day
+# → starts api first (depends-aware topo order), then the frontends,
+#   waits for each, and answers with a readiness summary:
+#   { "group": "day", "apps": [...], "summary": "3/3 healthy", "allReached": true }
+```
+
+- **`daimon up <group>` / `daimon stop <group>` / `daimon down <group>`** — start order comes from the existing `depends` graph (dependencies first; stop runs in reverse). One member failing never aborts the rest; the summary says `2/3 healthy` and the exit code is `2`. Groups resolve before legacy profiles; on the frozen `stop` verb an *app* of the same name always wins.
+- **`--group <g>` on the read surfaces** — `list`, `status`, `errors`, `report` filter to the group's members (`daimon status --group day` answers with per-app rows + the `3/4 healthy` tail); `daimon logs --group day` merges the members' log tails by timestamp, each line carrying its app.
+- **autoStart groups** — `"autoStart": true` starts the group at daemon boot with the same semantics as the per-app `autoStart` list. An app named by several sources starts exactly once, with one log line naming every source.
+- **TUI + dashboard** — `G` in the TUI app list cycles the group filter (header shows `group: day · 3/4 healthy`); the dashboard gets group chips, a grouped app list, and group membership on the app detail card.
+- **`daimon config validate` knows groups** — unknown app names get a nearest-name suggestion, an app in two autoStart sources gets a "starts once" note, and a group/profile name collision warns that the group wins.
+
+Groups additively subsume the legacy `profiles` map — the shorthand form *is* the profiles shape, `profiles` keeps loading forever, and nothing changes if you never add a `groups` key. Every new surface ships tier `experimental` (post-1.0 rules: frozen/stable shapes never break).
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -544,7 +575,7 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes 27 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, and the v0.13 pair `daimon_report`, `daimon_env`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
+The MCP server exposes 28 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, and the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored). Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
 
 ## State files (in `~/.daimon/`)
 

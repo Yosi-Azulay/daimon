@@ -28,6 +28,12 @@ src/
                     # marks — never add per-insert FTS triggers (measured 4-10× on the
                     # write path); sync runs on idle flush ticks, before retention, and
                     # before every search. FTS failure degrades to LIKE, never blocks.
+  groups.ts         # Named app groups (M93, v1.1): resolution (resolveGroup /
+                    # groupUpPlan / groupStopOrder), boot autoStartPlan (dedup at
+                    # resolution — one spawn, one log line), validateGroups warnings.
+                    # Groups READ the depends graph (topoLevels/transitiveClosure),
+                    # never change it; they additively subsume the legacy profiles
+                    # map (group wins name collisions, with a validate warning).
   agents.ts         # Agent identity (`<host>-<pid>-<rand4>`) + 30s per-app LockManager.
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
@@ -138,8 +144,13 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - **Daemon handoff is verify-then-adopt (M88).** `daimon daemon restart` leaves children RUNNING (registry handoff flag, 60s window); the incoming daemon re-adopts a child only when the handoff-recorded LISTENING pid is alive AND still the port's listener. Anything else → status `orphaned` + a per-case remedy, never a blind kill. The handoff file records the listener pid (findPortHolder at snapshot time), NOT the spawn/shell pid — on Windows the wrapper dies with the daemon's pipes.
 - **Config back-compat is unbreakable.** Unknown config keys warn (with a nearest-name suggestion) and are ignored — `daimon config validate` checks offline; loading NEVER fails on old or unknown keys.
 - **Error strings carry remedies (M90).** Every user-facing error says what to do next; `test/error-remedies.test.mjs` scans cli.ts/server.ts/main.ts and fails on bare errors. EADDRINUSE forensics is the model.
+- **Groups subsume profiles additively (M93, v1.1).** The `groups` config key's shorthand form is exactly the legacy `profiles` shape; `profiles` keeps loading forever and its behavior is byte-identical. Precedence: groups resolve first on `up`/`down`; on the frozen `stop` verb an APP of the name always wins and the group resolves only where the verb previously errored. Name collisions warn ("group wins") in `daimon config validate`. Groups consume the depends graph via depends.ts — never add ordering logic outside src/groups.ts/orchestrate.ts. On `daimon errors`, bare `--group` keeps fingerprint grouping; `--group <name>` filters (value `fingerprint` reserved). Post-1.0 rule: every new surface declares a stability tier at its source of truth and ships `experimental`.
 
-## v0.14 highlights (what landed this release)
+## v1.1 highlights (what landed this release)
+
+- **Named app groups (M93–M98)**: `groups` config key (shorthand string[] or `{ apps, autoStart }`, normalized at load; `src/groups.ts` resolution module); `daimon up/stop/down <group>` with depends-aware topo order, `"3/4 healthy"` readiness summary, per-member soft-lock gating, exit 0/2 semantics; `POST /api/groups/:name/up|stop` (audit-logged) + `GET /api/groups` and `/api/groups/:name/status|logs`; `--group <g>` filters on list/status/errors/report (`?group=` server-side, byte-identical shapes when absent); autoStart groups at boot (dedup at resolution — one spawn, one log line naming every source); TUI `G` chord + dashboard group chips/sections/detail row; MCP `ensure_up` group-first + `daimon_groups` (28 tools). All new surfaces `experimental`. Tests live in `test/groups.test.mjs`, `test/group-updown.test.mjs`, `test/group-filters.test.mjs`, `test/group-autostart.test.mjs`.
+
+## v0.14 highlights
 
 - **Stability tiers (M87)**: every CLI verb / HTTP endpoint / MCP tool / config key / event kind declares frozen/stable/experimental at its source of truth; docs render badges; `test/contract.test.mjs` pins golden shapes (key sets + types) for all frozen surfaces from a synthetic Registry+startServer harness (fixtures in `test/fixtures/contract/`; regenerate via `UPDATE_CONTRACT_SNAPSHOTS=1`). STABILITY.md defines the tiers. Deliberate exception: `GET /api/signature` is frozen despite its v0.13 birth (cross-version identification).
 - **Last-call breaking fixes (M87, the last ever)**: compact-status `uptime` → `uptimeMs` (CLI status / HTTP compact / ensure / MCP get_status / daemon status); `daimon list --tag/--workspace` filters server-side (`?tag=&workspace=`) instead of silently switching to the full shape (also fixed `--tag --compact` returning `[]`). Additive: `/wait` accepts `timeoutMs`.

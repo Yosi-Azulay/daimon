@@ -117,6 +117,16 @@ export interface PortsConfig {
   pool?: string | null;
 }
 
+// Named app group (M93). Raw config accepts `name: string[]` (the legacy
+// profiles shorthand) or `name: { apps, autoStart? }`; both normalize to this
+// shape at load. Groups are start units consumed by `up`/`stop <group>`,
+// `--group` filters, and boot-time autoStart — they read the depends graph,
+// never change it.
+export interface GroupDef {
+  apps: string[];
+  autoStart: boolean;
+}
+
 export interface DashboardConfig {
   theme: 'auto' | 'light' | 'dark';
   density: 'comfortable' | 'compact';
@@ -166,6 +176,8 @@ export interface AppmanConfig {
   restartStorm?: RestartStormConfig;
   search?: SearchConfig;
   ports?: PortsConfig;
+  // Named app groups (M93, v1.1) — normalized at load; absent = no groups.
+  groups?: Record<string, GroupDef>;
 }
 
 export interface SearchRoot {

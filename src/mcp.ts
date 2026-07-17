@@ -44,6 +44,7 @@ export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stabili
   daimon_context: 'stable',
   daimon_report: 'experimental', // v0.13 (M83)
   daimon_env: 'experimental', // v0.13 (M82)
+  daimon_groups: 'experimental', // v1.1 (M98)
 };
 
 function apiPort(): number {
@@ -188,11 +189,18 @@ export function buildServer(): McpServer {
   });
 
   for (const action of ['start', 'stop', 'restart'] as const) {
-    server.registerTool(`${action}_app`, { description: `${action[0].toUpperCase()}${action.slice(1)} a dev-server app by name. Takes the per-app soft lock; another agent's concurrent call gets a structured locked-by-other-agent error.`, inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
+    server.registerTool(`${action}_app`, { description: `${action[0].toUpperCase()}${action.slice(1)} a dev-server app by name. Takes the per-app soft lock; another agent's concurrent call gets a structured locked-by-other-agent error.${action === 'stop' ? ' A name matching no app but a v1.1 group stops the group\'s members in reverse depends order (app-name precedence is absolute).' : ''}`, inputSchema: { name: z.string(), cwd: cwdField } }, async ({ name, cwd }) => {
       const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
       const r = await callJson(`/api/apps/${encodeURIComponent(name)}/${action}?${qs.toString()}`, 'POST');
       if (r.status === 0) return err(r.body?.error || 'unknown');
       if (r.status === 412) return err(JSON.stringify(r.body));
+      // Group fallback on stop (M98), mirroring the CLI's frozen-verb rule:
+      // only where the call previously erred (no app of that name) may a
+      // group of that name resolve instead.
+      if (action === 'stop' && r.status === 404) {
+        const g = await callJson(`/api/groups/${encodeURIComponent(name)}/stop`, 'POST');
+        if (g.status === 200) return ok(g.body);
+      }
       return ok(r.body);
     });
   }
@@ -347,9 +355,9 @@ export function buildServer(): McpServer {
   });
 
   server.registerTool('ensure_up', {
-    description: 'One-call profile bring-up: cascade-start every app in the profile (resolving deps) and block until each reaches the target. Returns per-app terminal state plus _meta.totalMs. Use this instead of daimon up + per-app waits.',
+    description: 'One-call bring-up of a named set: v1.1 groups resolve FIRST (depends-aware topo start + a "3/4 healthy" readiness summary), then legacy profiles (per-app terminal state plus _meta.totalMs) — same precedence as `daimon up`. Use this instead of daimon up + per-app waits.',
     inputSchema: {
-      profile: z.string(),
+      profile: z.string().describe('Group or profile name; a group wins a name collision'),
       until: z.enum(['serving', 'healthy']).optional(),
       timeoutMs: z.number().int().positive().max(1_200_000).optional(),
     },
@@ -357,9 +365,14 @@ export function buildServer(): McpServer {
     const qs = new URLSearchParams();
     qs.set('until', until || 'healthy');
     qs.set('timeoutMs', String(Math.min(timeoutMs ?? 300_000, 1_200_000)));
+    // Groups first (M98) — documented precedence, mirroring the CLI. A 404
+    // (no group of that name, or a pre-v1.1 daemon) falls through to the
+    // legacy profile path unchanged.
+    const g = await callJson(`/api/groups/${encodeURIComponent(profile)}/up?${qs.toString()}`, 'POST');
+    if (g.status === 200) return ok(g.body);
     const r = await callJson(`/api/profiles/${encodeURIComponent(profile)}/ensure-up?${qs.toString()}`, 'POST');
     if (r.status === 0) return err(r.body?.error || 'unknown');
-    if (r.status === 404) return err('unknown profile');
+    if (r.status === 404) return err('unknown profile or group');
     return ok(r.body);
   });
 
@@ -446,14 +459,26 @@ export function buildServer(): McpServer {
       since: z.string().optional().describe('Window like 24h or 7d (default 24h)'),
       app: z.string().optional(),
       workspace: z.string().optional(),
+      group: z.string().optional().describe('Limit to a named group\'s members (v1.1)'),
     },
-  }, async ({ since, app, workspace }) => {
+  }, async ({ since, app, workspace, group }) => {
     const qs = new URLSearchParams();
     if (since) qs.set('since', since);
     if (app) qs.set('app', app);
     if (workspace) qs.set('workspace', workspace);
+    if (group) qs.set('group', group);
     const q = qs.toString();
     const r = await callJson('/api/report' + (q ? '?' + q : ''));
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 400) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_groups', {
+    description: 'Named app groups (v1.1): name → { apps, autoStart, statusCounts, healthy, total }. Groups are start units for ensure_up / stop_app and the --group read filters; the shorthand config form is exactly the legacy profiles shape. Empty object when none are configured.',
+    inputSchema: {},
+  }, async () => {
+    const r = await callJson('/api/groups');
     if (r.status === 0) return err(r.body?.error || 'unknown');
     return ok(r.body);
   });

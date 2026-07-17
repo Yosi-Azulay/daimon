@@ -160,6 +160,31 @@ test('app filter narrows every section', () => {
   h.close();
 });
 
+test('group scope narrows sections and names the group (M95)', () => {
+  const now = Date.now();
+  const dbPath = path.join(tmp, 'group-filtered.db');
+  const h = seededHistory(dbPath, now);
+  const cfg = baseCfg({ history: { enabled: true, path: dbPath, retentionDays: 60 } });
+  const reg = new Registry(cfg, [app('alpha'), app('beta'), app('gamma')]);
+  reg.setHistory(h);
+  const r = buildReport(
+    { registry: reg, history: h },
+    { since: now - 24 * HOUR, until: now, group: 'day', groupApps: ['beta'] },
+  );
+  assert.equal(r.group, 'day');
+  const S = r.sections;
+  assert.equal(S.uptime.apps.length, 1);
+  assert.equal(S.uptime.apps[0].app, 'beta');
+  assert.ok(S.errors.groups.every(g => g.app === 'beta'));
+  const md = renderReportMd(r);
+  assert.match(md.split('\n')[0], /group `day`/);
+  // Unscoped report is untouched: group renders null, sections keep all apps.
+  const r2 = buildReport({ registry: reg, history: h }, { since: now - 24 * HOUR, until: now });
+  assert.equal(r2.group, null);
+  assert.ok(r2.sections.uptime.apps.length >= 2);
+  h.close();
+});
+
 test('empty history: every section degrades to a note, never an error', () => {
   const dbPath = path.join(tmp, 'empty.db');
   const h = new History({ enabled: true, path: dbPath, retentionDays: 7 });

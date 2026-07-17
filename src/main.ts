@@ -185,17 +185,33 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     }
   }
 
-  if (config.autoStart && config.autoStart.length) {
-    const known = new Set(registry.names());
-    for (const name of config.autoStart) {
-      if (!known.has(name)) {
-        process.stderr.write(`[daimon] warning: autoStart references unknown app "${name}"\n`);
-        continue;
-      }
-      if (config.depends && config.depends[name] && config.depends[name].length) {
-        void registry.startWithDeps(name);
-      } else {
-        void registry.start(name);
+  // Boot autoStart (M96): the per-app `autoStart` list plus every
+  // `autoStart: true` group, deduped at resolution — an app named by several
+  // sources spawns exactly once, with one log line naming every source.
+  // Per-app failure degrades (never blocks boot); a config without autoStart
+  // groups boots exactly as before.
+  {
+    const { autoStartPlan } = await import('./groups.js');
+    const plan = autoStartPlan(config);
+    if (plan.length) {
+      const known = new Set(registry.names());
+      for (const entry of plan) {
+        const fromListOnly = entry.sources.length === 1 && entry.sources[0] === 'autoStart';
+        if (!known.has(entry.app)) {
+          // Keep the historical line byte-identical for the legacy list.
+          process.stderr.write(fromListOnly
+            ? `[daimon] warning: autoStart references unknown app "${entry.app}"\n`
+            : `[daimon] warning: autoStart references unknown app "${entry.app}" (${entry.sources.join(' + ')})\n`);
+          continue;
+        }
+        if (entry.sources.length > 1) {
+          process.stdout.write(`[daimon] autoStart: ${entry.app} requested by ${entry.sources.join(' + ')} — starting once\n`);
+        }
+        if (config.depends && config.depends[entry.app] && config.depends[entry.app].length) {
+          registry.startWithDeps(entry.app).catch(() => {});
+        } else {
+          registry.start(entry.app).catch(() => {});
+        }
       }
     }
   }

@@ -743,6 +743,235 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // `?group=` read filter (M95): resolves a group name to its member set
+      // for list/errors/report scoping. Sends the 400 (with the known names —
+      // errors say what to do next) and returns null when the group is
+      // unknown; callers just bail.
+      const resolveGroupFilter = (raw: string | null): Set<string> | null | undefined => {
+        if (!raw) return undefined; // no filter requested
+        const cfg = opts.getConfig?.();
+        const def = cfg?.groups?.[raw];
+        if (!def) {
+          const knownGroups = Object.keys(cfg?.groups ?? {});
+          sendJson(res, 400, {
+            error: `unknown group: ${raw}`,
+            known: knownGroups,
+            hint: knownGroups.length
+              ? `known groups: ${knownGroups.join(', ')}`
+              : "no groups configured — add a 'groups' map to daimon.config.json (name → [app, ...])",
+          });
+          return null;
+        }
+        return new Set(def.apps);
+      };
+      const inGroup = (members: Set<string>, s: { name: string; baseName?: string | null }): boolean =>
+        members.has(s.name) || (!!s.baseName && members.has(s.baseName));
+
+      // Named app groups (M93, v1.1 — experimental): name → { apps, autoStart,
+      // statusCounts, healthy, total }. Members unknown to the registry count
+      // under statusCounts.unknown rather than vanishing.
+      if (parts[0] === 'api' && parts[1] === 'groups' && parts.length === 2 && method === 'GET') {
+        const cfg = opts.getConfig?.();
+        const out: Record<string, unknown> = {};
+        for (const [gname, def] of Object.entries(cfg?.groups ?? {})) {
+          const statusCounts: Record<string, number> = {};
+          let healthy = 0;
+          for (const a of def.apps) {
+            const s = registry.summary(a);
+            const k = s ? s.status : 'unknown';
+            statusCounts[k] = (statusCounts[k] ?? 0) + 1;
+            if (s && s.status === 'serving' && s.health === 'healthy') healthy++;
+          }
+          out[gname] = { apps: def.apps, autoStart: def.autoStart, statusCounts, healthy, total: def.apps.length };
+        }
+        sendJson(res, 200, out);
+        return;
+      }
+
+      // Group lifecycle (M94, v1.1 — experimental): POST /api/groups/:name/up
+      // starts members ∪ their depends closure in topo levels and waits per
+      // level; /stop stops the members only (external deps are shared) in
+      // reverse depends order. Per-app soft-lock gating: a lock-refused member
+      // counts unhealthy in the summary and never aborts the rest.
+      if (parts[0] === 'api' && parts[1] === 'groups' && parts.length === 4
+        && (parts[3] === 'up' || parts[3] === 'stop') && method === 'POST') {
+        const gname = decodeURIComponent(parts[2]);
+        const cfg = opts.getConfig?.();
+        if (!cfg?.groups?.[gname]) {
+          const knownGroups = Object.keys(cfg?.groups ?? {});
+          sendJson(res, 404, {
+            error: 'unknown group',
+            known: knownGroups,
+            hint: knownGroups.length
+              ? `known groups: ${knownGroups.join(', ')} — groups are named sets in daimon.config.json 'groups'`
+              : "no groups configured — add a 'groups' map to daimon.config.json (name → [app, ...])",
+          });
+          return;
+        }
+        const stealQ = url.searchParams.get('steal');
+        const steal = stealQ === '1' || stealQ === 'true';
+        // Same per-member gate as single starts: acquire (or steal) the soft
+        // lock; a blocked member is reported, the rest proceed.
+        const memberLock = (app: string, action: string): { agent: string } | null => {
+          if (steal) { locks.steal(app, agentId, action); return null; }
+          return locks.acquire(app, agentId, action);
+        };
+        try {
+          const remote = (req.socket as any).remoteAddress || '127.0.0.1';
+          appendAuditEntry(remote, { action: `group-${parts[3]}`, group: gname }, { action: `group-${parts[3]}`, group: gname }, [`group-${parts[3]}:${gname}`], cwdHdr, agentId === 'unknown' ? null : agentId);
+        } catch {}
+        const { groupUpPlan, groupStopOrder } = await import('./groups.js');
+        const known = new Set(registry.names());
+        const start = Date.now();
+
+        if (parts[3] === 'up') {
+          const untilRaw = (url.searchParams.get('until') || 'healthy').toLowerCase();
+          if (!['serving', 'healthy'].includes(untilRaw)) { sendJson(res, 400, { error: 'until must be serving|healthy' }); return; }
+          const timeoutMsRaw = url.searchParams.get('timeoutMs') || url.searchParams.get('timeout');
+          let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 300_000;
+          if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 300_000;
+          timeoutMs = Math.min(timeoutMs, 1_200_000);
+          const probeEnabled = cfg.healthProbe?.enabled ?? true;
+          const effectiveUntil = (untilRaw === 'healthy' && !probeEnabled) ? 'serving' : (untilRaw as 'serving' | 'healthy');
+          const plan = groupUpPlan(cfg, gname, known)!;
+          const perApp = new Map<string, Record<string, unknown>>();
+          for (const u of plan.unknown) perApp.set(u, { name: u, reached: false, error: `unknown app — check the group's member list in daimon.config.json, or run 'daimon list --all'` });
+          for (const c of plan.cyclic) perApp.set(c, { name: c, reached: false, error: 'in dependency cycle — cannot order; break the cycle in daimon.config.json depends' });
+          for (const level of plan.levels) {
+            const waiting: string[] = [];
+            for (const n of level) {
+              if (perApp.has(n)) continue;
+              const s = registry.summary(n);
+              if (!s) { perApp.set(n, { name: n, reached: false, error: 'unknown app' }); continue; }
+              const blocker = memberLock(n, 'group-up');
+              if (blocker) {
+                perApp.set(n, { name: n, status: s.status, health: s.health, reached: false, lockedBy: blocker.agent, error: `locked by agent ${blocker.agent} — pass ?steal=1 to override, or wait for the lock to expire` });
+                continue;
+              }
+              if (s.status !== 'serving' && s.status !== 'starting' && s.status !== 'compiling') {
+                await registry.start(n);
+              }
+              waiting.push(n);
+            }
+            await Promise.all(waiting.map(async n => {
+              const remaining = Math.max(1000, timeoutMs - (Date.now() - start));
+              const r = await registry.waitFor(n, effectiveUntil, remaining);
+              const s = registry.summary(n);
+              perApp.set(n, {
+                name: n,
+                status: s?.status ?? null,
+                health: s?.health ?? null,
+                reached: !r.timedOut,
+                waitedMs: r.waitedMs,
+                ...(r.timedOut ? { timedOut: true } : {}),
+              });
+            }));
+          }
+          // Response order: closure (deps first), then cyclic, then unknown.
+          const ordered = [...plan.closure, ...plan.cyclic, ...plan.unknown]
+            .map(n => perApp.get(n))
+            .filter((x): x is Record<string, unknown> => !!x);
+          const healthy = ordered.filter(a => a.reached === true).length;
+          const total = ordered.length;
+          sendJson(res, 200, {
+            group: gname,
+            until: effectiveUntil,
+            apps: ordered,
+            healthy,
+            total,
+            summary: `${healthy}/${total} healthy`,
+            allReached: healthy === total,
+            totalMs: Date.now() - start,
+          });
+          return;
+        }
+
+        // stop: members only, reverse depends order, sequential so dependents
+        // die before their dependencies.
+        const stopPlan = groupStopOrder(cfg, gname, known)!;
+        const rows: Record<string, unknown>[] = [];
+        for (const n of stopPlan.order) {
+          const s = registry.summary(n);
+          if (!s) { rows.push({ name: n, stopped: false, error: 'unknown app' }); continue; }
+          const blocker = memberLock(n, 'group-stop');
+          if (blocker) {
+            rows.push({ name: n, status: s.status, stopped: false, lockedBy: blocker.agent, error: `locked by agent ${blocker.agent} — pass ?steal=1 to override, or wait for the lock to expire` });
+            continue;
+          }
+          if (s.status === 'stopped') { rows.push({ name: n, status: 'stopped', stopped: true }); continue; }
+          await registry.stop(n);
+          const r = await registry.waitFor(n, 'stopped', 10_000);
+          const after = registry.summary(n);
+          rows.push({ name: n, status: after?.status ?? null, stopped: !r.timedOut });
+        }
+        for (const u of stopPlan.unknown) rows.push({ name: u, stopped: false, error: `unknown app — check the group's member list in daimon.config.json` });
+        const stoppedCount = rows.filter(r => r.stopped === true).length;
+        sendJson(res, 200, {
+          group: gname,
+          apps: rows,
+          stopped: stoppedCount,
+          total: rows.length,
+          summary: `${stoppedCount}/${rows.length} stopped`,
+          allStopped: stoppedCount === rows.length,
+          totalMs: Date.now() - start,
+        });
+        return;
+      }
+
+      // Group read views (M95, v1.1 — experimental): per-member status and a
+      // ts-merged log tail with app attribution.
+      if (parts[0] === 'api' && parts[1] === 'groups' && parts.length === 4
+        && (parts[3] === 'status' || parts[3] === 'logs') && method === 'GET') {
+        const gname = decodeURIComponent(parts[2]);
+        const cfg = opts.getConfig?.();
+        const def = cfg?.groups?.[gname];
+        if (!def) {
+          const knownGroups = Object.keys(cfg?.groups ?? {});
+          sendJson(res, 404, {
+            error: 'unknown group',
+            known: knownGroups,
+            hint: knownGroups.length
+              ? `known groups: ${knownGroups.join(', ')} — groups are named sets in daimon.config.json 'groups'`
+              : "no groups configured — add a 'groups' map to daimon.config.json (name → [app, ...])",
+          });
+          return;
+        }
+        if (parts[3] === 'status') {
+          const rows = def.apps.map(n => {
+            const s = registry.summary(n);
+            return s ? compactStatus(s) : { name: n, status: null, error: 'unknown app' };
+          });
+          const healthy = rows.filter((r: any) => r.status === 'serving' && r.health === 'healthy').length;
+          sendJson(res, 200, { group: gname, apps: rows, healthy, total: rows.length, summary: `${healthy}/${rows.length} healthy` });
+          return;
+        }
+        // logs: merge members' buffers by ts; ?tail= applies after the merge.
+        const tailRaw = url.searchParams.get('tail');
+        const tail = tailRaw ? Math.max(1, Number(tailRaw) | 0) : 50;
+        const sinceMs = parseDuration(url.searchParams.get('since'));
+        const grepRaw = url.searchParams.get('grep');
+        let grepRx: RegExp | null = null;
+        if (grepRaw) {
+          if (grepRaw.length > 512) { sendJson(res, 400, { error: 'grep pattern too long (max 512 chars)' }); return; }
+          try { grepRx = new RegExp(grepRaw, 'i'); }
+          catch (e: any) { sendJson(res, 400, { error: `invalid grep regex: ${e?.message || e}` }); return; }
+        }
+        const cutoff = sinceMs != null ? Date.now() - sinceMs : null;
+        const merged: { ts: number; app: string; line: string }[] = [];
+        for (const n of def.apps) {
+          if (!registry.summary(n)) continue;
+          const entries = registry.getState(n)?.logBuffer ?? [];
+          for (const e of entries) {
+            if (cutoff != null && e.ts < cutoff) continue;
+            if (grepRx && !grepRx.test(e.line)) continue;
+            merged.push({ ts: e.ts, app: n, line: e.line });
+          }
+        }
+        merged.sort((a, b) => a.ts - b.ts);
+        sendJson(res, 200, { group: gname, lines: merged.slice(-tail) });
+        return;
+      }
+
       if (parts[0] === 'api' && parts[1] === 'profiles' && parts[3] === 'ensure-up' && method === 'POST') {
         const profile = decodeURIComponent(parts[2]);
         const cfg = opts.getConfig?.();
@@ -890,11 +1119,21 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           if (levelFilter === 'lint') return lvl === 'lint';
           return lvl === 'error';
         };
-        const perApp = registry.list().map(s => ({
+        let scope = registry.list();
+        // ?group= (M95): the exact value 'fingerprint' keeps its historical
+        // meaning (fold by stack fingerprint, below); any other value filters
+        // to a named group's members. Shape unchanged when the param is absent.
+        const groupParam = url.searchParams.get('group');
+        if (groupParam && groupParam !== 'fingerprint') {
+          const members = resolveGroupFilter(groupParam);
+          if (members === null) return; // 400 already sent
+          if (members) scope = scope.filter(s => inGroup(members, s));
+        }
+        const perApp = scope.map(s => ({
           app: s.name,
           errors: (registry.errors(s.name) ?? []).filter(matchesLevel),
         }));
-        if ((url.searchParams.get('group') || '') === 'fingerprint') {
+        if ((groupParam || '') === 'fingerprint') {
           const { groupErrors } = await import('./errorGroups.js');
           sendJson(res, 200, { groups: groupErrors(perApp) });
           return;
@@ -998,6 +1237,11 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       if (parts[0] === 'api' && parts[1] === 'report' && !parts[2] && method === 'GET') {
         const sinceP = parseSinceParam(url.searchParams.get('since'));
         const sinceTs = sinceP.sinceTs ?? (Date.now() - (sinceP.sinceMs ?? 24 * 3600_000));
+        // ?group= (M95): scoped like ?app=/?workspace=; the group is named in
+        // the report header. Composition-only discipline unchanged.
+        const reportGroup = url.searchParams.get('group');
+        const reportMembers = resolveGroupFilter(reportGroup);
+        if (reportMembers === null) return; // 400 already sent
         const { buildReport, renderReportMd } = await import('./report.js');
         const report = buildReport({
           registry,
@@ -1008,6 +1252,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           since: sinceTs,
           app: url.searchParams.get('app') || undefined,
           workspace: url.searchParams.get('workspace') || undefined,
+          ...(reportMembers ? { group: reportGroup!, groupApps: [...reportMembers] } : {}),
         });
         if (url.searchParams.get('md') === '1') {
           const md = renderReportMd(report);
@@ -1363,6 +1608,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (tagFilters.length) all = all.filter(s => tagFilters.every(t => (s.tags ?? []).includes(t)));
         const wsFilter = url.searchParams.get('workspace');
         if (wsFilter) all = all.filter(s => s.workspaceLabel === wsFilter);
+        // ?group= (M95): filter to a named group's members. Same server-side
+        // discipline as ?tag=/?workspace= — the output shape never changes
+        // with the filter.
+        const groupMembers = resolveGroupFilter(url.searchParams.get('group'));
+        if (groupMembers === null) return; // 400 already sent
+        if (groupMembers) all = all.filter(s => inGroup(groupMembers, s));
         const rows = fmt === 'full' ? all : all.map(compactSummary);
         if (url.searchParams.get('stream') === 'ndjson') {
           res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });

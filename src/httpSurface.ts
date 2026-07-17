@@ -20,7 +20,7 @@ export interface HttpEndpoint {
 
 export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   // ── frozen: the core agent loop ────────────────────────────────────────────
-  { method: 'GET', path: '/api/apps', stability: 'frozen', summary: 'List apps (?format=compact|full, ?stream=ndjson, ?explain=1, ?cwd=, ?tag=, ?workspace=).' },
+  { method: 'GET', path: '/api/apps', stability: 'frozen', summary: 'List apps (?format=compact|full, ?stream=ndjson, ?explain=1, ?cwd=, ?tag=, ?workspace=, ?group= — v1.1, experimental param).' },
   { method: 'GET', path: '/api/apps/:name', stability: 'frozen', summary: 'One app status (?format=compact|full).' },
   { method: 'GET', path: '/api/apps/:name/errors', stability: 'frozen', summary: 'Deduplicated errors (?since=, ?level=, ?format=).' },
   { method: 'GET', path: '/api/apps/:name/errors/since-last', stability: 'frozen', summary: 'Errors since the previous call for ?client= cursor.' },
@@ -58,7 +58,7 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'POST', path: '/api/profiles/:profile/ensure-up', stability: 'stable', summary: 'Cascade-start a profile and wait (?until=, ?timeoutMs=).' },
   { method: 'GET', path: '/api/profiles/suggest', stability: 'stable', summary: 'Suggest profiles from recurring co-starts.' },
   { method: 'POST', path: '/api/orchestrate', stability: 'stable', summary: 'Whole-profile bring-up with one try-fix round (?profile=, ?goal=).' },
-  { method: 'GET', path: '/api/errors', stability: 'stable', summary: 'All apps\' errors (?group=fingerprint, ?level=).' },
+  { method: 'GET', path: '/api/errors', stability: 'stable', summary: 'All apps\' errors (?group=fingerprint to fold by stack fingerprint; any other ?group= value filters to that named group\'s members — v1.1, experimental; ?level=).' },
   { method: 'GET', path: '/api/context/:name', stability: 'stable', summary: 'Agent context pack (?budget= drops sections).' },
   { method: 'GET', path: '/api/search', stability: 'stable', summary: 'FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=).' },
   { method: 'GET', path: '/api/why/:name', stability: 'stable', summary: 'One-shot crash forensics composition.' },
@@ -91,10 +91,17 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/metrics', stability: 'stable', summary: 'Prometheus text export (when metrics.enabled).' },
 
   // ── experimental: v0.13 surfaces — may change in any release ──────────────
-  { method: 'GET', path: '/api/report', stability: 'experimental', summary: 'The digest (?since=, ?app=, ?workspace=, ?md=1).' },
+  { method: 'GET', path: '/api/report', stability: 'experimental', summary: 'The digest (?since=, ?app=, ?workspace=, ?group= — v1.1, ?md=1).' },
   { method: 'GET', path: '/api/env/:name', stability: 'experimental', summary: 'Redacted env awareness (names only, never values).' },
   { method: 'GET', path: '/api/env/:name/diff', stability: 'experimental', summary: 'Env snapshot diff (?from=, ?to=).' },
   { method: 'GET', path: '/api/ports', stability: 'experimental', summary: 'Port map + foreign holders.' },
   { method: 'POST', path: '/api/apps/:name/mute', stability: 'experimental', summary: 'Mute OS notifications ({ forMs }).' },
+
+  // ── experimental: v1.1 groups (M93–M95) ───────────────────────────────────
+  { method: 'GET', path: '/api/groups', stability: 'experimental', summary: 'Named app groups: name → { apps, autoStart, statusCounts, healthy, total }.' },
+  { method: 'POST', path: '/api/groups/:name/up', stability: 'experimental', summary: 'Start a group: members ∪ depends closure in topo order; readiness summary (?until=, ?timeoutMs=, ?steal=1). Soft-lock gated per member.' },
+  { method: 'POST', path: '/api/groups/:name/stop', stability: 'experimental', summary: 'Stop a group\'s members in reverse depends order (?steal=1). Soft-lock gated per member.' },
+  { method: 'GET', path: '/api/groups/:name/status', stability: 'experimental', summary: 'Per-member compact statuses + "3/4 healthy" summary.' },
+  { method: 'GET', path: '/api/groups/:name/logs', stability: 'experimental', summary: 'Timestamp-merged log tail across members, each line carrying its app (?tail=, ?since=, ?grep=).' },
   { method: 'POST', path: '/api/apps/:name/unmute', stability: 'experimental', summary: 'Lift a notification mute.' },
 ];

@@ -51,6 +51,7 @@ export const CONFIG_KEY_STABILITY: Record<string, import('./stability.js').Stabi
   restartStorm: 'stable',
   search: 'stable',
   ports: 'experimental', // v0.13 (M81)
+  groups: 'experimental', // v1.1 (M93)
 };
 
 export interface ConfigLoadResult {
@@ -443,6 +444,35 @@ function validate(raw: unknown, source: string): AppmanConfig {
       }
     } else {
       warn(`"ports" must be an object (${source})`);
+    }
+  }
+
+  if (obj.groups !== undefined) {
+    // Named app groups (M93). Both forms normalize to { apps, autoStart } here
+    // so nothing downstream ever sees the shorthand. A broken entry is skipped
+    // with a warning; the rest of the map survives.
+    const g = obj.groups as any;
+    if (!g || typeof g !== 'object' || Array.isArray(g)) {
+      warn(`"groups" must be an object mapping name → string[] | { apps, autoStart? } (${source})`);
+    } else {
+      const out: Record<string, import('./types.js').GroupDef> = {};
+      for (const [name, v] of Object.entries(g)) {
+        if (Array.isArray(v) && v.every(s => typeof s === 'string')) {
+          out[name] = { apps: v as string[], autoStart: false };
+        } else if (v && typeof v === 'object' && !Array.isArray(v)
+          && Array.isArray((v as any).apps) && (v as any).apps.every((s: unknown) => typeof s === 'string')) {
+          const a = (v as any).autoStart;
+          if (a !== undefined && typeof a !== 'boolean') {
+            warn(`"groups.${name}.autoStart" must be a boolean (${source})`);
+            out[name] = { apps: (v as any).apps as string[], autoStart: false };
+          } else {
+            out[name] = { apps: (v as any).apps as string[], autoStart: a === true };
+          }
+        } else {
+          warn(`"groups.${name}" must be an array of app names or { apps: string[], autoStart?: boolean } (${source})`);
+        }
+      }
+      cfg.groups = out;
     }
   }
 

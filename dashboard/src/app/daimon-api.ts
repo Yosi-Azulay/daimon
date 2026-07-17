@@ -3,6 +3,7 @@ import { computed, inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import type { FlakyTest, TestRun } from './tests-page-helpers';
 import type { SearchHit } from './command-palette-helpers';
+import type { GroupInfo } from './groups-helpers';
 
 export type StatusKind = 'stopped' | 'starting' | 'compiling' | 'serving' | 'error';
 export type HealthKind = 'unknown' | 'healthy' | 'unhealthy';
@@ -165,6 +166,11 @@ export class DaimonApi {
   frameworks = signal<Record<string, FrameworkMeta>>({});
   // 24h status/error buckets per app for the mission-control sparkline (M70).
   sparkBuckets = signal<Record<string, string[]>>({});
+  // Named app groups (M93/M97) — `{}` on a pre-v1.1 daemon (404) or a
+  // daemon with no groups configured; either way the dashboard falls back to
+  // the flat, chip-less apps list. Refreshed on the same cadence as
+  // apps/overview so healthy/statusCounts stay live.
+  groups = signal<Record<string, GroupInfo>>({});
 
   workspaces = computed(() => {
     const seen = new Set<string>();
@@ -186,6 +192,7 @@ export class DaimonApi {
     void this.refresh();
     void this.loadFrameworks();
     void this.loadSparkline();
+    void this.loadGroups();
     this.streamStop = this.openEventStream();
     this.pollTimer = setInterval(() => void this.refresh(), POLL_MS);
     this.sparkTimer = setInterval(() => void this.loadSparkline(), 60_000);
@@ -205,6 +212,19 @@ export class DaimonApi {
   frameworkFor(profileId: string | null | undefined): FrameworkMeta | null {
     if (!profileId) return null;
     return this.frameworks()[profileId] ?? null;
+  }
+
+  // GET /api/groups (M93). A pre-v1.1 daemon 404s and any other failure is
+  // treated the same way — groups quietly stay `{}` and every group-aware
+  // dashboard surface (chips, sections, detail row) already renders nothing
+  // in that case, so this must never throw into refresh()'s Promise.all.
+  async loadGroups(): Promise<void> {
+    try {
+      const r = await firstValueFrom(this.http.get<Record<string, GroupInfo>>('/api/groups'));
+      this.groups.set(r && typeof r === 'object' ? r : {});
+    } catch {
+      this.groups.set({});
+    }
   }
 
   // 24 hourly buckets per app from the history timeline. Bucket kind ranks
@@ -258,6 +278,10 @@ export class DaimonApi {
       this.noteAgentActivity(agentInfo.locks);
       this.connected.set(true);
       this.ready.set(true);
+      // Fire-and-forget: its own try/catch already degrades to `{}`, and it
+      // must never be allowed to fail this refresh cycle's connected/ready
+      // state via the Promise.all above.
+      void this.loadGroups();
     } catch {
       this.connected.set(false);
     }

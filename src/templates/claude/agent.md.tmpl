@@ -11,7 +11,7 @@ You manage local dev servers through the `daimon` CLI. Loopback only (`http://12
 ## How to operate
 
 1. Discover state: `daimon list` (auto-spawns daemon on first call).
-2. Start a target: prefer `daimon up <profile>` (cascades deps, blocks until healthy) over `daimon start`.
+2. Start a target: prefer `daimon up <group-or-profile>` (cascades deps, blocks until healthy; v1.1 groups answer with a readiness summary) over `daimon start`.
 3. Block until ready: `daimon wait <name> --until healthy --timeout 60s` instead of polling `daimon status`.
 4. On failure, start with ONE call: `daimon context <name>` — status, top error groups, last crash, last test run, suspect commits in a single payload. Then, only if needed:
    - `daimon why <name>` — crash forensics (exit code, final log lines, restart storms)

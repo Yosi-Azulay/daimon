@@ -73,7 +73,7 @@ const MCP_DESCRIPTIONS = {
   get_errors: 'Errors for an app — supports --since, --since-last, --level.',
   get_logs: 'Recent log lines for an app.',
   start_app: 'Start an app (cwd-scoped name resolution, soft-lock gated).',
-  stop_app: 'Stop an app (soft-lock gated).',
+  stop_app: 'Stop an app (soft-lock gated); a name matching only a v1.1 group stops the group.',
   restart_app: 'Restart an app (soft-lock gated).',
   overview: 'Decision-ready snapshot for first-call agent sessions.',
   diff_errors: 'Errors since last call (per-client cursor).',
@@ -81,7 +81,7 @@ const MCP_DESCRIPTIONS = {
   focus: 'Subscribe-then-act stream of status/error events.',
   ensure: 'One-call lifecycle: start if needed, wait for target.',
   orchestrate: 'Bring up a whole profile; one round of try-fix on stragglers.',
-  ensure_up: 'Cascade-start a profile, wait until each app is healthy.',
+  ensure_up: 'Cascade-start a group (v1.1, depends-aware, readiness summary) or legacy profile; groups resolve first.',
   wait_for_app: 'Block until app reaches a target state.',
   daimon_who_owns: 'Lock holder + last 3 agent interactions for an app.',
   daimon_subscribe_events: 'Long-poll new events filtered by kind.',
@@ -93,6 +93,7 @@ const MCP_DESCRIPTIONS = {
   daimon_search: 'Full-text search over log lines, errors, and events (FTS5 with LIKE fallback).',
   daimon_report: 'The digest: uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agents, env changes.',
   daimon_env: 'Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.',
+  daimon_groups: 'Named app groups (v1.1): apps, autoStart, status counts, healthy/total per group.',
 };
 
 function renderMcp() {

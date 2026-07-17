@@ -27,6 +27,7 @@ import { AppWhy, DaimonApi, LockSnapshot } from './daimon-api';
 import { MetricsChartComponent } from './metrics-chart';
 import { StatusPillComponent, EmptyStateComponent, MonoComponent, SkeletonComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
+import { groupsForApp } from './groups-helpers';
 
 Chart.register(...registerables);
 
@@ -99,6 +100,14 @@ interface EnvInfo {
                 <span class="dm-ws-dot"></span>
                 <span>{{ s.workspaceLabel }}</span>
               </span>
+            }
+            @if (appGroups().length) {
+              @for (g of appGroups(); track g) {
+                <a class="dm-group-chip" [routerLink]="['/']" [queryParams]="{ group: g }" [matTooltip]="'filter apps by ' + g">
+                  <span class="material-symbols-outlined">workspaces</span>
+                  <span>{{ g }}</span>
+                </a>
+              }
             }
             @if (lock(); as lk) {
               <span class="dm-lock-chip" [matTooltip]="'locked by ' + lk.agent + ' · expires in ' + lockTtl(lk)">
@@ -510,6 +519,19 @@ interface EnvInfo {
     }
     .dm-ws-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--dm-tone, var(--mat-sys-primary)); }
 
+    .dm-group-chip {
+      display: inline-flex; align-items: center; gap: .3rem;
+      padding: 4px 10px; border-radius: 999px;
+      background: var(--mat-sys-surface-container);
+      border: 1px solid var(--mat-sys-outline-variant);
+      font: 500 .75rem/1rem Roboto;
+      color: var(--mat-sys-on-surface-variant);
+      text-decoration: none;
+      transition: background var(--dm-motion-short) var(--dm-motion-easing), color var(--dm-motion-short) var(--dm-motion-easing);
+    }
+    .dm-group-chip:hover { background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface); }
+    .dm-group-chip .material-symbols-outlined { font-size: 14px; }
+
     .dm-lock-chip, .dm-agent-chip {
       display: inline-flex; align-items: center; gap: .375rem;
       padding: 2px 10px; border-radius: 999px;
@@ -783,6 +805,16 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     return (this.api.appAgents()[this.name] ?? [])
       .filter(e => !lk || e.agent !== lk.agent)
       .map(e => e.agent);
+  });
+
+  // Group membership chips (M97) — [] (row omitted) when the app is in no
+  // group or the daemon predates groups (GET /api/groups 404 → api.groups()
+  // stays `{}`). Matches by both the live app name and its baseName, same
+  // as the apps-list chip filter.
+  readonly appGroups = computed<string[]>(() => {
+    const s = this.state();
+    if (!s) return [];
+    return groupsForApp({ name: s.name, baseName: s.baseName ?? null }, this.api.groups());
   });
 
   readonly errorsByFile = computed<{ file: string; items: DetailError[] }[]>(() => {
