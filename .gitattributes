@@ -1,0 +1,4 @@
+# Generated shell-completion scripts must stay byte-identical to what
+# scripts/build-completions.mjs regenerates (see test/completion.test.mjs's
+# drift test) — pin LF regardless of the checkout platform's core.autocrlf.
+completions/* text eol=lf

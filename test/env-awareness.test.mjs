@@ -243,3 +243,43 @@ test('REDACTION SUITE: raw value appears nowhere — db bytes, events, webhook s
     assert.ok(!fs.readFileSync(walPath, 'latin1').includes(SENTINEL), 'wal contains no raw env value');
   }
 });
+
+// M111 (v1.4): redaction extends to export bundles — a full exercise (env-file
+// fixture spawned, errors + tests seeded) must produce bundles free of the
+// seeded value AND the personal email in ALL THREE formats.
+test('REDACTION SUITE (M111): export bundles carry no env value and no personal email — json, md, csv', async () => {
+  const { buildExport, renderExportMd, renderExportCsv } = await import('../dist/export.js');
+  const root = fs.mkdtempSync(path.join(tmp, 'redact-export-'));
+  fs.writeFileSync(path.join(root, '.env'), `SECRET_ONE=${SENTINEL}\nPASSWORD=${SENTINEL}2\n`);
+  const dbPath = path.join(tmp, 'redact-export.db');
+  const cfg = baseCfg({ history: { enabled: true, path: dbPath, retentionDays: 7 } });
+  const reg = new Registry(cfg, [quietApp('sealed', root, { serverProfile: 'vite' })]);
+  const history = new History(cfg.history);
+  reg.setHistory(history);
+
+  await spawnOnce(reg, 'sealed');
+  fs.writeFileSync(path.join(root, '.env'), `SECRET_ONE=${SENTINEL}-v2\nPASSWORD=${SENTINEL}2\n`);
+  await spawnOnce(reg, 'sealed');
+  // Seed live errors + a test run so every bundle section has real content.
+  reg.getState('sealed').errors.set('e', {
+    message: 'ERROR boom in service', count: 1, firstSeen: Date.now() - 1000, lastSeen: Date.now(), level: 'error',
+  });
+  history.recordTestRun({ app: 'sealed', ts: Date.now(), runner: 'vitest', durationMs: 50, total: 2, passed: 1, failed: 1, skipped: 0, exitCode: 1, gitHead: null }, [
+    { suite: 's', test: 't', file: 'f.ts', line: 1, message: 'assert failed', fingerprint: 'fpx' },
+  ]);
+  history._flushForTest();
+
+  const bundle = buildExport({ registry: reg, history }, { since: Date.now() - 3600_000 });
+  const personalEmail = 'yosi' + '@flycotech.com';
+  for (const [fmt, text] of Object.entries({
+    json: JSON.stringify(bundle),
+    md: renderExportMd(bundle),
+    csv: renderExportCsv(bundle),
+  })) {
+    assert.ok(!text.includes(SENTINEL), `${fmt} bundle leaked a raw env value`);
+    assert.ok(!text.toLowerCase().includes(personalEmail), `${fmt} bundle leaked the personal email`);
+  }
+  // Sanity: the exercise really produced env-bearing content (key names OK).
+  assert.ok(JSON.stringify(bundle).includes('SECRET_ONE') || JSON.stringify(bundle).includes('envChanged') || bundle.sections.report.sections.env, 'env data flowed through the bundle');
+  history.close();
+});

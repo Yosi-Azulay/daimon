@@ -138,3 +138,49 @@
   --dm-tone-badge-l: 0.72;
   --dm-tone-badge-c: 0.13;
 }
+
+/* Print (M112): one token-layer override, clean black-on-white regardless of
+   the active theme's `color-scheme`. `:root` (a pseudo-class, specificity
+   0,1,0) beats the `html { @include mat.theme() }` mixin output in
+   styles.scss (a type selector, specificity 0,0,1) — so this wins over both
+   the light and dark --mat-sys-* values without needing !important, in
+   either build order. Every --dm-color-* alias below flows through to
+   whatever already consumes it (body background/fg, borders, pill/tag
+   color-mix tints, link color via `a { color: var(--dm-color-primary) }`) —
+   no component touched. Structural hides (nav/chrome/controls) and the one
+   inline-styled exception (the status dot) live in styles.scss. */
+@media print {
+  :root {
+    --dm-color-bg: #fff;
+    --dm-color-fg: #000;
+    --dm-color-fg-muted: #333;
+    --dm-color-surface: #fff;
+    --dm-color-surface-2: #fff;
+    --dm-color-surface-3: #fff;
+    --dm-color-surface-4: #fff;
+    --dm-color-border: #999;
+    --dm-color-border-strong: #000;
+    --dm-color-primary: #000;
+    --dm-color-on-primary: #fff;
+    --dm-color-accent: #000;
+    --dm-color-danger: #000;
+    --dm-color-on-danger: #fff;
+    --dm-color-serving: #000;
+    --dm-color-compiling: #000;
+    --dm-color-starting: #000;
+    --dm-color-error: #000;
+    --dm-color-stopped: #999;
+    --dm-chart-1: #000;
+    --dm-chart-2: #000;
+    --dm-chart-3: #000;
+    --dm-chart-4: #000;
+    --dm-elev-1: none;
+    --dm-elev-2: none;
+    --dm-elev-3: none;
+    /* the one raw --mat-sys-* read outside the --dm-* alias layer that's
+       reachable on a printed page (.dm-page-sub in styles.scss) — there is
+       no --dm-* row for it to alias, so print overrides it directly rather
+       than inventing one for a single consumer. */
+    --mat-sys-on-surface-variant: #333;
+  }
+}

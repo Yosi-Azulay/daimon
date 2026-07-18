@@ -1,4 +1,4 @@
-import { CLI_GROUPS, CLI_SUBCOMMANDS, CLI_ALIASES, findSubcommand, type CliSubcommand } from './cliSurface.js';
+import { CLI_GROUPS, CLI_SUBCOMMANDS, CLI_ALIASES, findSubcommand, type CliSubcommand, type CliOption } from './cliSurface.js';
 import { DAIMON_VERSION } from './version.js';
 
 export interface ColorOpts {
@@ -174,123 +174,333 @@ export function formatHumanError(e: CliErr): string {
   return parts.join('\n');
 }
 
-const VERB_LIST = CLI_SUBCOMMANDS.map(c => c.name).concat(Object.keys(CLI_ALIASES)).sort().join(' ');
+// ---- Data-driven completion model (M113) ---------------------------------
+// CLI_SUBCOMMANDS (cliSurface.ts) is the single source of truth; every
+// generator below is built from it so bash/zsh/powershell/fish can never
+// drift from each other or from the verb surface. Two shapes need care:
+//
+// 1. Multi-word canonical names ("config validate", "profiles suggest") —
+//    the CLI dispatches on the first token, so the completable word is
+//    `name.split(' ')[0]`, and the literal second word comes straight out
+//    of the same split. No table needed; grouped automatically below.
+// 2. Verbs that dispatch on a literal first *argument* rather than a flag,
+//    where cliSurface.ts records that as free-text `args` (e.g. daimon's
+//    args is "start|stop|status|..."), not structured data. This is the
+//    one place that spells out those literal subwords.
+const VERB_SUBWORDS: Record<string, string[]> = {
+  daemon: ['start', 'stop', 'status', 'restart', 'attach', 'install-service'],
+  workspaces: ['list', 'add', 'rm', 'show'],
+  plugin: ['list', 'show', 'validate'],
+  env: ['diff'],
+  ci: ['start'],
+  claude: ['install', 'update', 'uninstall', 'status'],
+  completion: ['bash', 'zsh', 'fish', 'powershell'],
+};
+
+const GLOBAL_FLAGS = ['--help', '--no-color', '--no-spawn'];
+
+interface VerbCompletion {
+  first: string;
+  subwords: string[];
+  appPositional: boolean;
+  flags: string[];
+}
+
+// Most CliOption rows use { flag: '--since', arg: '<duration>' }; a few
+// (report/env's --since/--from/--to) inline the placeholder into `flag`
+// itself ('--since <window>'). Normalize both shapes to a bare flag token
+// plus whether it takes a value.
+function normalizeFlag(o: CliOption): { flag: string; hasArg: boolean } {
+  const trimmed = o.flag.trim();
+  const m = trimmed.match(/^(--[A-Za-z0-9-]+)/);
+  const flag = m ? m[1] : trimmed.split(/\s/)[0];
+  const hasArg = !!o.arg || flag.length < trimmed.length;
+  return { flag, hasArg };
+}
+
+function buildVerbCompletions(): VerbCompletion[] {
+  const byFirst = new Map<string, VerbCompletion>();
+  for (const c of CLI_SUBCOMMANDS) {
+    const [first, ...rest] = c.name.split(' ');
+    const v = byFirst.get(first) ?? { first, subwords: [], appPositional: false, flags: [] };
+    if (rest.length && !v.subwords.includes(rest.join(' '))) v.subwords.push(rest.join(' '));
+    for (const sw of VERB_SUBWORDS[first] ?? []) if (!v.subwords.includes(sw)) v.subwords.push(sw);
+    // Two placeholder conventions are used for "takes an app name first":
+    // <name> everywhere, <app> on `handoff`.
+    if (c.args.startsWith('<name>') || c.args.startsWith('<app>')) v.appPositional = true;
+    for (const o of c.options ?? []) {
+      const { flag } = normalizeFlag(o);
+      if (!v.flags.includes(flag)) v.flags.push(flag);
+    }
+    byFirst.set(first, v);
+  }
+  return [...byFirst.values()].sort((a, b) => a.first.localeCompare(b.first));
+}
+
+const VERB_COMPLETIONS = buildVerbCompletions();
+const TOP_LEVEL_WORDS = Array.from(new Set([
+  ...VERB_COMPLETIONS.map(v => v.first),
+  ...Object.keys(CLI_ALIASES),
+])).sort();
+
+function verbFlags(v: VerbCompletion): string[] {
+  return Array.from(new Set([...v.flags, ...GLOBAL_FLAGS]));
+}
+
+// One-line snippet that fetches known app names via `daimon list --compact`,
+// degrading silently to nothing on any failure — shared verbatim by every
+// shell so app-name completion behaves identically everywhere.
+const FETCH_APPS_NODE = 'try{let s=\'\';process.stdin.on(\'data\',d=>s+=d).on(\'end\',()=>{try{JSON.parse(s).forEach(a=>console.log(a.name||\'\'))}catch(e){}})}catch(e){}';
 
 export function completionBash(): string {
-  return `#!/usr/bin/env bash
-# daimon bash completion
-# install: source <(daimon completion bash)  (or copy to /etc/bash_completion.d/daimon)
-_daimon_complete() {
-  local cur prev verbs
-  COMPREPLY=()
-  cur="\${COMP_WORDS[COMP_CWORD]}"
-  prev="\${COMP_WORDS[COMP_CWORD-1]}"
-  verbs="${VERB_LIST}"
-  if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "$verbs" -- "$cur") )
-    return 0
-  fi
-  case "$prev" in
-    status|stop|restart|start|errors|events|wait|ensure|logs|history|why|tasks|run|snapshot|env|clean|focus|try-fix|pin-health)
-      local apps
-      apps=$(daimon --no-spawn list --compact 2>/dev/null | node -e "try{let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{JSON.parse(s).forEach(a=>console.log(a.name||''))}catch(e){}})}catch(e){}" 2>/dev/null)
-      COMPREPLY=( $(compgen -W "$apps" -- "$cur") )
-      return 0
-      ;;
-    --profile|up|down|ensure-up|orchestrate)
-      ;;
-  esac
-  COMPREPLY=( $(compgen -W "--full --compact --stream --explain --tag --workspace --since --until --timeout --tail --app --budget --dry-run --yes --no-color --no-spawn --help" -- "$cur") )
+  const lines: string[] = [];
+  lines.push('#!/usr/bin/env bash');
+  lines.push('# daimon bash completion — generated from src/cliSurface.ts. Do not hand-edit;');
+  lines.push('# regenerate with: npm run build && npm run build:completions');
+  lines.push('# install: source <(daimon completion bash)  (or copy to /etc/bash_completion.d/daimon)');
+  lines.push('_daimon_complete() {');
+  lines.push('  local cur cword canon prev apps flags sub');
+  lines.push('  COMPREPLY=()');
+  lines.push('  cur="${COMP_WORDS[COMP_CWORD]}"');
+  lines.push('  cword=$COMP_CWORD');
+  lines.push('  prev="${COMP_WORDS[COMP_CWORD-1]}"');
+  lines.push('  if [ "$prev" = "--app" ]; then');
+  lines.push('    apps=$(daimon --no-spawn list --compact 2>/dev/null | node -e "' + FETCH_APPS_NODE + '" 2>/dev/null)');
+  lines.push('    COMPREPLY=( $(compgen -W "$apps" -- "$cur") )');
+  lines.push('    return 0');
+  lines.push('  fi');
+  lines.push('  if [ "$cword" -eq 1 ]; then');
+  lines.push('    COMPREPLY=( $(compgen -W "' + TOP_LEVEL_WORDS.join(' ') + '" -- "$cur") )');
+  lines.push('    return 0');
+  lines.push('  fi');
+  lines.push('  canon="${COMP_WORDS[1]}"');
+  lines.push('  case "$canon" in');
+  for (const [alias, target] of Object.entries(CLI_ALIASES)) {
+    lines.push(`    ${alias}) canon="${target.split(' ')[0]}" ;;`);
+  }
+  lines.push('  esac');
+  lines.push('  if [ "$cword" -eq 2 ]; then');
+  lines.push('    sub=""');
+  lines.push('    case "$canon" in');
+  for (const v of VERB_COMPLETIONS) {
+    if (v.subwords.length) lines.push(`      ${v.first}) sub="${v.subwords.join(' ')}" ;;`);
+  }
+  lines.push('    esac');
+  const appFirsts = VERB_COMPLETIONS.filter(v => v.appPositional).map(v => v.first);
+  if (appFirsts.length) {
+    lines.push('    case "$canon" in');
+    lines.push(`      ${appFirsts.join('|')})`);
+    lines.push('        apps=$(daimon --no-spawn list --compact 2>/dev/null | node -e "' + FETCH_APPS_NODE + '" 2>/dev/null)');
+    lines.push('        COMPREPLY=( $(compgen -W "$apps $sub" -- "$cur") )');
+    lines.push('        return 0');
+    lines.push('        ;;');
+    lines.push('    esac');
+  }
+  lines.push('    if [ -n "$sub" ]; then');
+  lines.push('      COMPREPLY=( $(compgen -W "$sub" -- "$cur") )');
+  lines.push('      return 0');
+  lines.push('    fi');
+  lines.push('  fi');
+  // `env diff <name>` — the one three-deep case worth resolving explicitly.
+  lines.push('  if [ "$cword" -eq 3 ] && [ "$canon" = "env" ] && [ "${COMP_WORDS[2]}" = "diff" ]; then');
+  lines.push('    apps=$(daimon --no-spawn list --compact 2>/dev/null | node -e "' + FETCH_APPS_NODE + '" 2>/dev/null)');
+  lines.push('    COMPREPLY=( $(compgen -W "$apps" -- "$cur") )');
+  lines.push('    return 0');
+  lines.push('  fi');
+  lines.push('  flags="' + GLOBAL_FLAGS.join(' ') + '"');
+  lines.push('  case "$canon" in');
+  for (const v of VERB_COMPLETIONS) {
+    lines.push(`    ${v.first}) flags="${verbFlags(v).join(' ')}" ;;`);
+  }
+  lines.push('  esac');
+  lines.push('  COMPREPLY=( $(compgen -W "$flags" -- "$cur") )');
+  lines.push('}');
+  lines.push('complete -F _daimon_complete daimon');
+  return lines.join('\n') + '\n';
 }
-complete -F _daimon_complete daimon
-`;
+
+function zshEsc(s: string): string {
+  return s.replace(/'/g, "''").replace(/:/g, '\\:').replace(/\[/g, '\\[').replace(/\]/g, '\\]').slice(0, 80);
+}
+
+function summaryFor(word: string): string {
+  const exact = CLI_SUBCOMMANDS.find(c => c.name === word);
+  if (exact) return exact.summary;
+  const grouped = CLI_SUBCOMMANDS.find(c => c.name.split(' ')[0] === word);
+  if (grouped) return grouped.summary;
+  if (CLI_ALIASES[word]) return `alias → ${CLI_ALIASES[word]}`;
+  return '';
 }
 
 export function completionZsh(): string {
-  return `#compdef daimon
-# daimon zsh completion
-# install: daimon completion zsh > "\${fpath[1]}/_daimon"  (or source it from .zshrc)
-_daimon() {
-  local -a verbs
-  verbs=(${CLI_SUBCOMMANDS.map(c => `'${c.name}:${c.summary.replace(/'/g, "''").replace(/:/g, '\\:').slice(0, 80)}'`).join(' ')})
-  if (( CURRENT == 2 )); then
-    _describe 'command' verbs
-    return
-  fi
-  _arguments \\
-    '--full[full v0.4 shape]' \\
-    '--compact[compact JSON]' \\
-    '--stream[NDJSON stream]' \\
-    '--explain[wrap with _meta]' \\
-    '--tag[tag filter]:tag' \\
-    '--workspace[workspace label]:label' \\
-    '--since[duration]:duration' \\
-    '--until[state]:state' \\
-    '--timeout[duration]:duration' \\
-    '--tail[lines]:N' \\
-    '--app[app]:name' \\
-    '--budget[tokens]:N' \\
-    '--dry-run[plan only]' \\
-    '--yes[skip prompts]' \\
-    '--no-color[disable color]' \\
-    '--no-spawn[no auto-spawn]' \\
-    '--help[help]'
-}
-compdef _daimon daimon
-`;
+  const lines: string[] = [];
+  lines.push('#compdef daimon');
+  lines.push('# daimon zsh completion — generated from src/cliSurface.ts. Do not hand-edit;');
+  lines.push('# regenerate with: npm run build && npm run build:completions');
+  lines.push('# install: daimon completion zsh > "${fpath[1]}/_daimon"  (or source it from .zshrc)');
+  lines.push('_daimon() {');
+  lines.push('  local -a verbs');
+  lines.push('  verbs=(' + TOP_LEVEL_WORDS.map(w => `'${w}:${zshEsc(summaryFor(w))}'`).join(' ') + ')');
+  lines.push('  if (( CURRENT == 2 )); then');
+  lines.push('    _describe \'command\' verbs');
+  lines.push('    return');
+  lines.push('  fi');
+  lines.push('  if [[ ${words[CURRENT-1]} == --app ]]; then');
+  lines.push('    local -a apps');
+  lines.push('    apps=(${(f)"$(daimon --no-spawn list --compact 2>/dev/null | node -e "' + FETCH_APPS_NODE + '" 2>/dev/null)"})');
+  lines.push('    compadd -a apps');
+  lines.push('    return');
+  lines.push('  fi');
+  lines.push('  local canon=${words[2]}');
+  lines.push('  case $canon in');
+  for (const [alias, target] of Object.entries(CLI_ALIASES)) {
+    lines.push(`    ${alias}) canon=${target.split(' ')[0]} ;;`);
+  }
+  lines.push('  esac');
+  lines.push('  if (( CURRENT == 3 )); then');
+  lines.push('    local -a cands');
+  lines.push('    case $canon in');
+  for (const v of VERB_COMPLETIONS) {
+    if (v.subwords.length) lines.push(`      ${v.first}) cands=(${v.subwords.join(' ')}) ;;`);
+  }
+  lines.push('    esac');
+  const appFirstsZsh = VERB_COMPLETIONS.filter(v => v.appPositional).map(v => v.first);
+  if (appFirstsZsh.length) {
+    lines.push('    case $canon in');
+    lines.push(`      ${appFirstsZsh.join('|')})`);
+    lines.push('        cands+=(${(f)"$(daimon --no-spawn list --compact 2>/dev/null | node -e "' + FETCH_APPS_NODE + '" 2>/dev/null)"})');
+    lines.push('        ;;');
+    lines.push('    esac');
+  }
+  lines.push('    if (( ${#cands} )); then');
+  lines.push('      compadd -a cands');
+  lines.push('      return');
+  lines.push('    fi');
+  lines.push('  fi');
+  // `env diff <name>` — the one three-deep case worth resolving explicitly.
+  lines.push('  if [[ $canon == env && ${words[3]} == diff && CURRENT == 4 ]]; then');
+  lines.push('    local -a apps');
+  lines.push('    apps=(${(f)"$(daimon --no-spawn list --compact 2>/dev/null | node -e "' + FETCH_APPS_NODE + '" 2>/dev/null)"})');
+  lines.push('    compadd -a apps');
+  lines.push('    return');
+  lines.push('  fi');
+  lines.push('  local -a flags');
+  lines.push('  case $canon in');
+  for (const v of VERB_COMPLETIONS) {
+    lines.push(`    ${v.first}) flags=(${verbFlags(v).join(' ')}) ;;`);
+  }
+  lines.push('  esac');
+  lines.push('  flags+=(' + GLOBAL_FLAGS.join(' ') + ')');
+  lines.push('  compadd -a flags');
+  lines.push('}');
+  lines.push('compdef _daimon daimon');
+  return lines.join('\n') + '\n';
 }
 
 export function completionFish(): string {
-  const lines: string[] = ['# daimon fish completion'];
+  const lines: string[] = ['# daimon fish completion — generated from src/cliSurface.ts. Do not hand-edit;'];
+  lines.push('# regenerate with: npm run build && npm run build:completions');
   lines.push('# install: daimon completion fish > ~/.config/fish/completions/daimon.fish');
   lines.push('complete -c daimon -f');
   for (const c of CLI_SUBCOMMANDS) {
     const desc = c.summary.replace(/'/g, "\\'").slice(0, 100);
-    lines.push(`complete -c daimon -n "__fish_use_subcommand" -a "${c.name}" -d '${desc}'`);
+    lines.push(`complete -c daimon -n "__fish_use_subcommand" -a "${c.name.split(' ')[0]}" -d '${desc}'`);
   }
   for (const a of Object.keys(CLI_ALIASES)) {
     lines.push(`complete -c daimon -n "__fish_use_subcommand" -a "${a}" -d 'alias → ${CLI_ALIASES[a]}'`);
   }
-  for (const f of ['--full', '--compact', '--stream', '--explain', '--dry-run', '--yes', '--no-color', '--no-spawn', '--help']) {
-    lines.push(`complete -c daimon -l ${f.replace(/^--/, '')}`);
+  for (const [first, subwords] of Object.entries(VERB_SUBWORDS)) {
+    for (const sw of subwords) {
+      lines.push(`complete -c daimon -n "__fish_seen_subcommand_from ${first}" -a "${sw}"`);
+    }
   }
-  for (const f of ['tag', 'workspace', 'since', 'until', 'timeout', 'tail', 'app', 'budget']) {
-    lines.push(`complete -c daimon -l ${f} -x`);
+  const flagHasArg = new Map<string, boolean>();
+  for (const c of CLI_SUBCOMMANDS) {
+    for (const o of c.options ?? []) {
+      const { flag, hasArg } = normalizeFlag(o);
+      flagHasArg.set(flag, flagHasArg.get(flag) || hasArg);
+    }
+  }
+  for (const f of GLOBAL_FLAGS) if (!flagHasArg.has(f)) flagHasArg.set(f, false);
+  for (const [flag, hasArg] of flagHasArg) {
+    lines.push(`complete -c daimon -l ${flag.replace(/^--/, '')}` + (hasArg ? ' -x' : ''));
   }
   return lines.join('\n') + '\n';
 }
 
-export function completionPowershell(): string {
-  const verbs = VERB_LIST.split(' ').map(v => `'${v}'`).join(',');
-  return `# daimon PowerShell completion
-# install: daimon completion powershell | Out-String | Invoke-Expression
-# permanent: add the same line to $PROFILE
-Register-ArgumentCompleter -Native -CommandName daimon -ScriptBlock {
-  param($wordToComplete, $commandAst, $cursorPosition)
-  $tokens = $commandAst.CommandElements
-  $verbs = @(${verbs})
-  if ($tokens.Count -le 1) {
-    $verbs | Where-Object { $_ -like "$wordToComplete*" } |
-      ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
-    return
-  }
-  $verb = $tokens[1].Value
-  $appVerbs = @('status','stop','restart','start','errors','events','wait','ensure','logs','history','why','tasks','run','snapshot','env','clean','focus','try-fix','pin-health')
-  if ($appVerbs -contains $verb) {
-    try {
-      $env:DAIMON_NO_SPAWN = '1'
-      $raw = & daimon --no-spawn list --compact 2>$null
-      $apps = ($raw | ConvertFrom-Json) | ForEach-Object { $_.name }
-      $apps | Where-Object { $_ -like "$wordToComplete*" } |
-        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
-      return
-    } catch {}
-  }
-  $flags = @('--full','--compact','--stream','--explain','--tag','--workspace','--since','--until','--timeout','--tail','--app','--budget','--dry-run','--yes','--no-color','--no-spawn','--help')
-  $flags | Where-Object { $_ -like "$wordToComplete*" } |
-    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterName', $_) }
+function psStr(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
 }
-`;
+function psArray(items: string[]): string {
+  return '@(' + items.map(psStr).join(',') + ')';
+}
+function psHashOfArrays(entries: [string, string[]][]): string {
+  return '@{ ' + entries.map(([k, v]) => `${psStr(k)} = ${psArray(v)}`).join('; ') + ' }';
+}
+function psHashOfStrings(entries: [string, string][]): string {
+  return '@{ ' + entries.map(([k, v]) => `${psStr(k)} = ${psStr(v)}`).join('; ') + ' }';
+}
+
+export function completionPowershell(): string {
+  const lines: string[] = [];
+  lines.push('# daimon PowerShell completion — generated from src/cliSurface.ts. Do not');
+  lines.push('# hand-edit; regenerate with: npm run build && npm run build:completions');
+  lines.push('# install: daimon completion powershell | Out-String | Invoke-Expression');
+  lines.push('# permanent: add the same line to $PROFILE');
+  lines.push('$daimonVerbs = ' + psArray(TOP_LEVEL_WORDS));
+  lines.push('$daimonAliases = ' + psHashOfStrings(Object.entries(CLI_ALIASES).map(([a, t]) => [a, t.split(' ')[0]] as [string, string])));
+  const subwordEntries = VERB_COMPLETIONS.filter(v => v.subwords.length).map(v => [v.first, v.subwords] as [string, string[]]);
+  lines.push('$daimonSubwords = ' + psHashOfArrays(subwordEntries));
+  lines.push('$daimonAppVerbs = ' + psArray(VERB_COMPLETIONS.filter(v => v.appPositional).map(v => v.first)));
+  const flagEntries = VERB_COMPLETIONS.map(v => [v.first, verbFlags(v)] as [string, string[]]);
+  flagEntries.push(['_default', GLOBAL_FLAGS]);
+  lines.push('$daimonFlags = ' + psHashOfArrays(flagEntries));
+  lines.push('');
+  lines.push('Register-ArgumentCompleter -Native -CommandName daimon -ScriptBlock {');
+  lines.push('  param($wordToComplete, $commandAst, $cursorPosition)');
+  lines.push('  $tokens = $commandAst.CommandElements');
+  lines.push('  # Effective position: the partially typed word is itself a CommandElements');
+  lines.push('  # token, so with a non-empty $wordToComplete the count overshoots by one');
+  lines.push('  # (bash/zsh COMP_CWORD/CURRENT already count this way).');
+  lines.push('  $pos = $tokens.Count');
+  lines.push('  if ($wordToComplete) { $pos-- }');
+  lines.push('  if ($pos -gt 1 -and $tokens[$pos - 1].Value -eq \'--app\') {');
+  lines.push('    try {');
+  lines.push('      $raw = & daimon --no-spawn list --compact 2>$null');
+  lines.push('      $apps = ($raw | ConvertFrom-Json) | ForEach-Object { $_.name }');
+  lines.push('      $apps | Where-Object { $_ -like "$wordToComplete*" } |');
+  lines.push('        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, \'ParameterValue\', $_) }');
+  lines.push('      return');
+  lines.push('    } catch {}');
+  lines.push('  }');
+  lines.push('  if ($pos -le 1) {');
+  lines.push('    $daimonVerbs | Where-Object { $_ -like "$wordToComplete*" } |');
+  lines.push('      ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, \'ParameterValue\', $_) }');
+  lines.push('    return');
+  lines.push('  }');
+  lines.push('  $verb1 = $tokens[1].Value');
+  lines.push('  $canon = if ($daimonAliases.ContainsKey($verb1)) { $daimonAliases[$verb1] } else { $verb1 }');
+  lines.push('  if ($pos -eq 2) {');
+  lines.push('    $cands = @()');
+  lines.push('    if ($daimonSubwords.ContainsKey($canon)) { $cands += $daimonSubwords[$canon] }');
+  lines.push('    if ($daimonAppVerbs -contains $canon) {');
+  lines.push('      try {');
+  lines.push('        $raw = & daimon --no-spawn list --compact 2>$null');
+  lines.push('        $apps = ($raw | ConvertFrom-Json) | ForEach-Object { $_.name }');
+  lines.push('        $cands += $apps');
+  lines.push('      } catch {}');
+  lines.push('    }');
+  lines.push('    if ($cands.Count -gt 0) {');
+  lines.push('      $cands | Where-Object { $_ -like "$wordToComplete*" } |');
+  lines.push('        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, \'ParameterValue\', $_) }');
+  lines.push('      return');
+  lines.push('    }');
+  lines.push('  }');
+  lines.push('  $flags = if ($daimonFlags.ContainsKey($canon)) { $daimonFlags[$canon] } else { $daimonFlags[\'_default\'] }');
+  lines.push('  $flags | Where-Object { $_ -like "$wordToComplete*" } |');
+  lines.push('    ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, \'ParameterName\', $_) }');
+  lines.push('}');
+  return lines.join('\n') + '\n';
 }
 
 export function emitCompletion(shell: string): { ok: true; script: string } | { ok: false; error: string } {

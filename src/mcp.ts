@@ -46,6 +46,7 @@ export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stabili
   daimon_env: 'experimental', // v0.13 (M82)
   daimon_groups: 'experimental', // v1.1 (M98)
   daimon_top: 'experimental', // v1.3 (M106)
+  daimon_export: 'experimental', // v1.4 (M111)
 };
 
 function apiPort(): number {
@@ -479,6 +480,23 @@ export function buildServer(): McpServer {
     if (group) qs.set('group', group);
     const q = qs.toString();
     const r = await callJson('/api/report' + (q ? '?' + q : ''));
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 400) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_export', {
+    description: 'One-way carry-out bundle (v1.4): persisted events, fingerprint-folded error groups, test runs, compiles, crash reports (bounded log tails only), and the M83 report in one versioned envelope { schemaVersion: 1, generatedAt, daimonVersion, since, until, app, sections } (additive-only; ignore unknown keys). Sections degrade to { note }, never an error. Redaction holds: env key names + hashes only, never values. There is no import — bundles are for humans and external tools. Default window 7d.',
+    inputSchema: {
+      since: z.string().optional().describe('Window like 24h or 7d (default 7d)'),
+      app: z.string().optional(),
+    },
+  }, async ({ since, app }) => {
+    const qs = new URLSearchParams();
+    if (since) qs.set('since', since);
+    if (app) qs.set('app', app);
+    const q = qs.toString();
+    const r = await callJson('/api/export' + (q ? '?' + q : ''));
     if (r.status === 0) return err(r.body?.error || 'unknown');
     if (r.status === 400) return err(JSON.stringify(r.body));
     return ok(r.body);

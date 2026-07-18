@@ -1,0 +1,7 @@
+{
+  "name": "demo-web",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js"
+  }
+}

@@ -151,3 +151,54 @@ mat-panel-description { justify-content: flex-end; flex: 1 0 0; padding-right: .
     td, th { display: inline-flex; border: 0 !important; padding: 2px 0 !important; min-width: 0; word-break: break-word; }
   }
 }
+
+// Print (M112): structural half of the Report page's print stylesheet — the
+// color half is the token override in styles/tokens.css. Screen rendering is
+// untouched; everything here lives inside @media print. Global selectors
+// reach into report-page.ts's component-scoped classes fine (Angular's
+// emulated encapsulation scopes styles DEFINED in the component, not
+// lookups from outside), so none of that component needed to change.
+@media print {
+  // Interactive chrome that has no place on a printed page. dm-command-palette
+  // and dm-onboarding-tour are the standalone components' own host tag names
+  // (see app.ts's template) — hidden defensively even though the e2e drive
+  // never renders them (palette is @defer'd, tour is pre-dismissed).
+  .dm-skip-link,
+  .dm-rail,
+  .dm-topbar,
+  dm-command-palette,
+  dm-onboarding-tour,
+  #dm-toast-host,
+  .dm-cwd-banner,
+  // Report page's own chrome (report-page.ts): the refresh button and the
+  // period/app-scope switcher — neither means anything on paper.
+  .dm-header-actions,
+  .dm-controls {
+    display: none !important;
+  }
+
+  .dm-shell { display: block !important; height: auto !important; }
+  .dm-main { padding: 0 !important; overflow: visible !important; background: transparent !important; }
+  html, body { height: auto !important; }
+
+  // CSS Grid children don't paginate reliably in print — flow report panels
+  // as normal block content so `break-inside: avoid` below actually holds.
+  .dm-grid { display: block !important; }
+  .dm-panel {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #000;
+    margin-bottom: 1rem;
+  }
+  .dm-panel-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  // dm-status-pill (ui-primitives.ts) binds its dot's color via
+  // `[style.background]`, a JS-computed inline style the token layer can't
+  // reach — the only place this stylesheet needs !important.
+  .dm-dot { background: #000 !important; box-shadow: none !important; }
+
+  * { box-shadow: none !important; text-shadow: none !important; animation: none !important; }
+}

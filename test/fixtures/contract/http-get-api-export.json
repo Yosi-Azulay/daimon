@@ -1,0 +1,99 @@
+{
+  "surface": "GET /api/export",
+  "note": "Golden shape (key sets + types, never values). Regenerate with UPDATE_CONTRACT_SNAPSHOTS=1 and hand-review: keys may be ADDED, never removed or retyped.",
+  "cases": {
+    "default": {
+      "app": "null",
+      "daimonVersion": "string",
+      "generatedAt": "number",
+      "schemaVersion": "number",
+      "sections": {
+        "compiles": {
+          "note": "string"
+        },
+        "crashes": {
+          "note": "string"
+        },
+        "errorGroups": {
+          "count": "number",
+          "groups": {
+            "$array": {
+              "apps": {
+                "$array": "string"
+              },
+              "count": "number",
+              "fingerprint": "string",
+              "firstSeen": "number",
+              "instances": {
+                "$array": {
+                  "app": "string",
+                  "count": "number",
+                  "firstSeen": "number",
+                  "lastSeen": "number",
+                  "message": "string"
+                }
+              },
+              "lastSeen": "number",
+              "level": "string",
+              "message": "string"
+            }
+          }
+        },
+        "events": {
+          "note": "string"
+        },
+        "report": {
+          "app": "null",
+          "generatedAt": "number",
+          "group": "null",
+          "sections": {
+            "agents": {
+              "active": {
+                "$array": {
+                  "id": "string",
+                  "lastSeen": "number"
+                }
+              },
+              "taskRuns": "number",
+              "taskRunsByApp": {
+                "$array": "unknown"
+              }
+            },
+            "compiles": {
+              "note": "string"
+            },
+            "crashes": {
+              "note": "string"
+            },
+            "env": {
+              "note": "string"
+            },
+            "errors": {
+              "logVolume": {
+                "note": "string"
+              },
+              "note": "string"
+            },
+            "resources": {
+              "note": "string"
+            },
+            "tests": {
+              "note": "string"
+            },
+            "uptime": {
+              "note": "string"
+            }
+          },
+          "since": "number",
+          "until": "number",
+          "workspace": "null"
+        },
+        "testRuns": {
+          "note": "string"
+        }
+      },
+      "since": "number",
+      "until": "number"
+    }
+  }
+}

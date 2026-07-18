@@ -311,6 +311,57 @@ Crossing a budget for a sustained window raises one `resource-budget-exceeded` e
 
 Suspicions surface everywhere the rest of daimon does: `daimon why` notes when a crash fell inside an open suspicion window ("RSS grew 3.1× before this crash"), Trends charts rss/cpu series, `daimon report` gains a resources section (peak RSS + suspicion counts), and `daimon doctor` flags `cpu-storm-active` (advise-only — the warn-never-kill rule extends to doctor). OS notifications for all three kinds are opt-in via `notifications.kinds`; absent, they stay silent self-events + webhooks.
 
+## Carry-out (v1.4)
+
+Everything daimon knows, ready to leave the building — without daimon itself growing an inch.
+
+### `daimon export` — the carry-out bundle
+
+```bash
+daimon export --since 7d --out week.json      # canonical JSON bundle, written atomically
+daimon export --format md                     # paste-ready markdown (report + section summaries)
+daimon export --app web-admin --format csv    # flat rows: section,ts,app,summary,detail
+```
+
+One self-contained bundle of what happened: persisted events, fingerprint-folded error groups, test runs, compiles, crash reports, and the full report — composed from existing history, never re-derived. The JSON envelope is versioned and boring on purpose:
+
+```jsonc
+{
+  "schemaVersion": 1,          // integer, additive-only evolution — readers must ignore unknown keys
+  "generatedAt": 1780000000000,
+  "daimonVersion": "1.4.0",
+  "since": 1779400000000, "until": 1780000000000,
+  "app": null,                  // or the --app scope
+  "sections": { "events": {}, "errorGroups": {}, "testRuns": {}, "compiles": {}, "crashes": {}, "report": {} }
+}
+```
+
+Sections with no data degrade to `{ note }`, never an error — an empty history exports a valid bundle. Three rules are permanent:
+
+- **Export is one-way.** There is no `daimon import` and no plan for one — bundles are for humans, bug trackers, and external tools, not for round-tripping between daimons.
+- **Redaction holds.** Env key names + salted hashes only, exactly like the database — a bundle can never contain an env value. The redaction test suite greps generated bundles in all three formats.
+- **No raw log lines.** Crash entries keep their existing bounded tail excerpt; nothing else carries log output.
+
+`--out` writes tmp-then-rename, so a mid-write kill never leaves a torn file. Without `--out` the bundle goes to stdout, pipe-friendly. Also `GET /api/export?since=&app=&format=` and the MCP tool `daimon_export` (all experimental).
+
+### Print-ready reports
+
+The dashboard Report page now carries a print stylesheet: printing (or Save-as-PDF) yields clean black-on-white regardless of theme, with navigation hidden and sections kept whole across page breaks. Nothing changes on screen.
+
+### Shell completion, regenerated for good
+
+`daimon completion <bash|zsh|fish|powershell>` now derives from the same verb table that renders `--help` and the docs, so every verb and flag through v1.4 completes — and a drift test fails the suite if the committed scripts in `completions/` ever lag the surface again.
+
+```bash
+source <(daimon completion bash)                      # bash (or drop completions/daimon.bash into /etc/bash_completion.d/)
+daimon completion zsh > "${fpath[1]}/_daimon"         # zsh
+daimon completion powershell | Out-String | Invoke-Expression   # PowerShell (add to $PROFILE to persist)
+```
+
+### Demo script
+
+`node scripts/demo/run-demo.mjs` replays a deterministic session (start → error surfaced → report → export) against a throwaway state dir — the source of the README screencast, and provably unable to touch your real `~/.daimon`.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -510,6 +561,7 @@ daimon history <name>              # uptime%, restart count, compile p50/p95, to
 daimon search <query> [--app <a>] [--since <dur>] [--kind logs|errors|events]   # full-text search (v0.12)
 daimon test-history <name> [--flaky] [--limit N]   # recent test runs / flaky tests (v0.12)
 daimon report [--since 24h|7d] [--app <a>] [--workspace <l>] [--md]   # the digest (v0.13)
+daimon export [--since 7d] [--app <a>] [--format json|md|csv] [--out <file>]   # one-way carry-out bundle, schemaVersion 1 (v1.4)
 
 # agent verbs
 daimon wait <name> [--until serving|healthy|stopped|error] [--timeout 120s]
@@ -582,6 +634,7 @@ GET  /api/search?q=&app=&since=&kind=           # full-text search (v0.12)
 GET  /api/why/:name                             # crash forensics composition (v0.12; + envChanged v0.13)
 GET  /api/context/:name?budget=                 # agent context pack (v0.12)
 GET  /api/report?since=&app=&workspace=[&md=1]  # the digest (v0.13)
+GET  /api/export?since=&app=&format=json|md|csv # one-way carry-out bundle, schemaVersion 1 (v1.4)
 GET  /api/env/:name                             # env-file awareness — names only, never values (v0.13)
 GET  /api/env/:name/diff?from=&to=              # env diff between spawns (v0.13)
 GET  /api/ports                                 # port map + foreign holders (v0.13)
@@ -627,7 +680,7 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes 29 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored), and the v1.3 `daimon_top` (live RSS/CPU table — warn-only, never kills). Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
+The MCP server exposes 30 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored), the v1.3 `daimon_top` (live RSS/CPU table — warn-only, never kills), and the v1.4 `daimon_export` (the one-way carry-out bundle). Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
 
 ## State files (in `~/.daimon/`)
 

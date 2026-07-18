@@ -334,6 +334,21 @@ if (!lockPath().startsWith(fakeHome)) {
     checkCase('http-get-api-signature.json', 'GET /api/signature', 'default', sig.body);
   });
 
+  // Experimental tier, but snapshot-pinned anyway (M111): the export bundle is
+  // a CONSUMED FORMAT — schemaVersion evolves additive-only from day one, so
+  // its envelope gets the same golden-shape treatment as a frozen surface.
+  test('http contract: GET /api/export (v1.4 bundle envelope)', async () => {
+    const r = await http('GET', '/api/export?since=24h');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.schemaVersion, 1, 'schemaVersion 1 — bump only with an additive migration note');
+    assert.deepEqual(
+      Object.keys(r.body.sections).sort(),
+      ['compiles', 'crashes', 'errorGroups', 'events', 'report', 'testRuns'],
+      'the section list is closed — in particular, no raw log-line section may ever appear',
+    );
+    checkCase('http-get-api-export.json', 'GET /api/export', 'default', r.body);
+  });
+
   test('http contract: POST start/stop/restart', async () => {
     const started = await http('POST', '/api/apps/child/start');
     assert.equal(started.status, 200);

@@ -98,6 +98,9 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/api/top', stability: 'experimental', summary: 'Live resource table: app → pid → rssMB → cpu → uptimeMs, RSS-sorted; nulls for apps without a reading (v1.3).' },
   { method: 'POST', path: '/api/apps/:name/mute', stability: 'experimental', summary: 'Mute OS notifications ({ forMs }).' },
 
+  // ── experimental: v1.4 carry-out (M111) ───────────────────────────────────
+  { method: 'GET', path: '/api/export', stability: 'experimental', summary: 'One-way carry-out bundle (?since=7d, ?app=, ?format=json|md|csv): versioned envelope { schemaVersion: 1 } over events, error groups, test runs, compiles, crashes (bounded tails only), and the report. No import endpoint exists, by design.' },
+
   // ── experimental: v1.1 groups (M93–M95) ───────────────────────────────────
   { method: 'GET', path: '/api/groups', stability: 'experimental', summary: 'Named app groups: name → { apps, autoStart, statusCounts, healthy, total }.' },
   { method: 'POST', path: '/api/groups/:name/up', stability: 'experimental', summary: 'Start a group: members ∪ depends closure in topo order; readiness summary (?until=, ?timeoutMs=, ?steal=1). Soft-lock gated per member.' },

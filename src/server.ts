@@ -1299,6 +1299,39 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // `daimon export` (M111, v1.4): the one-way carry-out bundle —
+      // composition over existing queries + the M83 report in a versioned
+      // envelope (schemaVersion 1, additive-only). ?since=7d|<ms>&app=&
+      // format=json|md|csv. No import endpoint exists, by design.
+      if (parts[0] === 'api' && parts[1] === 'export' && !parts[2] && method === 'GET') {
+        const sinceP = parseSinceParam(url.searchParams.get('since'));
+        const sinceTs = sinceP.sinceTs ?? (Date.now() - (sinceP.sinceMs ?? 7 * 86400_000));
+        const format = (url.searchParams.get('format') || 'json').toLowerCase();
+        if (!['json', 'md', 'csv'].includes(format)) {
+          sendJson(res, 400, { error: `unknown format '${format}' — use format=json|md|csv (JSON is the canonical bundle)` });
+          return;
+        }
+        const { buildExport, renderExportMd, renderExportCsv } = await import('./export.js');
+        const bundle = buildExport({
+          registry,
+          history: registry.getHistory(),
+          agents: agents.list().map(a => ({ id: a.id, lastSeen: a.lastSeen })),
+          flakyThreshold: opts.getConfig?.().tests?.flakyThreshold ?? 3,
+        }, {
+          since: sinceTs,
+          app: url.searchParams.get('app') || undefined,
+        });
+        if (format !== 'json') {
+          const text = format === 'md' ? renderExportMd(bundle) : renderExportCsv(bundle);
+          const ctype = format === 'md' ? 'text/markdown; charset=utf-8' : 'text/csv; charset=utf-8';
+          res.writeHead(200, { 'content-type': ctype, 'content-length': Buffer.byteLength(text), 'x-daimon-version': DAIMON_VERSION });
+          res.end(text);
+          return;
+        }
+        sendJson(res, 200, bundle);
+        return;
+      }
+
       // Full-text search (M77): everything daimon has seen, greppable.
       // ?q=&app=&since=&kind=logs|errors|events&limit=. Falls back to LIKE
       // (fallback:true) when FTS is unavailable — never errors the daemon.

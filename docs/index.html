@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.3.0 — docs</title>
+<title>daimon v1.4.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.3.0</span></h1>
+<h1>daimon <span class="badge">v1.4.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -164,6 +164,8 @@ npx daimon init --auto</code></pre>
 <dl class="cli-grid">
 <dt><code>daimon report [--since 24h|7d] [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--md]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>The digest: per-app uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agent activity, env changes.</dd>
+<dt><code>daimon export [--since 7d] [--app &lt;a&gt;] [--format json|md|csv] [--out &lt;file&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>One-way carry-out bundle: events, error groups, test runs, compiles, crashes (bounded tails), and the report in one versioned envelope (schemaVersion 1). JSON canonical; --format md paste-ready; --format csv flat rows.</dd>
 <dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;] | diff &lt;name&gt; [--from &lt;ts&gt;] [--to &lt;ts&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Env-file awareness: convention files (found/missing), key names, snapshot age; `env diff` shows files/keys added/removed/changed between spawns. --use sets the active env file (pre-v0.13 behavior). Values are NEVER shown.</dd>
 <dt><code>daimon why &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -372,6 +374,8 @@ npx daimon init --auto</code></pre>
 <dd>Live resource table: app → pid → rssMB → cpu → uptimeMs, RSS-sorted; nulls for apps without a reading (v1.3).</dd>
 <dt><code>POST /api/apps/:name/mute</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Mute OS notifications ({ forMs }).</dd>
+<dt><code>GET /api/export</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>One-way carry-out bundle (?since=7d, ?app=, ?format=json|md|csv): versioned envelope { schemaVersion: 1 } over events, error groups, test runs, compiles, crashes (bounded tails only), and the report. No import endpoint exists, by design.</dd>
 <dt><code>GET /api/groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Named app groups: name → { apps, autoStart, statusCounts, healthy, total }.</dd>
 <dt><code>POST /api/groups/:name/up</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
@@ -418,6 +422,7 @@ npx daimon init --auto</code></pre>
 <dt><code>daimon_env</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Read-only env awareness: convention files, key NAMES, snapshot age; diff=true compares the last two spawns. Values never included.</dd>
 <dt><code>daimon_groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Named app groups (v1.1): apps, autoStart, status counts, healthy/total per group.</dd>
 <dt><code>daimon_top</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Live resource table (v1.3): running apps with pid, RSS (MB), CPU %, uptime — RSS-sorted, nulls never errors. Warn-only; daimon never kills.</dd>
+<dt><code>daimon_export</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>One-way carry-out bundle (v1.4): events, error groups, test runs, compiles, crashes (bounded tails), and the report in a versioned envelope (schemaVersion 1, additive-only). No import exists; redaction holds (key names + hashes, never values).</dd>
 </dl>
 
 <h2 id="config">Config reference</h2>

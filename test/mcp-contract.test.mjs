@@ -32,6 +32,8 @@ const EXPECTED_TOOLS = [
   'daimon_groups',
   // v1.3 (M106): live resource table — read-only, warn-never-kill.
   'daimon_top',
+  // v1.4 (M111): the one-way carry-out bundle.
+  'daimon_export',
 ].sort();
 
 async function connectedClient() {
@@ -62,7 +64,7 @@ function minimalArgs(schema) {
 const client = await connectedClient();
 const { tools } = await client.listTools();
 
-test('mcp surface: tools/list returns exactly the expected 28 tools', () => {
+test('mcp surface: tools/list returns exactly the expected 30 tools', () => {
   assert.deepEqual(tools.map(t => t.name).sort(), EXPECTED_TOOLS);
 });
 

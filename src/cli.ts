@@ -340,6 +340,9 @@ interface Flags {
   to?: string;
   md?: boolean;
   forDur?: string;
+  // `daimon export` (M111, v1.4): output format + atomic file target.
+  format?: string;
+  outFile?: string;
   passthrough: string[];
 }
 
@@ -408,6 +411,8 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--flaky') f.flaky = true;
     else if (a === '--kind') f.kind = args[++i];
     else if (a === '--grep') f.grep = args[++i];
+    else if (a === '--format') f.format = args[++i];
+    else if (a === '--out') f.outFile = args[++i];
     else f.positional.push(a);
   }
   return f;
@@ -1213,6 +1218,35 @@ async function main() {
         return;
       }
       out(r.body);
+      return;
+    }
+    // `daimon export` (M111, v1.4): the one-way carry-out bundle. The daemon
+    // composes + renders; the CLI only routes bytes — stdout by default,
+    // atomic tmp+rename with --out.
+    case 'export': {
+      const format = (f.format ?? 'json').toLowerCase();
+      if (!['json', 'md', 'csv'].includes(format)) {
+        fail(JSON.stringify({ error: `unknown --format '${f.format}' — use json (canonical), md (paste-ready) or csv (flat rows)` }));
+      }
+      const params = new URLSearchParams();
+      if (f.since) params.set('since', f.since);
+      if (f.app) params.set('app', f.app);
+      if (format !== 'json') params.set('format', format);
+      const qs = params.toString();
+      const r = await call(`/api/export${qs ? '?' + qs : ''}`);
+      if (r.status !== 200) {
+        out(r.body);
+        process.exit(1);
+      }
+      const text = format === 'json' ? JSON.stringify(r.body, null, 2) + '\n' : String(r.body);
+      if (f.outFile) {
+        const target = path.resolve(f.outFile);
+        const { writeExportAtomic } = await import('./export.js');
+        const written = writeExportAtomic(target, text);
+        out({ written: written.path, bytes: written.bytes, format });
+        return;
+      }
+      process.stdout.write(text.endsWith('\n') ? text : text + '\n');
       return;
     }
     case 'env': {
