@@ -1,0 +1,31 @@
+{
+  "tool": "ss",
+  "platform": "linux",
+  "provenance": "Representative `ss -ltnp` (iproute2) output. Column layout and the users:((...pid=...)) process field validated against ss(8) and public samples; the container case is BusyBox ss (leading Netid column, no process info). NOT captured on the Windows dev box — confirm real output on hardware via scripts/platform-smoke.sh.",
+  "cases": [
+    {
+      "name": "standard root capture (ports + pids, incl. IPv6 and a multi-pid nginx line)",
+      "file": "linux-standard.txt",
+      "want": [4999, 5432, 4200, 80],
+      "expect": { "4999": 48211, "5432": 1440, "4200": 48999, "80": 1002 }
+    },
+    {
+      "name": "no-permission (no process column) — port found, pid unknown (0)",
+      "file": "linux-no-permission.txt",
+      "want": [4999, 5432],
+      "expect": { "4999": 0, "5432": 0 }
+    },
+    {
+      "name": "IPv6-only listeners incl. wildcard *:port",
+      "file": "linux-ipv6.txt",
+      "want": [4300, 3000, 9229],
+      "expect": { "4300": 7777, "3000": 8888, "9229": 7777 }
+    },
+    {
+      "name": "container BusyBox ss (leading Netid column, no pids)",
+      "file": "linux-container.txt",
+      "want": [4999, 8080],
+      "expect": { "4999": 0, "8080": 0 }
+    }
+  ]
+}

@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { isPathUnder, normalizeForCompare } from '../dist/pathScope.js';
 import { Registry } from '../dist/registry.js';
-
-const isWin = process.platform === 'win32';
+import { platformSkip } from './helpers/platformSkip.mjs';
 
 test('isPathUnder: identical paths match', () => {
   const p = path.resolve('/tmp/workspace');
@@ -37,19 +36,23 @@ test('isPathUnder: relative paths are resolved before comparison', () => {
   assert.equal(isPathUnder('./does/not/exist', parent), true);
 });
 
-if (isWin) {
-  test('isPathUnder (Windows): case-insensitive matching', () => {
-    const lower = 'd:\\synology\\sourcecode\\daimon';
-    const upper = 'D:\\Synology\\SourceCode\\daimon\\src';
-    assert.equal(isPathUnder(upper, lower), true);
-  });
+// These verify REAL host path.resolve behavior on Windows (drive letters,
+// NTFS case-insensitivity, slash normalization) — they can't run on POSIX, so
+// they skip loudly there instead of vanishing. The case-fold DECISION itself is
+// proven cross-platform in platform-seams.test.mjs via the injectable param.
+test('isPathUnder (Windows): case-insensitive matching', (t) => {
+  if (platformSkip(t, 'win32', 'real NTFS case-insensitive path.resolve matching')) return;
+  const lower = 'd:\\synology\\sourcecode\\daimon';
+  const upper = 'D:\\Synology\\SourceCode\\daimon\\src';
+  assert.equal(isPathUnder(upper, lower), true);
+});
 
-  test('isPathUnder (Windows): forward/back slash variants normalize the same way', () => {
-    const a = 'D:/Synology/SourceCode/daimon';
-    const b = 'D:\\Synology\\SourceCode\\daimon\\src';
-    assert.equal(isPathUnder(b, a), true);
-  });
-}
+test('isPathUnder (Windows): forward/back slash variants normalize the same way', (t) => {
+  if (platformSkip(t, 'win32', 'real Windows slash normalization in path.resolve')) return;
+  const a = 'D:/Synology/SourceCode/daimon';
+  const b = 'D:\\Synology\\SourceCode\\daimon\\src';
+  assert.equal(isPathUnder(b, a), true);
+});
 
 test('normalizeForCompare: trailing-separator stripped via path.resolve', () => {
   const a = normalizeForCompare(path.resolve('/tmp/x/'));

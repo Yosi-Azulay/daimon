@@ -1,0 +1,4 @@
+State   Recv-Q  Send-Q   Local Address:Port    Peer Address:Port   Process
+LISTEN  0       4096     [::1]:4300            [::]:*             users:(("node",pid=7777,fd=20))
+LISTEN  0       128      [::]:3000            [::]:*             users:(("deno",pid=8888,fd=9))
+LISTEN  0       128      *:9229               *:*               users:(("node",pid=7777,fd=30))

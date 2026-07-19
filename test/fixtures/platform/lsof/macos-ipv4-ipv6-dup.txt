@@ -1,0 +1,3 @@
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    48211  yosi   23u  IPv4 0x9f8a1b2c3d4e5f60      0t0  TCP 127.0.0.1:4999 (LISTEN)
+node    48211  yosi   24u  IPv6 0x0a0b0c0d0e0f1011      0t0  TCP [::1]:4999 (LISTEN)

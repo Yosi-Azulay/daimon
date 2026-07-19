@@ -92,7 +92,20 @@ src/
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
                     # (netstat -ano / ss), daimon signature probe, EADDRINUSE
-                    # message composition, verify-then-kill helper.
+                    # message composition, verify-then-kill helper. v1.9 (M141):
+                    # pure per-tool parsers (parseNetstat/parseSs/parseLsof*) +
+                    # an injectable command-runner seam (CmdRunner + platform) so
+                    # the POSIX side is fixture-tested; the ss parser is field-
+                    # addressed (M140 fix — the old regex read the Recv-Q column).
+  platformInventory.ts # Platform-branch inventory (M140, v1.9): PLATFORM_BRANCHES
+                    # data table — one row per process.platform fork (behavior +
+                    # verdict + named gap). Rendered as the docs "Platform support"
+                    # table; test/platform-inventory.test.mjs greps dist/ and fails
+                    # if any platform token escapes the table (completeness gate).
+  platformRemedy.ts # Platform-aware remedy phrasing (M143, v1.9): killCmd /
+                    # inspectPortCmd / killHint — taskkill vs kill, netstat vs
+                    # lsof. One helper, injectable platform; no per-callsite
+                    # `process.platform ===` sprawl.
   envFiles.ts       # Env awareness (M82): dotenv parse + spawn snapshots.
                     # REDACTION RULE: raw values die in the same tick — parsed,
                     # HMAC'd (per-install salt at ~/.daimon/salt, truncated to
@@ -143,7 +156,11 @@ dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
 completions/        # GENERATED shell completion (bash/zsh/powershell) — never hand-edit.
                     # Regen: npm run build:completions; drift-gated by test/completion.test.mjs.
 scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIMON_HOME only.
-test/               # node --test suite. 910 test cases (v1.7); files run in parallel child processes.
+scripts/platform-smoke.sh # (M143, v1.9) ~2-min PASS/FAIL probe for a REAL Mac/Linux box.
+                    # POSIX sh, zero deps, throwaway DAIMON_HOME; --dry-run runs the
+                    # plumbing on any host. The human runs it before publish.
+test/               # node --test suite. 971 test cases (v1.9); files run in parallel child processes.
+                    # test/helpers/platformSkip.mjs + test/fixtures/platform/<tool>/ (M141-M142).
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
 
@@ -234,6 +251,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   merge-writes `awayAck` (additive state.json key). The digest's single 1-min
   interval stays the ONLY scheduler.
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
+- **Every platform branch is inventoried, fixture-tested, and honestly labeled (M140–M143, v1.9).** The dev box is Windows; POSIX behavior is proven via recorded-output fixtures + injectable seams (the `platform`/`CmdRunner` parameter pattern), NEVER by pretending to run on Linux. Three binding rules: (1) **a `process.platform`/`os.platform()` fork needs a row in `src/platformInventory.ts`** — `test/platform-inventory.test.mjs` greps `dist/` and fails if any token escapes the table (the docs "Platform support" page renders from that same data). (2) **A parser/branch with a Windows fixture gets a POSIX one** in `test/fixtures/platform/<tool>/` with a provenance note, fed through the production parse path via the injectable runner (no test-only fork) — deleting a fixture fails the suite. (3) **Platform-conditional tests SKIP LOUDLY** via `platformSkip(t, plat, note)` (`test/helpers/platformSkip.mjs`) — a bare `if (isWin)` or `process.platform … return` is a defect; `test/platform-skips.test.mjs` asserts the skip set against a committed expectation and fails on a silent gate. Support-matrix statuses are earned: `verified` (real test on that OS), `fixture-verified` (recorded-output test), `best-effort` (only `scripts/platform-smoke.sh` on real hardware) — never asserted. User-facing OS commands route through `src/platformRemedy.ts` (taskkill vs kill), never a per-callsite `process.platform ===`.
 - **History migrations are additive** — `CREATE TABLE IF NOT EXISTS`, plus (since v1.2) a guarded nullable `ALTER TABLE … ADD COLUMN` (check `PRAGMA table_info` first; column must be nullable; every INSERT names its columns so an older daimon keeps writing the same table). Never a rename, drop, retype, or NOT NULL addition — a v0.11 DB must open cleanly under v1.2 and vice versa.
 - **Every surface declares a stability tier (M87).** New CLI verbs, HTTP endpoints, MCP tools, config keys, and event kinds MUST carry `frozen`/`stable`/`experimental` at their source of truth (`cliSurface.ts` / `httpSurface.ts` / `mcp.ts` MCP_TOOL_STABILITY / `config.ts` CONFIG_KEY_STABILITY / `types.ts` EVENT_KIND_STABILITY). New work defaults to experimental. A `frozen` surface needs a golden-shape snapshot in `test/fixtures/contract/` — `test/contract.test.mjs` fails without one, and fails forever on a frozen-shape change (regenerate with `UPDATE_CONTRACT_SNAPSHOTS=1` only for reviewed ADDITIVE changes). See STABILITY.md.
 - **State writes are atomic with a .bak (M88).** Every `~/.daimon/*.json` the daemon rewrites (state.json, session-state.json, config rewrites) goes tmp → copy-current-to-.bak → rename. `state.json` load order: main → `.bak` → archive as `state.json.corrupt-<ts>` + fresh start, with a self-warn event (never silent). Torture coverage: `test/lifecycle-torture.test.mjs`.
@@ -345,6 +363,34 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   resources, and prompts declare tiers at their source of truth
   (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
   `MCP_PROMPT_STABILITY`).
+
+## v1.9 highlights (what landed this release)
+
+- **Everywhere (M140–M144)**: macOS/Linux certification — no schema/config/dep
+  change, no history migration; every new surface `experimental`. **Platform
+  inventory (M140)**: `src/platformInventory.ts` tables every `process.platform`
+  fork (behavior + verdict + named gap), rendered as the docs "Platform support"
+  table, grep-gated by `test/platform-inventory.test.mjs` so no branch escapes.
+  **Flagship fix (M140)**: the `ss -ltnp` parser read the Recv-Q column and
+  returned nothing on Linux — now field-addressed + fixture-gated (`daimon ports`
+  was silently blind on its main POSIX platform). **POSIX fixtures + seam
+  (M141)**: `portDiag.ts` gains pure per-tool parsers + an injectable
+  `CmdRunner`/`platform` seam; `test/fixtures/platform/<tool>/` (ss/lsof/netstat/
+  ps/powershell, incl. no-permission/IPv6/container variants + provenance) run
+  through the production path in `test/port-forensics.test.mjs` as win32 AND
+  linux/darwin; non-port seams (`resolveCommand`/`buildServiceArtifact`/
+  `isSystemDir`/`normalizeForCompare`) got a `platform` param + both-branch tests.
+  **Loud skips (M142)**: `platformSkip` helper + `test/platform-skips.test.mjs`
+  accounting (asserts the committed skip set, prints `# platform-skips: N`, fails
+  on any silent `if (isWin)`/`process.platform … return`). **Remedies + matrix +
+  smoke (M143)**: `src/platformRemedy.ts` (taskkill vs kill, netstat vs lsof)
+  feeds the EADDRINUSE remedy; README support matrix (verified/fixture-verified/
+  best-effort, BSD = best-effort in those words); `scripts/platform-smoke.sh` — a
+  ~2-min real-hardware PASS/FAIL probe (throwaway DAIMON_HOME, `--dry-run` for any
+  host). Suite **971 tests**, 0 fail. Tests: `test/platform-inventory.test.mjs`,
+  `test/port-forensics.test.mjs`, `test/platform-seams.test.mjs`,
+  `test/platform-skips.test.mjs`, `test/platform-remedies.test.mjs`,
+  `test/smoke-script.test.mjs`.
 
 ## v1.8 highlights (what landed this release)
 

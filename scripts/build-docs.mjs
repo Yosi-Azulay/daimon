@@ -20,6 +20,7 @@ const { MCP_TOOL_STABILITY, MCP_RESOURCE_STABILITY, MCP_PROMPT_STABILITY } = awa
 const { CONFIG_KEY_STABILITY } = await import(dist('config.js'));
 const { EVENT_KIND_STABILITY } = await import(dist('types.js'));
 const { DOCTOR_COVERAGE } = await import(dist('doctor.js'));
+const { PLATFORM_BRANCHES } = await import(dist('platformInventory.js'));
 
 function esc(s = '') {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -183,6 +184,27 @@ function renderDoctorCoverage() {
   return out.join('\n');
 }
 
+// Platform-branch inventory (M140, v1.9) — rendered straight from the data next
+// to the code so the audit can't drift from the docs.
+function renderPlatformTable() {
+  const verdictLabel = {
+    verified: 'verified', fixture: 'fixture-verified',
+    'untestable-locally': 'best-effort (hardware)', bug: 'fixed this release',
+  };
+  const out = ['<table class="platform"><thead><tr><th>Where</th><th>Windows</th><th>macOS / Linux</th><th>How tested</th><th>Verdict</th><th>Gap</th></tr></thead><tbody>'];
+  for (const b of PLATFORM_BRANCHES) {
+    out.push('<tr>' +
+      `<td><code>${esc(b.file.replace(/^src\//, ''))}</code><br><span class="pf-sym">${esc(b.symbol)}</span><br><span class="pf-con">${esc(b.concern)}</span></td>` +
+      `<td>${esc(b.windows)}</td>` +
+      `<td>${esc(b.posix)}</td>` +
+      `<td>${esc(b.tested)}</td>` +
+      `<td><span class="pf pf-${esc(b.verdict)}">${esc(verdictLabel[b.verdict] || b.verdict)}</span></td>` +
+      `<td>${esc(b.gap)}</td></tr>`);
+  }
+  out.push('</tbody></table>');
+  return out.join('\n');
+}
+
 const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -228,6 +250,17 @@ const html = `<!doctype html>
   .cov-rule, .cov-auto-fix { color: var(--tier-stable-fg); }
   .cov-built-in { color: var(--tier-frozen-fg); }
   .cov-gap { color: var(--tier-exp-fg); }
+  .table-scroll { overflow-x: auto; }
+  table.platform { border-collapse: collapse; width: 100%; font-size: 0.86em; }
+  table.platform th, table.platform td { text-align: left; padding: 6px 9px; border-bottom: 1px solid var(--hr); vertical-align: top; }
+  table.platform th { white-space: nowrap; }
+  .pf-sym { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: var(--accent); }
+  .pf-con { color: var(--muted); }
+  .pf { white-space: nowrap; font-size: 0.85em; font-weight: 600; }
+  .pf-verified { color: var(--tier-stable-fg); }
+  .pf-fixture { color: var(--tier-frozen-fg); }
+  .pf-untestable-locally { color: var(--tier-exp-fg); }
+  .pf-bug { color: var(--tier-stable-fg); }
 </style>
 </head>
 <body>
@@ -247,6 +280,7 @@ const html = `<!doctype html>
     <li><a href="#config">Config reference</a></li>
     <li><a href="#events">Event kinds</a></li>
     <li><a href="#doctor">Doctor coverage</a></li>
+    <li><a href="#platforms">Platform support</a></li>
     <li><a href="#faq">FAQ</a></li>
   </ul>
 </nav>
@@ -312,6 +346,12 @@ ${renderEventKinds()}
 <h2 id="doctor">Doctor coverage</h2>
 <p>When something breaks, <code>daimon doctor</code> is the first stop (<code>--auto-fix</code> applies the permitted repairs). Every recurring failure class and what covers it:</p>
 ${renderDoctorCoverage()}
+
+<h2 id="platforms">Platform support</h2>
+<p>daimon runs on Windows, macOS, and Linux. It was built on Windows, so v1.9 "Everywhere" audited every place its behavior forks by OS. Statuses are earned: <strong>verified</strong> = a real test on that platform's own side; <strong>fixture-verified</strong> = a recorded-output test; <strong>best-effort</strong> = confirmed only on real hardware via <code>scripts/platform-smoke.sh</code>. BSD and anything else Node 20 supports incidentally are best-effort — no OS-specific code paths are added for them.</p>
+<div class="table-scroll">
+${renderPlatformTable()}
+</div>
 
 <h2 id="faq">FAQ</h2>
 <dl>

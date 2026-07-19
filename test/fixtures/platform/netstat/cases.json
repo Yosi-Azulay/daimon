@@ -1,0 +1,13 @@
+{
+  "tool": "netstat",
+  "platform": "win32",
+  "provenance": "Representative `netstat -ano -p TCP` output (Windows). Parsed by parseNetstatListen; only LISTENING rows count (the trailing ESTABLISHED row on 4999 must be ignored). This is the platform the dev box actually runs, so the same parser is also exercised live in ports.test.mjs.",
+  "cases": [
+    {
+      "name": "standard LISTENING rows (IPv4 + IPv6), ESTABLISHED ignored",
+      "file": "win-standard.txt",
+      "want": [4999, 5432, 445],
+      "expect": { "4999": 48211, "5432": 1440, "445": 4 }
+    }
+  ]
+}

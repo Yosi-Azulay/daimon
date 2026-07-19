@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.8.0 — docs</title>
+<title>daimon v1.9.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -43,11 +43,22 @@
   .cov-rule, .cov-auto-fix { color: var(--tier-stable-fg); }
   .cov-built-in { color: var(--tier-frozen-fg); }
   .cov-gap { color: var(--tier-exp-fg); }
+  .table-scroll { overflow-x: auto; }
+  table.platform { border-collapse: collapse; width: 100%; font-size: 0.86em; }
+  table.platform th, table.platform td { text-align: left; padding: 6px 9px; border-bottom: 1px solid var(--hr); vertical-align: top; }
+  table.platform th { white-space: nowrap; }
+  .pf-sym { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: var(--accent); }
+  .pf-con { color: var(--muted); }
+  .pf { white-space: nowrap; font-size: 0.85em; font-weight: 600; }
+  .pf-verified { color: var(--tier-stable-fg); }
+  .pf-fixture { color: var(--tier-frozen-fg); }
+  .pf-untestable-locally { color: var(--tier-exp-fg); }
+  .pf-bug { color: var(--tier-stable-fg); }
 </style>
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.8.0</span></h1>
+<h1>daimon <span class="badge">v1.9.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -62,6 +73,7 @@
     <li><a href="#config">Config reference</a></li>
     <li><a href="#events">Event kinds</a></li>
     <li><a href="#doctor">Doctor coverage</a></li>
+    <li><a href="#platforms">Platform support</a></li>
     <li><a href="#faq">FAQ</a></li>
   </ul>
 </nav>
@@ -565,6 +577,31 @@ npx daimon init --auto</code></pre>
 <tr><td>CLI and daemon running different versions</td><td><span class="cov cov-built-in">built-in</span></td><td>Every CLI call compares versions via the x-daimon-version header and warns on stderr with the remedy (<code>daimon daemon restart</code>) — never a hard fail (M88).</td></tr>
 <tr><td>Plugin failed to load, or was disabled after a hook threw</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>plugin-load-error: &lt;file&gt;</code> (M118, v1.5) — advise-only: names the captured error and the remedy (fix or remove the file, then <code>daimon daemon restart</code>). Doctor never deletes or edits plugin files; a hook throw disables the plugin for the session with one <code>plugin-error</code> self-event (M117 crash isolation), never a daemon-down. <code>daimon plugins</code> is the detail view.</td></tr>
 </tbody></table>
+
+<h2 id="platforms">Platform support</h2>
+<p>daimon runs on Windows, macOS, and Linux. It was built on Windows, so v1.9 "Everywhere" audited every place its behavior forks by OS. Statuses are earned: <strong>verified</strong> = a real test on that platform's own side; <strong>fixture-verified</strong> = a recorded-output test; <strong>best-effort</strong> = confirmed only on real hardware via <code>scripts/platform-smoke.sh</code>. BSD and anything else Node 20 supports incidentally are best-effort — no OS-specific code paths are added for them.</p>
+<div class="table-scroll">
+<table class="platform"><thead><tr><th>Where</th><th>Windows</th><th>macOS / Linux</th><th>How tested</th><th>Verdict</th><th>Gap</th></tr></thead><tbody>
+<tr><td><code>portDiag.ts</code><br><span class="pf-sym">findPortHolder</span><br><span class="pf-con">Identify the process holding one TCP port (EADDRINUSE forensics).</span></td><td>PowerShell Get-NetTCPConnection + Win32_Process → pid, name, cmd, start time.</td><td>lsof -nP -iTCP:&lt;port&gt; -sTCP:LISTEN → pid + command; ps -o lstart= for start time.</td><td>win32: live-listener test (ports.test.mjs). posix: recorded lsof/ps fixtures through the parser (port-forensics.test.mjs).</td><td><span class="pf pf-fixture">fixture-verified</span></td><td>Real lsof/ps availability + column layout confirmed only on hardware via scripts/platform-smoke.sh.</td></tr>
+<tr><td><code>portDiag.ts</code><br><span class="pf-sym">scanListeningPorts</span><br><span class="pf-con">One-shot scan of a whole port pool → which ports listen, by which pid.</span></td><td>netstat -ano -p TCP, parsed by column (parseNetstatListen).</td><td>ss -ltnp (parseSsListen, column-addressed) with an lsof fallback for macOS (parseLsofListen).</td><td>win32: live-listener test. posix: recorded ss + lsof fixtures (incl. no-permission / IPv6 / container variants) through the real parsers.</td><td><span class="pf pf-bug">fixed this release</span></td><td>FIXED this release: the ss parser matched the Recv-Q column and returned nothing on Linux; now field-indexed + fixture-gated. Remaining: real ss/lsof output confirmed on hardware via the smoke script.</td></tr>
+<tr><td><code>portDiag.ts</code><br><span class="pf-sym">renderApiPortConflict</span><br><span class="pf-con">The EADDRINUSE remedy names the platform-correct kill / inspect command.</span></td><td>Suggests `taskkill /PID &lt;pid&gt; /F` and `netstat -ano | findstr :&lt;port&gt;`.</td><td>Suggests `kill &lt;pid&gt;` and `lsof -iTCP:&lt;port&gt; -sTCP:LISTEN`.</td><td>Both branches asserted in platform-remedies.test.mjs; the host branch also in ports.test.mjs.</td><td><span class="pf pf-verified">verified</span></td><td>none</td></tr>
+<tr><td><code>platformRemedy.ts</code><br><span class="pf-sym">killCmd / inspectPortCmd / killHint</span><br><span class="pf-con">Central platform-aware phrasing for kill and port-inspect commands.</span></td><td>taskkill /PID … /F, netstat -ano | findstr.</td><td>kill …, lsof -iTCP -sTCP:LISTEN.</td><td>Every function asserted on both branches in platform-remedies.test.mjs.</td><td><span class="pf pf-verified">verified</span></td><td>none</td></tr>
+<tr><td><code>notifier.ts</code><br><span class="pf-sym">Notifier (constructor)</span><br><span class="pf-con">Choose the OS notification backend.</span></td><td>node-notifier + a WindowsToaster fallback (withFallback: true).</td><td>node-notifier default (notify-send on Linux, terminal-notifier/osascript on macOS).</td><td>Routing, batching, quiet-hours, and fail-soft are unit-tested via an injectable sink on both sides; real toast delivery is not simulated.</td><td><span class="pf pf-untestable-locally">best-effort (hardware)</span></td><td>Actual notification delivery on a desktop session is smoke-script / manual only — never silent (warnOnce on failure).</td></tr>
+<tr><td><code>doctor.ts</code><br><span class="pf-sym">isSystemDir / suspiciousRootReason</span><br><span class="pf-con">Flag a searchRoot pointed at a system directory.</span></td><td>C:\Windows, C:\Program Files, C:\Program Files (x86), C:\ProgramData.</td><td>/usr, /etc, /bin, /sbin, /var, /system, /library, /opt/homebrew.</td><td>Both lists are unit-tested via the injectable platform parameter (doctor.test.mjs).</td><td><span class="pf pf-verified">verified</span></td><td>none</td></tr>
+<tr><td><code>pathScope.ts</code><br><span class="pf-sym">normalizeForCompare / isPathUnder</span><br><span class="pf-con">Case-fold decision for "is path X under Y" comparisons.</span></td><td>Lowercases (NTFS is case-insensitive by default).</td><td>Preserves case (paths are case-sensitive).</td><td>The case-fold branch is unit-tested via the injectable platform parameter, both in normalizeForCompare and isPathUnder (pathscope.test.mjs).</td><td><span class="pf pf-verified">verified</span></td><td>node's path.resolve semantics (drive letters, symlinks) are host-bound; the fold decision is proven, real POSIX resolution is exercised on hardware.</td></tr>
+<tr><td><code>frameworks.ts</code><br><span class="pf-sym">resolveCommand</span><br><span class="pf-con">Pick the OS-specific launch command for a framework.</span></td><td>commandCandidates[].win32 (mvnw.cmd, gradlew.cmd) and win32Command (ruby bin/rails).</td><td>The base command (./mvnw, ./gradlew, bin/rails).</td><td>Both platforms run through the parameterized frameworks suite via the injectable platform argument (frameworks.test.mjs).</td><td><span class="pf pf-verified">verified</span></td><td>none</td></tr>
+<tr><td><code>testRunners.ts</code><br><span class="pf-sym">resolveTestCommand</span><br><span class="pf-con">Resolve the test command for an app.</span></td><td>Same command as POSIX (python -m pytest, go test ./..., npx …).</td><td>Same command as Windows.</td><td>Parameterized by the injectable platform argument; commands are platform-identical so both branches assert equality (testrunners.test.mjs).</td><td><span class="pf pf-verified">verified</span></td><td>none — the platform parameter is reserved; test invocation is OS-identical (the shell handles .cmd resolution).</td></tr>
+<tr><td><code>serviceInstaller.ts</code><br><span class="pf-sym">buildServiceArtifact</span><br><span class="pf-con">Generate the OS service manifest + install command.</span></td><td>WinSW-style XML + nssm install command.</td><td>launchd plist (macOS) or systemd --user unit (Linux), with the matching launchctl/systemctl command.</td><td>All three manifest bodies + paths are generated and asserted via the injectable platform parameter (service-installer.test.mjs).</td><td><span class="pf pf-fixture">fixture-verified</span></td><td>Manifest CONTENT is verified for all three; actually loading it (launchctl/systemctl/nssm) is smoke-script / manual on hardware.</td></tr>
+<tr><td><code>crashDump.ts</code><br><span class="pf-sym">writeCrashDump</span><br><span class="pf-con">Record the host platform in a crash dump (no branch — a recorded field).</span></td><td>Writes "platform: win32 &lt;release&gt;".</td><td>Writes "platform: linux|darwin &lt;release&gt;".</td><td>The dump shape (including the platform line) is asserted in crash-forensics.test.mjs on the host platform.</td><td><span class="pf pf-verified">verified</span></td><td>none</td></tr>
+<tr><td><code>cli.ts</code><br><span class="pf-sym">run (dashboard verb)</span><br><span class="pf-con">Open the dashboard URL in the default browser.</span></td><td>spawn("cmd", ["/c", "start", "", url]).</td><td>spawn("open", …) on macOS, spawn("xdg-open", …) on Linux.</td><td>Fire-and-forget, best-effort (always prints the URL as fallback); the spawn itself is not asserted.</td><td><span class="pf pf-untestable-locally">best-effort (hardware)</span></td><td>Browser launch is smoke-script / manual; failure is non-fatal by design (the URL is always printed).</td></tr>
+<tr><td><code>cli.ts</code><br><span class="pf-sym">run (version/info)</span><br><span class="pf-con">Report the host platform in `daimon --version` info (no branch).</span></td><td>Emits "platform": "win32".</td><td>Emits "platform": "linux" | "darwin".</td><td>Info payload shape is covered by the CLI surface tests on the host platform.</td><td><span class="pf pf-verified">verified</span></td><td>none</td></tr>
+<tr><td><code>tui/App.tsx</code><br><span class="pf-sym">openUrl</span><br><span class="pf-con">Open a URL from the TUI (o chord).</span></td><td>cmd /c start.</td><td>open (macOS) / xdg-open (Linux).</td><td>Fire-and-forget, best-effort; not asserted (the TUI is Ink and not unit-mounted for spawns).</td><td><span class="pf pf-untestable-locally">best-effort (hardware)</span></td><td>Browser launch is smoke-script / manual; failure is swallowed by design.</td></tr>
+<tr><td><code>tui/App.tsx</code><br><span class="pf-sym">input handler (V chord)</span><br><span class="pf-con">Default $EDITOR for the inline config editor.</span></td><td>notepad.</td><td>vi.</td><td>The default choice is trivial; the editor spawn (spawnSync, shell: true) is interactive and not unit-tested.</td><td><span class="pf pf-untestable-locally">best-effort (hardware)</span></td><td>Editor launch is manual; $EDITOR override is honored first on every platform.</td></tr>
+<tr><td><code>appProcess.ts</code><br><span class="pf-sym">stop / killHolder / taskRunner / testRunners / registry</span><br><span class="pf-con">Terminate a process tree (SIGTERM then SIGKILL escalation).</span></td><td>tree-kill shells out to taskkill /pid &lt;pid&gt; /T /F.</td><td>tree-kill walks the ps tree and sends kill(2) to each pid.</td><td>win32: real process-group kills in the lifecycle + task tests. posix: tree-kill's own behavior + the smoke script (no orphans left).</td><td><span class="pf pf-untestable-locally">best-effort (hardware)</span></td><td>POSIX process-group teardown (no orphaned children) is confirmed on hardware via the smoke script.</td></tr>
+<tr><td><code>appProcess.ts</code><br><span class="pf-sym">start / taskRunner / testRunners (shell: true)</span><br><span class="pf-con">Run dev-server / task / test commands through a shell.</span></td><td>shell: true ⇒ cmd.exe (%VAR%, different quoting, .cmd resolution).</td><td>shell: true ⇒ /bin/sh (POSIX quoting).</td><td>shellSafe.ts allow-lists (not escaping) reject shell metacharacters on both shells; unit-tested in shell-safe.test.mjs.</td><td><span class="pf pf-verified">verified</span></td><td>none — the allow-list is intentionally platform-agnostic; unsafe tokens are refused, never quoted, so cmd.exe vs /bin/sh differences cannot be exploited.</td></tr>
+<tr><td><code>main.ts</code><br><span class="pf-sym">process.on(SIGINT|SIGTERM)</span><br><span class="pf-con">Graceful daemon shutdown on interrupt/terminate.</span></td><td>Node maps Ctrl-C to SIGINT; SIGTERM is synthesized on console-close — shutdown() flushes history + writes state.</td><td>Real SIGINT/SIGTERM delivery triggers the same shutdown() path.</td><td>win32: lifecycle-torture spawns a real daemon and stops it. posix: the same path plus the smoke script.</td><td><span class="pf pf-untestable-locally">best-effort (hardware)</span></td><td>POSIX signal delivery + clean flush confirmed on hardware via the smoke script.</td></tr>
+</tbody></table>
+</div>
 
 <h2 id="faq">FAQ</h2>
 <dl>

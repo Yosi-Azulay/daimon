@@ -2,3 +2,11 @@
 # scripts/build-completions.mjs regenerates (see test/completion.test.mjs's
 # drift test) — pin LF regardless of the checkout platform's core.autocrlf.
 completions/* text eol=lf
+
+# Shell scripts run on POSIX and MUST keep LF — a CRLF `#!/bin/sh\r` shebang
+# breaks on Linux/macOS. scripts/platform-smoke.sh (M143) is the one that ships.
+*.sh text eol=lf
+
+# Platform fixtures are recorded POSIX/Windows tool output — pin LF so the
+# checked-in bytes match what was captured, independent of core.autocrlf.
+test/fixtures/platform/** text eol=lf

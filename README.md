@@ -486,6 +486,65 @@ All v1.8 surfaces (`daimon sessions`, `GET /api/sessions*`, the timeline routes,
 MCP `daimon_sessions`, the `daemon-start`/`daemon-stop` event kinds, and `why`'s
 `sessionContext`) ship `experimental`.
 
+## Everywhere (v1.9)
+
+daimon was built on Windows, and for a while it showed in the corners nobody
+audited — a port scanner that spoke `netstat` fluently but returned nothing on
+Linux, a remedy that told a Mac user to run `taskkill`. v1.9 is **certification**:
+every place daimon's behavior forks by OS was inventoried, the POSIX side was
+exercised against recorded real tool output, every off-platform test skip was
+made loud and counted, and the support below is stated honestly — verified,
+fixture-verified, or best-effort, earned rather than asserted.
+
+### Support matrix
+
+| Feature | Windows | macOS | Linux |
+|---|---|---|---|
+| Port forensics (holder + pool scan) | verified ¹ | fixture-verified ² | fixture-verified ² |
+| Process teardown (tree-kill, no orphans) | verified ¹ | best-effort ³ | best-effort ³ |
+| OS notifications | best-effort ⁴ | best-effort ⁴ | best-effort ⁴ |
+| TUI | verified ¹ | best-effort ³ | best-effort ³ |
+| Service install manifest | fixture-verified ² | fixture-verified ² | fixture-verified ² |
+| Env snapshots + redaction | verified ¹ | verified ⁵ | verified ⁵ |
+| Dashboard + HTTP API (loopback) | verified ¹ | verified ⁵ | verified ⁵ |
+
+1. **verified** — a real test runs on the Windows dev box (the suite runs here).
+2. **fixture-verified** — parsers / generated manifests are tested against
+   recorded-format fixtures (`test/fixtures/platform/`); confirm on real hardware
+   with the smoke script below.
+3. **best-effort** — leans on OS behavior (tree-kill's `ps`/`kill`, `open` /
+   `xdg-open`); the smoke script exercises it on a live box. Failure is
+   non-fatal by design.
+4. **best-effort** — routing, batching, quiet-hours and fail-soft are unit-tested
+   on every OS; actual desktop toast delivery is smoke-script / manual and never
+   crashes the daemon.
+5. **verified (OS-agnostic path)** — the code carries no platform branch (SQLite,
+   loopback HTTP, HMAC redaction), so the single code path the suite proves is
+   the same one that runs on macOS/Linux.
+
+**BSD and anything else Node 20 supports incidentally: best-effort.** daimon runs,
+but has no OS-specific code for those platforms — port forensics falls back to
+`lsof`, and nothing is hardware-tested. Unsupported, community-territory.
+
+The full branch-by-branch audit (every `process.platform` fork, its Windows and
+POSIX behavior, how each side is tested, and the remaining gap) renders in the
+[docs "Platform support" table](docs/index.html) straight from the data in
+`src/platformInventory.ts` — a grep-driven test fails if any branch escapes it.
+
+### Certify your box before you rely on it
+
+```sh
+sh scripts/platform-smoke.sh          # ~2 min: daemon boot, real ss/lsof port
+                                      # scan, spawn + tree-kill (no orphans),
+                                      # notifier, env redaction, doctor, TUI
+sh scripts/platform-smoke.sh --dry-run  # plumbing only (safe on any host)
+```
+
+It uses a throwaway `DAIMON_HOME` and workspace and never touches your real
+`~/.daimon`. Run it on macOS **and** Linux and paste the summary block into your
+notes — that is what upgrades a *fixture-verified* cell to *verified* for your
+platform.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:

@@ -455,6 +455,23 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
   return { ok, checks };
 }
 
+// Pure system-directory membership check (M140): takes an already-normalized,
+// lowercased, trailing-separator-stripped path so it is testable for BOTH the
+// Windows and POSIX lists on either host — path.resolve is host-bound and can't
+// represent a POSIX absolute path on Windows, so the resolve step stays in the
+// caller and the platform-specific list logic lives here.
+export function isSystemDir(normLower: string, platform: NodeJS.Platform = process.platform): boolean {
+  const win = platform === 'win32';
+  const sep = win ? '\\' : '/';
+  const systemDirs = win
+    ? ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)', 'c:\\programdata']
+    : ['/usr', '/etc', '/bin', '/sbin', '/var', '/system', '/library', '/opt/homebrew'];
+  for (const sys of systemDirs) {
+    if (normLower === sys || normLower.startsWith(sys + sep)) return true;
+  }
+  return false;
+}
+
 // Exported for `daimon why` (server-side) and tests.
 export function suspiciousRootReason(root: string): string | null {
   const abs = path.resolve(root);
@@ -463,12 +480,7 @@ export function suspiciousRootReason(root: string): string | null {
   if (norm === parsedRoot) return 'drive/filesystem root';
   const home = os.homedir().replace(/[\\/]+$/, '').toLowerCase();
   if (norm === home) return 'home directory root';
-  const systemDirs = process.platform === 'win32'
-    ? ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)', 'c:\\programdata']
-    : ['/usr', '/etc', '/bin', '/sbin', '/var', '/system', '/library', '/opt/homebrew'];
-  for (const sys of systemDirs) {
-    if (norm === sys || norm.startsWith(sys + path.sep)) return 'system directory';
-  }
+  if (isSystemDir(norm)) return 'system directory';
   return null;
 }
 

@@ -1,0 +1,27 @@
+{
+  "tool": "lsof",
+  "platform": "darwin",
+  "provenance": "Representative `lsof -nP -iTCP -sTCP:LISTEN` output (macOS). COMMAND/PID columns and the trailing `ADDR:PORT (LISTEN)` NAME field validated against lsof(8) and public samples. NOT captured on the Windows dev box — confirm on hardware via scripts/platform-smoke.sh.",
+  "scan": [
+    {
+      "name": "standard macOS listeners (IPv4, IPv6, wildcard *:port)",
+      "file": "macos-standard.txt",
+      "want": [4999, 5000, 5432, 52432],
+      "expect": { "4999": 48211, "5000": 910, "5432": 1440, "52432": 655 }
+    },
+    {
+      "name": "same service on IPv4+IPv6 dedupes to one pid (first wins)",
+      "file": "macos-ipv4-ipv6-dup.txt",
+      "want": [4999],
+      "expect": { "4999": 48211 }
+    }
+  ],
+  "holder": [
+    {
+      "name": "single-port holder row → pid + name",
+      "file": "macos-holder-4999.txt",
+      "port": 4999,
+      "expect": { "pid": 48211, "name": "node" }
+    }
+  ]
+}
