@@ -36,10 +36,21 @@ export interface TestTotals {
   durationMs: number | null;
 }
 
+// Coverage summary (M128, v1.7). Summary numbers ONLY — no per-file storage.
+// A runner fills whichever percentage its documented output carries; the other
+// stays null. Parsed, never produced: daimon reads the coverage the run already
+// printed, never injects a coverage flag. Fail-soft: absent/unparseable/
+// out-of-range → null, always. Fabricated totals are never acceptable.
+export interface CoverageSummary {
+  linesPct: number | null;
+  statementsPct: number | null;
+}
+
 export interface ParsedTestRun {
   totals: TestTotals | null;
   failures: TestFailure[];
   runner: TestRunnerId | null;
+  coverage: CoverageSummary | null;
 }
 
 // Same shape as the error-fingerprint scheme (errorGroups.ts): source location
@@ -238,7 +249,7 @@ function parseVitestJest(lines: string[]): ParsedTestRun {
       if (totals) totals.durationMs = durationMs;
     }
   }
-  return { totals, failures, runner: 'vitest-jest' };
+  return { totals, failures, runner: 'vitest-jest', coverage: null };
 }
 
 function parsePytest(lines: string[]): ParsedTestRun {
@@ -287,7 +298,7 @@ function parsePytest(lines: string[]): ParsedTestRun {
     if (failed + passed + skipped === 0) continue;
     totals = { total: failed + passed + skipped, passed, failed, skipped, durationMs: Math.round(Number(s[2]) * 1000) };
   }
-  return { totals, failures, runner: 'pytest' };
+  return { totals, failures, runner: 'pytest', coverage: null };
 }
 
 function parseGoTest(lines: string[]): ParsedTestRun {
@@ -345,7 +356,7 @@ function parseGoTest(lines: string[]): ParsedTestRun {
   const totals: TestTotals | null = sawAny
     ? { total: passed + failed + skipped, passed, failed, skipped, durationMs: sawPkgLine ? durationMs : null }
     : null;
-  return { totals, failures, runner: 'go-test' };
+  return { totals, failures, runner: 'go-test', coverage: null };
 }
 
 function parseCargoTest(lines: string[]): ParsedTestRun {
@@ -410,7 +421,7 @@ function parseCargoTest(lines: string[]): ParsedTestRun {
       }
     }
   }
-  return { totals, failures, runner: 'cargo-test' };
+  return { totals, failures, runner: 'cargo-test', coverage: null };
 }
 
 function parseDotnetTest(lines: string[]): ParsedTestRun {
@@ -467,7 +478,7 @@ function parseDotnetTest(lines: string[]): ParsedTestRun {
       }
     }
   }
-  return { totals, failures, runner: 'dotnet-test' };
+  return { totals, failures, runner: 'dotnet-test', coverage: null };
 }
 
 const PARSERS: Record<TestRunnerId, (lines: string[]) => ParsedTestRun> = {
@@ -478,21 +489,178 @@ const PARSERS: Record<TestRunnerId, (lines: string[]) => ParsedTestRun> = {
   'dotnet-test': parseDotnetTest,
 };
 
+// ---------------------------------------------------------------------------
+// Coverage parsers (M128, v1.7). Opportunistic over output the runner ALREADY
+// produced — daimon never injects a coverage flag or edits a test config.
+// Each is fail-soft: absent/unparseable/out-of-range → null. Fixture-gated via
+// TEST_RUNNER_META.supportsCoverage (test/testrunners.test.mjs).
+// ---------------------------------------------------------------------------
+
+// A percentage is only valid in [0,100]; anything else (NaN, negative, >100) is
+// treated as unparseable and yields null — a fabricated number is never shipped.
+function clampPct(n: number): number | null {
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  return Math.round(n * 100) / 100;
+}
+
+// vitest/jest run with `--coverage` print istanbul's summary. Two documented
+// reporter shapes: the `text-summary` block ("Statements : 85.71% ( 12/14 )",
+// "Lines : …") and the `text` table whose "All files" row carries "% Stmts"
+// and "% Lines" columns. Parse either; the header maps table columns so a
+// reordering never mislabels a number.
+function parseVitestJestCoverage(lines: string[]): CoverageSummary | null {
+  let linesPct: number | null = null;
+  let statementsPct: number | null = null;
+  for (const line of lines) {
+    const s = line.match(/^\s*Statements\s*:\s*([\d.]+)%/);
+    if (s) statementsPct = clampPct(Number(s[1]));
+    const l = line.match(/^\s*Lines\s*:\s*([\d.]+)%/);
+    if (l) linesPct = clampPct(Number(l[1]));
+  }
+  if (linesPct != null || statementsPct != null) return { linesPct, statementsPct };
+
+  let stmtIdx = -1;
+  let linesIdx = -1;
+  for (const line of lines) {
+    if (line.includes('% Stmts') && line.includes('% Lines')) {
+      const cells = line.split('|').map(c => c.trim());
+      stmtIdx = cells.indexOf('% Stmts');
+      linesIdx = cells.indexOf('% Lines');
+      break;
+    }
+  }
+  if (stmtIdx < 0 && linesIdx < 0) return null;
+  for (const line of lines) {
+    if (!/\|/.test(line)) continue;
+    const cells = line.split('|').map(c => c.trim());
+    if (cells[0] !== 'All files') continue;
+    const sp = stmtIdx >= 0 ? clampPct(Number(cells[stmtIdx])) : null;
+    const lp = linesIdx >= 0 ? clampPct(Number(cells[linesIdx])) : null;
+    if (lp != null || sp != null) return { linesPct: lp, statementsPct: sp };
+  }
+  return null;
+}
+
+// pytest-cov appends a coverage table ending in a TOTAL line:
+//   "TOTAL      123     45    63%"  (Name  Stmts  Miss  Cover)
+// coverage.py's "Cover" is line coverage; statement % stays null.
+function parsePytestCoverage(lines: string[]): CoverageSummary | null {
+  for (const line of lines) {
+    const m = line.match(/^TOTAL\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%\s*$/);
+    if (m) {
+      const p = clampPct(Number(m[1]));
+      return p == null ? null : { linesPct: p, statementsPct: null };
+    }
+  }
+  return null;
+}
+
+// `go test -cover` prints "coverage: 85.7% of statements" per package (also on
+// the trailing "ok  pkg  0.01s  coverage: …" line). Statement coverage; line %
+// stays null. Last value wins (a single `./...` summary line in practice).
+function parseGoCoverage(lines: string[]): CoverageSummary | null {
+  let statementsPct: number | null = null;
+  for (const line of lines) {
+    const m = line.match(/coverage:\s+([\d.]+)%\s+of\s+statements/);
+    if (m) { const p = clampPct(Number(m[1])); if (p != null) statementsPct = p; }
+  }
+  return statementsPct == null ? null : { linesPct: null, statementsPct };
+}
+
+// Failed-only rerun mechanism (M131, v1.7) — the portFlag discipline: declared
+// per runner ONLY where its documentation confirms the mechanism, never
+// guessed. Two shapes: `stateful` reuses the runner's own last-failed cache
+// (pytest `--lf`, no placeholder); `name-filter` substitutes a `{tests}`
+// selector built from the recorded failure names, escaped per the runner's
+// filter grammar (`go-regex` = anchored regex alternation for go `-run`;
+// `literal` = `|`-joined names for jest/vitest `-t` and dotnet `--filter`).
+export interface RerunFlag {
+  kind: 'stateful' | 'name-filter';
+  template: string;
+  escape?: 'literal' | 'go-regex';
+}
+
+function regexEscape(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function shellQuote(s: string): string {
+  return '"' + s.replace(/"/g, '\\"') + '"';
+}
+
+export type RerunComposition =
+  | { command: string }
+  | { error: 'no-rerun-flag' }
+  | { error: 'no-names' };
+
+// Compose a failed-only rerun command from a base command + the recorded
+// failure names. no-rerun-flag = the runner declares no mechanism (explicit
+// non-participation — caller errors naming the runner + registry gap);
+// no-names = a name-filter runner whose failures carry no usable names (caller
+// errors, never silently falls back to a full run). Names are deduped + sorted
+// so the composed command is deterministic.
+export function composeRerunCommand(
+  baseCommand: string,
+  runner: TestRunnerId | null,
+  failureNames: string[],
+): RerunComposition {
+  const flag = runner ? TEST_RUNNER_META[runner]?.rerunFlag : undefined;
+  if (!flag) return { error: 'no-rerun-flag' };
+  if (flag.kind === 'stateful') {
+    return { command: `${baseCommand} ${flag.template}`.trim() };
+  }
+  const names = [...new Set(failureNames.map(n => n.trim()).filter(Boolean))].sort();
+  if (!names.length) return { error: 'no-names' };
+  const tests = flag.escape === 'go-regex'
+    ? `^(${names.map(regexEscape).join('|')})$`
+    : names.join('|');
+  const injected = flag.template.replace('{tests}', shellQuote(tests));
+  return { command: `${baseCommand} ${injected}`.trim() };
+}
+
+// Per-runner metadata (M128/M131). supportsCoverage gates the coverage-fixture
+// requirement; parseCoverage reads the runner's documented summary; rerunFlag
+// (M131) declares the failed-only mechanism. cargo DELIBERATELY ships without
+// coverage AND without a rerun flag — no documented default machine-readable
+// summary was confirmed against real captured output, so it doesn't participate
+// (never guess a format).
+export interface TestRunnerMeta {
+  supportsCoverage: boolean;
+  parseCoverage?: (lines: string[]) => CoverageSummary | null;
+  rerunFlag?: RerunFlag;
+}
+
+export const TEST_RUNNER_META: Record<TestRunnerId, TestRunnerMeta> = {
+  'vitest-jest': { supportsCoverage: true, parseCoverage: parseVitestJestCoverage, rerunFlag: { kind: 'name-filter', template: '-t {tests}', escape: 'literal' } },
+  'pytest': { supportsCoverage: true, parseCoverage: parsePytestCoverage, rerunFlag: { kind: 'stateful', template: '--lf' } },
+  'go-test': { supportsCoverage: true, parseCoverage: parseGoCoverage, rerunFlag: { kind: 'name-filter', template: '-run {tests}', escape: 'go-regex' } },
+  'cargo-test': { supportsCoverage: false },
+  'dotnet-test': { supportsCoverage: false, rerunFlag: { kind: 'name-filter', template: '--filter {tests}', escape: 'literal' } },
+};
+
 // Parse runner output. Unknown runner (custom testCommand we couldn't guess)
 // tries every parser and keeps the first that produced totals — still
-// fail-soft when none does.
+// fail-soft when none does. Coverage is attached opportunistically via the
+// matched runner's parser; a coverage-parse throw degrades to null, never
+// blocks the run.
 export function parseTestOutput(runner: TestRunnerId | null, output: string): ParsedTestRun {
   const lines = stripAnsi(output).split(/\r?\n/);
+  const withCoverage = (r: ParsedTestRun): ParsedTestRun => {
+    const meta = r.runner ? TEST_RUNNER_META[r.runner] : undefined;
+    if (!meta?.supportsCoverage || !meta.parseCoverage) return r;
+    try { r.coverage = meta.parseCoverage(lines); } catch { r.coverage = null; }
+    return r;
+  };
   if (runner && PARSERS[runner]) {
-    try { return PARSERS[runner](lines); } catch { return { totals: null, failures: [], runner }; }
+    try { return withCoverage(PARSERS[runner](lines)); } catch { return { totals: null, failures: [], runner, coverage: null }; }
   }
   for (const id of KNOWN_TEST_RUNNER_IDS) {
     try {
       const r = PARSERS[id](lines);
-      if (r.totals) return r;
+      if (r.totals) return withCoverage(r);
     } catch {}
   }
-  return { totals: null, failures: [], runner: null };
+  return { totals: null, failures: [], runner: null, coverage: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +675,7 @@ export interface TestRunResult {
   durationMs: number;
   totals: TestTotals | null;
   failures: TestFailure[];
+  coverage: CoverageSummary | null;
   outputTail: string[];
 }
 
@@ -559,6 +728,7 @@ export function runTestCommand(
         durationMs: Date.now() - start,
         totals: parsed.totals,
         failures: parsed.failures,
+        coverage: parsed.coverage,
         outputTail: lines.slice(-50),
       });
     });
@@ -572,6 +742,7 @@ export function runTestCommand(
         durationMs: Date.now() - start,
         totals: null,
         failures: [],
+        coverage: null,
         outputTail: [...lines.slice(-49), '[daimon] test spawn error'],
       });
     });
@@ -594,7 +765,7 @@ export interface FlakyTest {
 
 export function findFlakyTests(
   runs: { id: number; ts: number; gitHead: string | null }[],
-  fetchFailures: (runIds: number[]) => { runId: number; fingerprint: string | null; test: string | null; suite: string | null }[],
+  fetchFailures: (runIds: number[]) => { runId: number; fingerprint: string | null; test: string | null; suite: string | null; quarantined?: number | null }[],
   gitHead: string,
   threshold = 3,
 ): FlakyTest[] {
@@ -604,7 +775,9 @@ export function findFlakyTests(
   const byRun = new Map<number, Set<string>>();
   const meta = new Map<string, { test: string; suite: string }>();
   for (const f of failures) {
-    if (!f.fingerprint) continue;
+    // Quarantined failures (M130) are excluded from flaky detection — parking a
+    // test silences its flaky churn without hiding that it still runs.
+    if (!f.fingerprint || f.quarantined) continue;
     let set = byRun.get(f.runId);
     if (!set) { set = new Set(); byRun.set(f.runId, set); }
     set.add(f.fingerprint);

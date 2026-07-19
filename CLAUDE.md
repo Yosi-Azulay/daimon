@@ -94,7 +94,13 @@ src/
                     # (vitest-jest/pytest/go-test/cargo-test/dotnet-test), runner
                     # resolution (overrides.<app>.testCommand > profile testRunner hint
                     # > package.json test script), execution with tree-kill timeout,
-                    # and query-derived flaky detection (M75).
+                    # and query-derived flaky detection (M75). v1.7 adds TEST_RUNNER_META
+                    # rows: supportsCoverage + parseCoverage (M128) and rerunFlag (M131,
+                    # composeRerunCommand) — declared per runner, documented formats only.
+  quarantine.ts     # Flaky quarantine (M130, v1.7): pure `*`-glob matcher over a
+                    # test's `suite > test` name + first-seen reconciliation. Quarantined
+                    # tests still run + record — annotated, excluded from flaky detection
+                    # + alert noise, dated so a parked test can't rot invisibly.
   audit.ts          # Tab-delimited audit log; 6 columns (5-col rows still parse).
                     # v1.6 widened WRITE coverage: lifecycle actions (start/stop/
                     # restart/steal/handoff/mute/unmute) leave a `verb:<app>` row in
@@ -124,7 +130,7 @@ dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
 completions/        # GENERATED shell completion (bash/zsh/powershell) — never hand-edit.
                     # Regen: npm run build:completions; drift-gated by test/completion.test.mjs.
 scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIMON_HOME only.
-test/               # node --test suite. 865 test cases (v1.6); files run in parallel child processes.
+test/               # node --test suite. 910 test cases (v1.7); files run in parallel child processes.
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
 
@@ -184,6 +190,10 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - **Orphan takeover is verify-then-kill (M81).** Doctor's `port-holder-no-lock` auto-fix kills the apiPort holder only when it answers on `GET /api/signature` AND no live lock exists, re-verified at fix time. Anything else: identify + advise.
 - **The digest is not a cron engine (M84).** One 1-minute interval in `DigestScheduler`; catch-up at most once; per-webhook last-sent persisted in state.json. Don't add more timers.
 - **New test runner = parser + fixture, same convention (M74).** Add the parser in `src/testRunners.ts`, its id to `KNOWN_TEST_RUNNER_IDS`, and a fixture in `test/fixtures/testrunners/<id>/` (marker files + `fixture.json` with pass/fail/mixed cases). `test/testrunners.test.mjs` fails on a runner without a fixture. Parsers are fail-soft: no totals is acceptable, fabricated totals are not.
+
+- **Coverage is parsed where documented, fixture-gated, null over fabricated — the same law as test totals (M128, v1.7).** daimon reads the coverage summary the run ALREADY printed (istanbul text table/summary, pytest-cov `TOTAL`, go `-cover`) — it never injects a coverage flag or edits a test config. A runner opts in via `TEST_RUNNER_META[id].supportsCoverage` + a `parseCoverage`; that gates a `coverage` block in its fixture (with-coverage → the documented %, without/malformed → null) enforced by `test/testrunners.test.mjs`. Fail-soft is absolute: absent/unparseable/out-of-range (`<0`/`>100`) → null, always; a fabricated percentage is the same violation as a fabricated pass count. cargo/dotnet ship WITHOUT coverage (no confirmed documented default) — explicit non-participation, never a guess. Storage is the additive nullable `covLinesPct`/`covStmtsPct` columns on `test_runs` (guarded ALTER); summary numbers only, no per-file storage ever.
+
+- **`--failed` rerun is registry-declared — the portFlag discipline (M131, v1.7).** `daimon test <app> --failed` reruns only the last recorded run's failures, and ONLY where the runner's `TEST_RUNNER_META` row declares a `rerunFlag` (pytest `--lf` stateful; go `-run {tests}` regex-escaped alternation; jest/vitest/dotnet name-filter). Templates come from the runner's docs, never guessed — no `rerunFlag` = explicit non-participation. It NEVER silently falls back to a full run: no prior run, undeclared runner, and unparseable names each return an error naming the gap + a remedy; an all-green prior run is an honest no-op. The run records with the additive `failedOnly` flag; totals reflect only what ran.
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
 - **History migrations are additive** — `CREATE TABLE IF NOT EXISTS`, plus (since v1.2) a guarded nullable `ALTER TABLE … ADD COLUMN` (check `PRAGMA table_info` first; column must be nullable; every INSERT names its columns so an older daimon keeps writing the same table). Never a rename, drop, retype, or NOT NULL addition — a v0.11 DB must open cleanly under v1.2 and vice versa.
 - **Every surface declares a stability tier (M87).** New CLI verbs, HTTP endpoints, MCP tools, config keys, and event kinds MUST carry `frozen`/`stable`/`experimental` at their source of truth (`cliSurface.ts` / `httpSurface.ts` / `mcp.ts` MCP_TOOL_STABILITY / `config.ts` CONFIG_KEY_STABILITY / `types.ts` EVENT_KIND_STABILITY). New work defaults to experimental. A `frozen` surface needs a golden-shape snapshot in `test/fixtures/contract/` — `test/contract.test.mjs` fails without one, and fails forever on a frozen-shape change (regenerate with `UPDATE_CONTRACT_SNAPSHOTS=1` only for reviewed ADDITIVE changes). See STABILITY.md.
@@ -296,6 +306,30 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   resources, and prompts declare tiers at their source of truth
   (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
   `MCP_PROMPT_STABILITY`).
+
+## v1.7 highlights (what landed this release)
+
+- **Test Sense 2 (M128–M133)**: `daimon test` learns coverage, quarantine, and
+  failed-only reruns — deepening the wrap around the project's own runner, never
+  replacing it. **Coverage capture (M128)**: per-runner parsers over
+  already-emitted output (vitest/jest istanbul, pytest-cov `TOTAL`, go `-cover`;
+  cargo/dotnet explicitly out), additive nullable `covLinesPct`/`covStmtsPct` on
+  `test_runs`, `coverage: { linesPct, statementsPct } | null` on `daimon test` /
+  `GET /api/tests`, `supportsCoverage` fixture gate incl. malformed→null.
+  **Coverage trends (M129)**: dashboard Trends coverage line beside pass-rate +
+  flaky, nulls render as gaps (`alignSeriesNullable`), no new CLI verb. **Flaky
+  quarantine (M130)**: optional `tests.quarantine: string[]` glob patterns —
+  matched tests still run + record, gain the additive `quarantined` column,
+  excluded from flaky detection + notification noise; per-pattern first-seen in
+  state.json ("oldest since"), overview badge. **`daimon test --failed` (M131)**:
+  registry-declared `rerunFlag` per runner, reruns only the last run's failures,
+  additive `failedOnly` column, never a silent full-run fallback. **Report + why
+  deepening (M132)**: tests section gains coverage delta + quarantine count/age;
+  `why` gains a quarantine line; digest inherits. All new surfaces
+  `experimental`; no frozen shape moved; no config or history migration beyond
+  additive columns + an optional config sub-key. Tests: `test/coverage-capture.test.mjs`,
+  `test/quarantine.test.mjs`, `test/failed-rerun.test.mjs`, plus coverage/rerun
+  cases in `test/testrunners.test.mjs` and coverage+quarantine in `test/report.test.mjs`.
 
 ## v1.6 highlights (what landed this release)
 

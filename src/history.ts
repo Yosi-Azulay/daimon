@@ -50,6 +50,12 @@ export interface TestRunRow {
   skipped: number | null;
   exitCode: number | null;
   gitHead: string | null;
+  // Coverage summary (M128, v1.7) — additive nullable; old rows read null.
+  covLinesPct: number | null;
+  covStmtsPct: number | null;
+  // Failed-only rerun marker (M131, v1.7) — 1 when this run reran only prior
+  // failures; totals reflect only what ran. Additive nullable; old rows null.
+  failedOnly: number | null;
 }
 
 export interface TestFailureRow {
@@ -60,6 +66,8 @@ export interface TestFailureRow {
   line: number | null;
   message: string | null;
   fingerprint: string | null;
+  // Quarantine annotation (M130, v1.7) — additive nullable; old rows read null.
+  quarantined: number | null;
 }
 
 export interface TaskRunRow {
@@ -347,6 +355,20 @@ export class History {
       }
     } catch (err: any) {
       this.warnOnce(`log_lines level migration failed (levels degrade to null): ${err?.message || err}`);
+    }
+    // Additive v1.7 migration (M128/M130): nullable coverage columns on
+    // test_runs and a quarantine flag on test_failures. Same guarded-ALTER
+    // discipline — a v1.6 DB opens clean here, and a v1.7 DB opens clean under
+    // v1.6 (its INSERTs name their columns). Old rows read the new columns null.
+    try {
+      const tr = this.db.prepare(`PRAGMA table_info(test_runs)`).all() as { name: string }[];
+      if (!tr.some(c => c.name === 'covLinesPct')) this.db.exec(`ALTER TABLE test_runs ADD COLUMN covLinesPct REAL`);
+      if (!tr.some(c => c.name === 'covStmtsPct')) this.db.exec(`ALTER TABLE test_runs ADD COLUMN covStmtsPct REAL`);
+      if (!tr.some(c => c.name === 'failedOnly')) this.db.exec(`ALTER TABLE test_runs ADD COLUMN failedOnly INTEGER`);
+      const tf = this.db.prepare(`PRAGMA table_info(test_failures)`).all() as { name: string }[];
+      if (!tf.some(c => c.name === 'quarantined')) this.db.exec(`ALTER TABLE test_failures ADD COLUMN quarantined INTEGER`);
+    } catch (err: any) {
+      this.warnOnce(`test coverage/quarantine migration failed (fields degrade to null): ${err?.message || err}`);
     }
   }
 
@@ -959,18 +981,18 @@ export class History {
   // caller needs the rowid to attach failures — one transaction per suite run,
   // far off the log-line hot path.
   recordTestRun(
-    run: { app: string; ts?: number; runner: string | null; durationMs: number | null; total: number | null; passed: number | null; failed: number | null; skipped: number | null; exitCode: number | null; gitHead: string | null },
-    failures: { suite: string; test: string; file?: string; line?: number; message: string; fingerprint: string }[],
+    run: { app: string; ts?: number; runner: string | null; durationMs: number | null; total: number | null; passed: number | null; failed: number | null; skipped: number | null; exitCode: number | null; gitHead: string | null; covLinesPct?: number | null; covStmtsPct?: number | null; failedOnly?: boolean },
+    failures: { suite: string; test: string; file?: string; line?: number; message: string; fingerprint: string; quarantined?: boolean }[],
   ): number | null {
     if (!this.db) return null;
     try {
-      const insRun = this.prepared('INSERT INTO test_runs (ts,app,runner,durationMs,total,passed,failed,skipped,exitCode,gitHead) VALUES (?,?,?,?,?,?,?,?,?,?)');
-      const insFail = this.prepared('INSERT INTO test_failures (runId,suite,test,file,line,message,fingerprint) VALUES (?,?,?,?,?,?,?)');
+      const insRun = this.prepared('INSERT INTO test_runs (ts,app,runner,durationMs,total,passed,failed,skipped,exitCode,gitHead,covLinesPct,covStmtsPct,failedOnly) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+      const insFail = this.prepared('INSERT INTO test_failures (runId,suite,test,file,line,message,fingerprint,quarantined) VALUES (?,?,?,?,?,?,?,?)');
       const tx = this.db.transaction(() => {
-        const r = insRun.run(run.ts ?? Date.now(), run.app, run.runner, run.durationMs, run.total, run.passed, run.failed, run.skipped, run.exitCode, run.gitHead);
+        const r = insRun.run(run.ts ?? Date.now(), run.app, run.runner, run.durationMs, run.total, run.passed, run.failed, run.skipped, run.exitCode, run.gitHead, run.covLinesPct ?? null, run.covStmtsPct ?? null, run.failedOnly ? 1 : null);
         const runId = Number(r.lastInsertRowid);
         for (const f of failures) {
-          insFail.run(runId, f.suite, f.test, f.file ?? null, f.line ?? null, f.message, f.fingerprint);
+          insFail.run(runId, f.suite, f.test, f.file ?? null, f.line ?? null, f.message, f.fingerprint, f.quarantined ? 1 : null);
         }
         return runId;
       });

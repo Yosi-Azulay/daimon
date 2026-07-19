@@ -97,6 +97,11 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   // Notification mutes (M84) persist alongside port assignments.
   registry.restoreMutes(persisted.mutes);
   registry.onMutesChanged = snap => savePersistedState({ mutes: snap });
+  // Quarantine first-seen (M130) persists alongside mutes; reconcile against
+  // the loaded config so new patterns are dated and removed ones are dropped.
+  registry.restoreQuarantine(persisted.quarantineFirstSeen);
+  registry.onQuarantineChanged = snap => savePersistedState({ quarantineFirstSeen: snap });
+  registry.reconcileQuarantine();
   const history = new History(config.history);
   registry.setHistory(history);
   const archivedDb = history.archivedCorruptDbPath();

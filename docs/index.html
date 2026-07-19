@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.6.0 — docs</title>
+<title>daimon v1.7.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.6.0</span></h1>
+<h1>daimon <span class="badge">v1.7.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -97,8 +97,8 @@ npx daimon init --auto</code></pre>
 <dd>Stop an app. --steal overrides another agent's soft-lock. A name matching no app but a group stops the group (app-name precedence).</dd>
 <dt><code>daimon restart &lt;name&gt; [--steal]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Restart an app. --steal overrides another agent's soft-lock.</dd>
-<dt><code>daimon test &lt;name&gt; [--timeout &lt;dur&gt;] [--steal] [--json]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>Run the app's own test suite once: resolves the runner (vitest/jest/pytest/go/cargo/dotnet or overrides.&lt;app&gt;.testCommand), parses failures with file:line, records the run in history. Exit 0 all pass, 1 failures, 2 timeout.</dd>
+<dt><code>daimon test &lt;name&gt; [--failed] [--timeout &lt;dur&gt;] [--steal] [--json]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Run the app's own test suite once: resolves the runner (vitest/jest/pytest/go/cargo/dotnet or overrides.&lt;app&gt;.testCommand), parses failures with file:line + coverage, records the run in history. Exit 0 all pass, 1 failures, 2 timeout.</dd>
 <dt><code>daimon up [&lt;group&gt;|&lt;profile&gt;] [--until serving|healthy] [--timeout 300s] [--steal]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Start a group or profile (or autoStart). Groups resolve first: depends-aware topo order + a "3/4 healthy" readiness summary. Profiles behave as before.</dd>
 <dt><code>daimon down [&lt;group&gt;|&lt;profile&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>

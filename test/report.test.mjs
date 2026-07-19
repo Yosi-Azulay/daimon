@@ -115,6 +115,9 @@ test('seeded report: every section matches independently-queried values', () => 
   assert.equal(S.tests.runs, 2);
   assert.equal(S.tests.failedRuns, 1);
   assert.equal(S.tests.passRatePct, 90);
+  // No coverage seeded here → coverage null + a note (never an error).
+  assert.equal(S.tests.coverage, null);
+  assert.equal(S.tests.coverageNote, 'no coverage data in window');
 
   // compiles: [100..500] → p50 300, p95 400 (floor((n-1)*p) convention,
   // matching history.summary()), slowest 500 by alpha; 1 regression.
@@ -140,6 +143,37 @@ test('seeded report: every section matches independently-queried values', () => 
   assert.equal(S.env.changes[0].app, 'alpha');
   assert.deepEqual(S.env.changes[0].keysChanged, [{ file: '.env', key: 'TOKEN' }]);
 
+  h.close();
+});
+
+test('M132: tests section deepens with coverage delta + quarantine (and renders in --md)', () => {
+  const now = Date.now();
+  const dbPath = path.join(tmp, 'cov-quar.db');
+  const h = new History({ enabled: true, path: dbPath, retentionDays: 60 });
+  // Previous period (24–48h ago): coverage 80. Current window: coverage 85 + 87 → avg 86.
+  h.recordTestRun({ app: 'alpha', ts: now - 30 * HOUR, runner: 'vitest-jest', durationMs: 100, total: 10, passed: 10, failed: 0, skipped: 0, exitCode: 0, gitHead: 'h', covLinesPct: 80 }, []);
+  h.recordTestRun({ app: 'alpha', ts: now - 6 * HOUR, runner: 'vitest-jest', durationMs: 100, total: 10, passed: 9, failed: 1, skipped: 0, exitCode: 1, gitHead: 'h', covLinesPct: 85 },
+    [{ suite: 's', test: 'flappy', file: 'a.ts', line: 1, message: 'x', fingerprint: 'fp1', quarantined: true }]);
+  h.recordTestRun({ app: 'alpha', ts: now - 5 * HOUR, runner: 'vitest-jest', durationMs: 100, total: 10, passed: 10, failed: 0, skipped: 0, exitCode: 0, gitHead: 'h', covLinesPct: 87 }, []);
+  h._flushForTest?.();
+
+  const cfg = baseCfg({ history: { enabled: true, path: dbPath, retentionDays: 60 }, tests: { flakyThreshold: 3, quarantine: ['s > flappy'] } });
+  const reg = new Registry(cfg, [app('alpha')]);
+  reg.setHistory(h);
+  reg.reconcileQuarantine(now - 10 * HOUR); // stamp the pattern's first-seen
+
+  const r = buildReport({ registry: reg, history: h }, { since: now - 24 * HOUR, until: now });
+  const S = r.sections;
+  assert.ok(S.tests.coverage, 'coverage present');
+  assert.equal(S.tests.coverage.pct, 86, 'current-window average (85,87)');
+  assert.equal(S.tests.coverage.previousPct, 80);
+  assert.equal(S.tests.coverage.delta, 6, '86 - 80');
+  assert.equal(S.tests.quarantine.count, 1);
+  assert.equal(S.tests.quarantine.oldestSince, now - 10 * HOUR);
+
+  const md = renderReportMd(r);
+  assert.match(md, /coverage: 86% \(\+6% vs prev\)/);
+  assert.match(md, /quarantine: 1 pattern, oldest since/);
   h.close();
 });
 

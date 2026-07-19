@@ -525,7 +525,12 @@ export class DaimonApi {
       if (opts.since) qs.set('since', opts.since);
       const q = qs.toString();
       const r = await firstValueFrom(this.http.get<{ runs: TestRun[] }>('/api/tests' + (q ? '?' + q : '')));
-      return Array.isArray(r?.runs) ? r.runs : [];
+      const runs = Array.isArray(r?.runs) ? r.runs : [];
+      // Coverage (M128/M129, v1.7 — experimental): normalize a missing field
+      // to null so every consumer sees the same "no coverage" shape whether
+      // it came from an older daemon (field absent) or a run with no
+      // coverage (field explicitly null).
+      return runs.map(run => ({ ...run, coverage: run.coverage ?? null }));
     } catch { return []; }
   }
 

@@ -410,6 +410,20 @@ function validate(raw: unknown, source: string): AppmanConfig {
       } else if (t.flakyThreshold !== undefined) {
         warn(`"tests.flakyThreshold" must be a number >= 1 (${source})`);
       }
+      // Quarantine patterns (M130, v1.7): keep only non-empty strings; a bad
+      // entry warns and is skipped so the config stays loadable.
+      if (t.quarantine !== undefined) {
+        if (Array.isArray(t.quarantine)) {
+          const kept: string[] = [];
+          for (const q of t.quarantine) {
+            if (typeof q === 'string' && q.trim()) kept.push(q.trim());
+            else warn(`"tests.quarantine" entries must be non-empty strings — skipping ${JSON.stringify(q)} (${source})`);
+          }
+          cfg.tests = { ...cfg.tests!, quarantine: kept };
+        } else {
+          warn(`"tests.quarantine" must be an array of glob patterns (${source})`);
+        }
+      }
     } else {
       warn(`"tests" must be an object (${source})`);
     }

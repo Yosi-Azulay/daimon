@@ -37,3 +37,26 @@ export function alignSeries(points: SeriesPoint[], buckets: number[], key: 'v' |
     return typeof v === 'number' ? v : 0;
   });
 }
+
+// A point whose value may legitimately be absent — distinct from SeriesPoint
+// (whose v/v2 are always a real number) so callers can't accidentally feed a
+// "no data" 0 into it.
+export interface NullableSeriesPoint { t: number; v: number | null; v2?: number | null; }
+
+// Coverage over time (M129, v1.7 — experimental): unlike alignSeries (which
+// backfills every missing bucket with 0 — correct for counters like errors/
+// restarts, where "no event" really does mean zero), a coverage run with no
+// coverage data is NOT a 0% run. This aligner backfills missing buckets
+// (bucket absent from `points`, or present with a null value) with `null` so
+// Chart.js draws a GAP (`spanGaps: false` on the dataset) instead of a
+// fabricated dip to zero.
+export function alignSeriesNullable(points: NullableSeriesPoint[], buckets: number[], key: 'v' | 'v2' = 'v'): (number | null)[] {
+  const m = new Map<number, NullableSeriesPoint>();
+  for (const p of points) m.set(p.t, p);
+  return buckets.map(t => {
+    const p = m.get(t);
+    if (!p) return null;
+    const v = key === 'v' ? p.v : p.v2;
+    return typeof v === 'number' ? v : null;
+  });
+}

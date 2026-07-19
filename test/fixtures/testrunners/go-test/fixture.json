@@ -61,5 +61,37 @@
       "expectTotals": null,
       "expectFailures": []
     }
+  ],
+  "coverage": [
+    {
+      "name": "go-cover-ok-line",
+      "output": [
+        "=== RUN   TestAdd",
+        "--- PASS: TestAdd (0.00s)",
+        "PASS",
+        "coverage: 87.5% of statements",
+        "ok      example.com/mathx       0.012s  coverage: 87.5% of statements"
+      ],
+      "expectCoverage": { "linesPct": null, "statementsPct": 87.5 }
+    },
+    {
+      "name": "without-coverage",
+      "output": [
+        "=== RUN   TestAdd",
+        "--- PASS: TestAdd (0.00s)",
+        "PASS",
+        "ok      example.com/mathx       0.012s"
+      ],
+      "expectCoverage": null
+    },
+    {
+      "name": "malformed-out-of-range",
+      "output": [
+        "PASS",
+        "coverage: 250.0% of statements",
+        "ok      example.com/mathx       0.012s"
+      ],
+      "expectCoverage": null
+    }
   ]
 }

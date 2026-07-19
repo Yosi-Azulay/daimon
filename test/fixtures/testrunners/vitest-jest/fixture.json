@@ -105,5 +105,54 @@
       "expectTotals": null,
       "expectFailures": []
     }
+  ],
+  "coverage": [
+    {
+      "name": "istanbul-text-table",
+      "output": [
+        " Test Files  1 passed (1)",
+        "      Tests  3 passed (3)",
+        "   Duration  1.02s",
+        "----------|---------|----------|---------|---------|-------------------",
+        "File      | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s ",
+        "----------|---------|----------|---------|---------|-------------------",
+        "All files |   85.71 |    66.66 |     100 |   90.32 |                   ",
+        " src      |   85.71 |    66.66 |     100 |   90.32 |                   ",
+        "  math.ts |   85.71 |    66.66 |     100 |   90.32 | 12,15             ",
+        "----------|---------|----------|---------|---------|-------------------"
+      ],
+      "expectCoverage": { "linesPct": 90.32, "statementsPct": 85.71 }
+    },
+    {
+      "name": "istanbul-text-summary",
+      "output": [
+        "=============================== Coverage summary ===============================",
+        "Statements   : 78.5% ( 157/200 )",
+        "Branches     : 60% ( 6/10 )",
+        "Functions    : 88.88% ( 8/9 )",
+        "Lines        : 80.1% ( 100/125 )",
+        "================================================================================"
+      ],
+      "expectCoverage": { "linesPct": 80.1, "statementsPct": 78.5 }
+    },
+    {
+      "name": "without-coverage",
+      "output": [
+        " Test Files  1 passed (1)",
+        "      Tests  3 passed (3)",
+        "   Duration  1.02s"
+      ],
+      "expectCoverage": null
+    },
+    {
+      "name": "malformed-out-of-range",
+      "output": [
+        "=============================== Coverage summary ===============================",
+        "Statements   : 250% ( 500/200 )",
+        "Lines        : -5% ( -1/125 )",
+        "================================================================================"
+      ],
+      "expectCoverage": null
+    }
   ]
 }

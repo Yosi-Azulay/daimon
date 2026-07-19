@@ -31,7 +31,8 @@ import { makeClassifier } from './logLevels.js';
 import { LogStormDetector } from './logStorm.js';
 import { ResourceGuard } from './resources.js';
 import { compileParseContext } from './parser.js';
-import { findFlakyTests, gitHeadForDir, resolveTestCommand, runTestCommand, testFailureFingerprint, type TestFailure, type TestTotals } from './testRunners.js';
+import { composeRerunCommand, findFlakyTests, gitHeadForDir, resolveTestCommand, runTestCommand, testFailureFingerprint, type CoverageSummary, type TestFailure, type TestTotals } from './testRunners.js';
+import { compileQuarantine, quarantineTestName, reconcileFirstSeen, quarantineSummary as computeQuarantineSummary, type QuarantineSummary } from './quarantine.js';
 
 interface Entry {
   app: DiscoveredApp;
@@ -334,6 +335,31 @@ export class Registry extends EventEmitter {
 
   muteUntil(name: string): number | null | undefined {
     return this.mutes.get(name);
+  }
+
+  // Flaky quarantine (M130, v1.7). Per-pattern first-seen ts persists in
+  // state.json (like mutes) so "oldest since <date>" survives a restart.
+  // reconcileQuarantine() stamps new patterns with `now` and drops removed
+  // ones; call it after restore and whenever config changes.
+  private quarantineFirstSeen: Record<string, number> = {};
+  onQuarantineChanged: ((snapshot: Record<string, number>) => void) | null = null;
+
+  restoreQuarantine(snapshot: Record<string, number> | undefined): void {
+    if (snapshot && typeof snapshot === 'object') this.quarantineFirstSeen = { ...snapshot };
+  }
+
+  reconcileQuarantine(now = Date.now()): void {
+    const { firstSeen, changed } = reconcileFirstSeen(this.quarantineFirstSeen, this.config.tests?.quarantine, now);
+    this.quarantineFirstSeen = firstSeen;
+    if (changed) this.onQuarantineChanged?.({ ...firstSeen });
+  }
+
+  quarantineFirstSeenSnapshot(): Record<string, number> {
+    return { ...this.quarantineFirstSeen };
+  }
+
+  quarantineSummary(): QuarantineSummary {
+    return computeQuarantineSummary(this.quarantineFirstSeen);
   }
 
   // `daimon ports` (M81): app → port → how it got that port → pid. The port
@@ -1105,8 +1131,8 @@ export class Registry extends EventEmitter {
   // `daimon test` (M74): resolve the project's own runner, run the suite once
   // with a hard timeout, parse failures, persist to test_runs/test_failures.
   // Never installs or replaces a runner.
-  async runTests(name: string, opts: { timeoutMs?: number } = {}): Promise<
-    | { runId: number | null; app: string; runner: string | null; command: string; exitCode: number | null; timedOut: boolean; durationMs: number; totals: TestTotals | null; failures: (TestFailure & { fingerprint: string })[]; gitHead: string | null; outputTail: string[] }
+  async runTests(name: string, opts: { timeoutMs?: number; failedOnly?: boolean } = {}): Promise<
+    | { runId: number | null; app: string; runner: string | null; command: string | null; exitCode: number | null; timedOut: boolean; durationMs: number; totals: TestTotals | null; coverage: CoverageSummary | null; failures: (TestFailure & { fingerprint: string; quarantined: boolean })[]; gitHead: string | null; outputTail: string[]; failedOnly?: boolean; note?: string }
     | { error: string; hint?: string }
   > {
     const app = this.getApp(name);
@@ -1114,12 +1140,64 @@ export class Registry extends EventEmitter {
     const resolved = resolveTestCommand(app, this.config);
     if ('error' in resolved) return resolved;
     const timeoutMs = Math.min(Math.max(opts.timeoutMs ?? 300_000, 1000), 600_000);
+
+    // Failed-only rerun (M131): compose a command that reruns just the last
+    // recorded run's failures, via the runner's registry-declared rerunFlag.
+    // Never silently falls back to a full run — every unmet precondition is an
+    // explicit error (with a remedy) or an honest all-green no-op.
+    let runCommand = resolved.command;
+    let failedOnly = false;
+    if (opts.failedOnly) {
+      const h = this.history;
+      if (!h) return { error: 'test history is disabled — --failed needs it', hint: `enable history, or run 'daimon test ${name}' for a full run` };
+      const lastRun = h.queryTestRuns({ app: name, limit: 1 })[0];
+      if (!lastRun) return { error: `no recorded test run for '${name}' to rerun from`, hint: `run 'daimon test ${name}' first, then 'daimon test ${name} --failed'` };
+      const prevFailures = h.queryTestFailures([lastRun.id]);
+      if (prevFailures.length === 0) {
+        // All-green prior run — nothing to rerun. No spawn, exit 0.
+        return {
+          runId: null, app: name, runner: resolved.runner, command: null,
+          exitCode: 0, timedOut: false, durationMs: 0, totals: null, coverage: null,
+          failures: [], gitHead: null, outputTail: [], failedOnly: true,
+          note: `last run for '${name}' had no recorded failures — nothing to rerun`,
+        };
+      }
+      const failureNames = prevFailures.map(f => f.test ?? '');
+      const composed = composeRerunCommand(resolved.command, resolved.runner, failureNames);
+      if ('error' in composed) {
+        if (composed.error === 'no-rerun-flag') {
+          return {
+            error: `runner '${resolved.runner ?? 'unknown'}' declares no failed-only rerun mechanism`,
+            hint: `--failed needs a 'rerunFlag' on the '${resolved.runner ?? 'this'}' test-runner registry row (documented mechanisms only); run 'daimon test ${name}' for the full suite`,
+          };
+        }
+        return {
+          error: `the last run's failures for '${name}' carry no usable test names`,
+          hint: `--failed can't build a name filter from them; run 'daimon test ${name}' for the full suite`,
+        };
+      }
+      runCommand = composed.command;
+      failedOnly = true;
+    }
+
     const [result, gitHead] = await Promise.all([
-      runTestCommand(app, resolved, timeoutMs),
+      runTestCommand(app, { command: runCommand, runner: resolved.runner }, timeoutMs),
       gitHeadForDir(app.workspaceRoot),
     ]);
-    const failures = result.failures.map(f => ({ ...f, fingerprint: testFailureFingerprint(f) }));
+    // Quarantine (M130): annotate failures whose `suite > test` name matches a
+    // configured pattern. They still ran and still record — the flag only lets
+    // flaky detection + alerts ignore them. Exit code / totals are never
+    // rewritten (daimon reports, it doesn't rewrite the run).
+    const qMatcher = compileQuarantine(this.config.tests?.quarantine);
+    const failures = result.failures.map(f => ({
+      ...f,
+      fingerprint: testFailureFingerprint(f),
+      quarantined: qMatcher.matches(quarantineTestName(f.suite, f.test)),
+    }));
     const failed = result.totals?.failed ?? (result.exitCode === 0 ? 0 : failures.length || null);
+    // A run whose ONLY parsed failures are quarantined must not fire the
+    // test-failed notification (it's expected noise) — the event still records.
+    const quarantinedOnly = failures.length > 0 && failures.every(f => f.quarantined);
     const runId = this.history?.recordTestRun({
       app: name,
       runner: result.runner,
@@ -1130,6 +1208,9 @@ export class Registry extends EventEmitter {
       skipped: result.totals?.skipped ?? null,
       exitCode: result.exitCode,
       gitHead,
+      covLinesPct: result.coverage?.linesPct ?? null,
+      covStmtsPct: result.coverage?.statementsPct ?? null,
+      failedOnly,
     }, failures) ?? null;
     const summaryMsg = result.totals
       ? `${result.runner ?? 'tests'} ${result.totals.failed} failed / ${result.totals.total} total exit=${result.exitCode}`
@@ -1139,7 +1220,7 @@ export class Registry extends EventEmitter {
       this.recordEvent({
         app: name,
         type: 'test-failed',
-        message: JSON.stringify({ app: name, runId, failed: failed ?? null, total: result.totals?.total ?? null }),
+        message: JSON.stringify({ app: name, runId, failed: failed ?? null, total: result.totals?.total ?? null, quarantinedOnly }),
       });
       this.checkFlakyTests(name, gitHead);
     }
@@ -1153,9 +1234,11 @@ export class Registry extends EventEmitter {
       timedOut: result.timedOut,
       durationMs: result.durationMs,
       totals: result.totals,
+      coverage: result.coverage,
       failures,
       gitHead,
       outputTail: result.outputTail,
+      failedOnly,
     };
   }
 

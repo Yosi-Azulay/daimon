@@ -105,7 +105,7 @@ _daimon_complete() {
     status) flags="--full --compact --group --help --no-color --no-spawn" ;;
     stop) flags="--steal --help --no-color --no-spawn" ;;
     tasks) flags="--help --no-color --no-spawn" ;;
-    test) flags="--timeout --steal --json --help --no-color --no-spawn" ;;
+    test) flags="--failed --timeout --steal --json --help --no-color --no-spawn" ;;
     test-history) flags="--flaky --limit --help --no-color --no-spawn" ;;
     timeline) flags="--help --no-color --no-spawn" ;;
     top) flags="--json --help --no-color --no-spawn" ;;

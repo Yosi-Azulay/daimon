@@ -93,6 +93,10 @@ export function applyConfigToRegistry(registry: Registry, next: AppmanConfig): {
     }
   }
 
+  // Quarantine first-seen (M130): re-date new patterns / drop removed ones on
+  // every config reload, not just at boot.
+  registry.reconcileQuarantine();
+
   const restartRequired: string[] = [];
   for (const name of registry.names()) {
     const state = registry.getState(name);

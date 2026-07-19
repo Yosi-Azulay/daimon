@@ -108,6 +108,11 @@ export interface RestartStormConfig {
 export interface TestsConfig {
   // Pass↔fail flips at the same gitHead before a test is flagged flaky (M75).
   flakyThreshold: number;
+  // Flaky quarantine (M130, v1.7 — experimental): glob-style patterns (`*`)
+  // matched against a test's `suite > test` name. Quarantined tests still run
+  // and still record; they're excluded from flaky detection + alert noise and
+  // surfaced with their age. Absent = behavior unchanged. Optional.
+  quarantine?: string[];
 }
 
 export interface PortsConfig {

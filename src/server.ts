@@ -1613,6 +1613,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           resources: registry.resourceState(whyName),
           resourceNote,
           envChanged,
+          // Quarantine (M132, v1.7 — experimental): count + oldest age, so a
+          // parked test surfaces in the debugging picture. Null when nothing is
+          // parked; global (patterns aren't per-app) but shown on every why.
+          quarantine: (() => { const q = registry.quarantineSummary(); return q.count > 0 ? q : null; })(),
           suspectCommit,
           doctor: doctorFindings,
         });
@@ -1648,10 +1652,20 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const byRun = new Map<number, any[]>();
         for (const f of failures) {
           const arr = byRun.get(f.runId) ?? [];
-          arr.push({ suite: f.suite, test: f.test, file: f.file, line: f.line, message: f.message, fingerprint: f.fingerprint });
+          // quarantined (M130, experimental): annotate the failure so consumers
+          // can dim it — it still ran and still recorded.
+          arr.push({ suite: f.suite, test: f.test, file: f.file, line: f.line, message: f.message, fingerprint: f.fingerprint, quarantined: !!f.quarantined });
           byRun.set(f.runId, arr);
         }
-        sendJson(res, 200, { runs: runs.map(r => ({ ...r, failures: byRun.get(r.id) ?? [] })) });
+        // coverage (M128, experimental): { linesPct, statementsPct } | null,
+        // composed from the additive nullable columns; failedOnly (M131) as a
+        // boolean. Raw columns stay on the row for back-compat.
+        sendJson(res, 200, { runs: runs.map(r => ({
+          ...r,
+          coverage: (r.covLinesPct != null || r.covStmtsPct != null) ? { linesPct: r.covLinesPct, statementsPct: r.covStmtsPct } : null,
+          failedOnly: !!r.failedOnly,
+          failures: byRun.get(r.id) ?? [],
+        })) });
         return;
       }
 
@@ -1725,6 +1739,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         // is the detail view. Omitted entirely when no plugin files exist.
         const pluginCounts = opts.getPluginCounts?.();
         if (pluginCounts && pluginCounts.total > 0) out.plugins = pluginCounts;
+        // Quarantine badge (M130, additive/experimental): count + oldest-since,
+        // omitted entirely when nothing is parked — a pointer, not a memory hole.
+        const qSummary = registry.quarantineSummary();
+        if (qSummary.count > 0) out.quarantine = { count: qSummary.count, oldestSince: qSummary.oldestSince };
         if (totals.apps === 0) {
           out._meta = { suggestion: "no apps registered. run 'daimon doctor' for recommended next step, or 'daimon init --auto' from a workspace folder." };
         }
@@ -2371,11 +2389,14 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         let timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 300_000;
         if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 300_000;
         timeoutMs = Math.min(timeoutMs, 600_000);
+        // Failed-only rerun (M131): ?failedOnly=1 reruns just the last run's
+        // failures via the runner's registry-declared rerunFlag.
+        const failedOnly = url.searchParams.get('failedOnly') === '1' || url.searchParams.get('failed') === '1';
         try {
           const remote = (req.socket as any).remoteAddress || '127.0.0.1';
           appendAuditEntry(remote, { action: 'test', app: name }, { action: 'test', app: name }, [`test:${name}`], cwdHdr, agentId === 'unknown' ? null : agentId);
         } catch {}
-        const r = await registry.runTests(name, { timeoutMs });
+        const r = await registry.runTests(name, { timeoutMs, failedOnly });
         if ('error' in r) {
           sendJson(res, r.error === 'unknown app' ? 404 : 422, r);
           return;

@@ -86,7 +86,7 @@
 
   "frameworks": [],
 
-  "tests": { "flakyThreshold": 3 },
+  "tests": { "flakyThreshold": 3, "quarantine": [] },
   "restartStorm": { "perHour": 20 },
   "search": { "logIndex": true },
 

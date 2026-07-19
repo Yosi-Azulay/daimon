@@ -119,6 +119,7 @@ Daimon **wraps the project's own runner** (it never installs or replaces one) an
 ```bash
 daimon test web-admin                 # exit 0 all pass · 1 failures · 2 timeout · 5 locked
 daimon test api --timeout 120s
+daimon test web-admin --failed        # rerun ONLY the last run's failures (v1.7)
 daimon test-history web-admin         # recent runs: totals, exit codes, gitHead, failures
 daimon test-history web-admin --flaky # tests that flipped pass↔fail ≥3× at the same commit
 ```
@@ -128,6 +129,14 @@ daimon test-history web-admin --flaky # tests that flipped pass↔fail ≥3× at
 - **History**: runs land in `test_runs`/`test_failures` (`GET /api/tests`), failures carry the same fingerprint scheme as errors, and a test that flips pass↔fail ≥3 times at the same `gitHead` fires a `flaky-test-detected` event (threshold: `tests.flakyThreshold`). Failing runs fire `test-failed` — both are webhook-eligible.
 - **Concurrency-safe**: `test` takes the same per-app soft lock as start/stop — a second agent gets exit 5 (`--steal` applies).
 - The dashboard **Tests page** shows run history with pass/fail sparklines, failure drill-down with VS Code links, run-to-run diffs (newly failing / newly passing), and flaky badges.
+
+#### Test sense 2 (v1.7) — coverage, quarantine, failed-only reruns
+
+`daimon test` doesn't just know pass/fail; it reads the coverage the run already printed, tracks the flaky tests you've parked, and can rerun just what broke.
+
+- **Coverage** — daimon **parses** the coverage summary the run already emitted (vitest/jest istanbul table or text-summary, pytest-cov `TOTAL`, `go test -cover`); it never adds a coverage flag or edits your test config. It surfaces as `coverage: { linesPct, statementsPct } | null` on `daimon test` / `GET /api/tests`, and as a line + delta on `daimon report`. Fail-soft and honest: absent or unparseable coverage is `null`, never a fabricated number — the same law as test counts. cargo and dotnet have no confirmed documented default summary, so they ship without coverage. Summary numbers only, no per-file storage; daimon never gates or fails a run on coverage. The dashboard **Trends** page charts coverage over time, with gaps (not zeros) where a run had none.
+- **Quarantine** — list flaky tests under `tests.quarantine` (glob patterns like `"auth › *"`, matched against `suite > test`). Quarantined tests **still run and still record** — daimon can't and won't skip them — but they're dropped from flaky detection and from test-failure alert noise, and their exit code passes through unchanged. Each pattern's first-seen date is kept so `daimon report` and `daimon why` can say "oldest since <date>". A parked test is dated and visible forever — never a silent memory hole.
+- **`--failed`** — `daimon test <app> --failed` reruns only the last recorded run's failures, via the runner's documented mechanism (pytest `--lf`, or a name filter for go/jest/vitest/dotnet). It errors with a remedy when the runner declares no such mechanism, when there's no prior run, or when the failure names can't build a filter — it never silently runs the whole suite.
 
 ### Crash forensics — `daimon why`
 

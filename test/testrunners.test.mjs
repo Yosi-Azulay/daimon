@@ -16,6 +16,8 @@ const {
   guessRunnerFromCommand,
   testFailureFingerprint,
   findFlakyTests,
+  TEST_RUNNER_META,
+  composeRerunCommand,
 } = await import('../dist/testRunners.js');
 const { History } = await import('../dist/history.js');
 
@@ -99,6 +101,117 @@ for (const id of fixtureIds) {
     assert.equal(parsed.totals.failed, failing.expectTotals.failed);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Coverage capture (M128, v1.7). supportsCoverage gates the coverage fixtures;
+// with-coverage yields the documented percentage, without/malformed → null.
+// Fabricated coverage is the same violation as a fabricated test total.
+// ---------------------------------------------------------------------------
+
+for (const id of KNOWN_TEST_RUNNER_IDS) {
+  const meta = TEST_RUNNER_META[id];
+  if (!meta.supportsCoverage) continue;
+  const dir = path.join(fixturesDir, id);
+  const fx = JSON.parse(fs.readFileSync(path.join(dir, 'fixture.json'), 'utf8'));
+
+  test(`coverage ${id}: supportsCoverage runner ships with/without/malformed coverage cases`, () => {
+    assert.ok(Array.isArray(fx.coverage) && fx.coverage.length >= 1,
+      `runner '${id}' declares supportsCoverage but its fixture has no coverage cases`);
+    assert.ok(fx.coverage.some(c => c.expectCoverage === null),
+      `runner '${id}' needs at least one coverage case expecting null (without/malformed)`);
+    assert.ok(fx.coverage.some(c => c.expectCoverage && (c.expectCoverage.linesPct != null || c.expectCoverage.statementsPct != null)),
+      `runner '${id}' needs at least one with-coverage case`);
+  });
+
+  for (const c of (fx.coverage ?? [])) {
+    test(`coverage ${id}: case '${c.name}'`, () => {
+      const parsed = parseTestOutput(fx.runner, c.output.join('\n'));
+      if (c.expectCoverage === null) {
+        assert.equal(parsed.coverage, null, `expected null coverage, got ${JSON.stringify(parsed.coverage)}`);
+        return;
+      }
+      assert.ok(parsed.coverage, 'expected coverage, got null');
+      assert.equal(parsed.coverage.linesPct, c.expectCoverage.linesPct ?? null, 'linesPct');
+      assert.equal(parsed.coverage.statementsPct, c.expectCoverage.statementsPct ?? null, 'statementsPct');
+    });
+  }
+}
+
+test('coverage: a runner without supportsCoverage never surfaces coverage', () => {
+  for (const id of KNOWN_TEST_RUNNER_IDS) {
+    if (TEST_RUNNER_META[id].supportsCoverage) continue;
+    const fx = JSON.parse(fs.readFileSync(path.join(fixturesDir, id, 'fixture.json'), 'utf8'));
+    for (const c of fx.cases) {
+      const parsed = parseTestOutput(fx.runner, c.output.join('\n'));
+      assert.equal(parsed.coverage, null, `${id} case '${c.name}' must have null coverage`);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Failed-only rerun composition (M131, v1.7). rerunFlag is registry-declared;
+// no flag = explicit non-participation (no-rerun-flag). name-filter runners
+// error on empty names rather than silently rerunning everything.
+// ---------------------------------------------------------------------------
+
+test('rerun: pytest is stateful — appends --lf with no placeholder', () => {
+  const r = composeRerunCommand('python -m pytest', 'pytest', ['test_add', 'test_sub']);
+  assert.deepEqual(r, { command: 'python -m pytest --lf' });
+});
+
+test('rerun: go builds an anchored regex-escaped -run alternation', () => {
+  const r = composeRerunCommand('go test ./...', 'go-test', ['TestSub', 'TestAdd']);
+  // names deduped + sorted → deterministic
+  assert.deepEqual(r, { command: 'go test ./... -run "^(TestAdd|TestSub)$"' });
+});
+
+test('rerun: vitest/jest join names literally into a -t pattern', () => {
+  const r = composeRerunCommand('npx vitest run', 'vitest-jest', ['adds numbers', 'divides']);
+  assert.deepEqual(r, { command: 'npx vitest run -t "adds numbers|divides"' });
+});
+
+test('rerun: dotnet joins names literally into a --filter expression', () => {
+  // dotnet --filter's bare tokens default to FullyQualifiedName~<value>, and `|`
+  // is the OR operator — so a pipe-joined name list is a valid filter.
+  const r = composeRerunCommand('dotnet test', 'dotnet-test', ['Calc.Adds', 'Calc.Subs']);
+  assert.deepEqual(r, { command: 'dotnet test --filter "Calc.Adds|Calc.Subs"' });
+});
+
+test('rerun: cargo declares no rerunFlag → no-rerun-flag (explicit non-participation)', () => {
+  const r = composeRerunCommand('cargo test', 'cargo-test', ['t']);
+  assert.deepEqual(r, { error: 'no-rerun-flag' });
+});
+
+// Structural gate: EVERY runner that declares a rerunFlag must compose a usable
+// command — no declared mechanism ships unexercised (the finding this closes).
+test('rerun: every declared rerunFlag composes a valid command', () => {
+  for (const id of KNOWN_TEST_RUNNER_IDS) {
+    const flag = TEST_RUNNER_META[id].rerunFlag;
+    if (!flag) continue;
+    const r = composeRerunCommand('base cmd', id, ['NameA', 'NameB']);
+    assert.ok('command' in r, `runner '${id}' rerunFlag did not compose: ${JSON.stringify(r)}`);
+    if (flag.kind === 'stateful') {
+      assert.ok(r.command.endsWith(flag.template), `stateful '${id}' must append its template verbatim`);
+      assert.ok(!/\{tests\}/.test(r.command), `'${id}' left an unfilled placeholder`);
+    } else {
+      // name-filter: the flag token (template minus the placeholder) and both
+      // names must appear; no {tests} left behind.
+      const flagToken = flag.template.replace('{tests}', '').trim();
+      assert.ok(r.command.includes(flagToken), `'${id}' must include its flag token '${flagToken}'`);
+      assert.ok(r.command.includes('NameA') && r.command.includes('NameB'), `'${id}' must include the failure names`);
+      assert.ok(!/\{tests\}/.test(r.command), `'${id}' left an unfilled placeholder`);
+    }
+  }
+});
+
+test('rerun: name-filter runner with no usable names errors (never a full rerun)', () => {
+  const r = composeRerunCommand('go test ./...', 'go-test', ['', '  ']);
+  assert.deepEqual(r, { error: 'no-names' });
+});
+
+test('rerun: null runner has no flag', () => {
+  assert.deepEqual(composeRerunCommand('make test', null, ['t']), { error: 'no-rerun-flag' });
+});
 
 test('overrides.<app>.testCommand always wins over the profile hint', () => {
   const dir = path.join(fixturesDir, 'vitest-jest');

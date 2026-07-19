@@ -326,11 +326,12 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'test',
-    args: '<name> [--timeout <dur>] [--steal] [--json]',
-    summary: 'Run the app\'s own test suite once: resolves the runner (vitest/jest/pytest/go/cargo/dotnet or overrides.<app>.testCommand), parses failures with file:line, records the run in history. Exit 0 all pass, 1 failures, 2 timeout.',
-    description: 'Run the project\'s own test runner once and parse the result. Runner resolution: overrides.<app>.testCommand wins; otherwise the app\'s framework profile hints the runner (JS profiles pick vitest vs jest by dependency check). Failures come back as {suite,test,file,line,message}; the run lands in test_runs/test_failures and GET /api/tests. Takes the per-app soft lock — a second agent\'s concurrent test gets exit 5 unless --steal. daimon never installs or replaces a runner.',
-    example: 'daimon test web-admin',
+    args: '<name> [--failed] [--timeout <dur>] [--steal] [--json]',
+    summary: 'Run the app\'s own test suite once: resolves the runner (vitest/jest/pytest/go/cargo/dotnet or overrides.<app>.testCommand), parses failures with file:line + coverage, records the run in history. Exit 0 all pass, 1 failures, 2 timeout.',
+    description: 'Run the project\'s own test runner once and parse the result. Runner resolution: overrides.<app>.testCommand wins; otherwise the app\'s framework profile hints the runner (JS profiles pick vitest vs jest by dependency check). Failures come back as {suite,test,file,line,message}; coverage (linesPct/statementsPct) is parsed when the runner already prints a summary; the run lands in test_runs/test_failures and GET /api/tests. --failed reruns only the last run\'s failures via the runner\'s declared rerunFlag (pytest --lf, go/jest/dotnet name filter) — errors if the runner declares none, or if there is no prior run. Takes the per-app soft lock — a second agent\'s concurrent test gets exit 5 unless --steal. daimon never installs or replaces a runner.',
+    example: 'daimon test web-admin --failed',
     options: [
+      { flag: '--failed', description: 'Rerun only the last recorded run\'s failures (needs a runner with a declared rerunFlag; errors if none or no prior run — never silently runs the full suite). Experimental.' },
       { flag: '--timeout', arg: '<duration>', description: 'Max suite runtime (default 300s, max 600s). Expiry tree-kills the runner and exits 2.' },
       { flag: '--steal', description: 'Override another agent\'s soft-lock.' },
       { flag: '--json', description: 'Structured JSON (default output is already JSON; kept for symmetry).' },

@@ -11,6 +11,9 @@ export interface TestFailure {
   line: number | null;
   message: string | null;
   fingerprint: string | null;
+  // Quarantine flag (M128, v1.7 — experimental). Optional/additive: older
+  // daemons and any consumer built before M128 simply never see it.
+  quarantined?: boolean;
 }
 
 export interface TestRun {
@@ -26,6 +29,11 @@ export interface TestRun {
   exitCode: number | null;
   gitHead: string | null;
   failures: TestFailure[];
+  // Coverage summary (M128, v1.7 — experimental). `null` when the run had no
+  // coverage; optional because it's additive — a consumer that predates
+  // M128 (or a fixture that doesn't set it) simply omits the field.
+  coverage?: { linesPct: number | null; statementsPct: number | null } | null;
+  failedOnly?: boolean;
 }
 
 export interface FlakyTest {

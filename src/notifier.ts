@@ -140,7 +140,11 @@ export class Notifier {
     } else if (ev.type === 'restart-storm' && want('restart-storm')) {
       this.route('restart-storm', ev.app, `${ev.app} restart storm`, 'crashing repeatedly — see `daimon why`');
     } else if (ev.type === 'test-failed' && want('test-failed')) {
-      this.route('test-failed', ev.app, `${ev.app} tests failed`, ev.message || '');
+      // Quarantine (M130): a run whose only failures are quarantined is
+      // expected noise — record it, but don't notify.
+      let quarantinedOnly = false;
+      try { quarantinedOnly = !!JSON.parse(ev.message || '{}').quarantinedOnly; } catch {}
+      if (!quarantinedOnly) this.route('test-failed', ev.app, `${ev.app} tests failed`, ev.message || '');
     } else if (ev.type === 'flaky-test-detected' && want('flaky-test-detected')) {
       this.route('flaky-test-detected', ev.app, `${ev.app} flaky test`, ev.message || '');
     } else if (ev.type === 'log-storm' && want('log-storm')) {

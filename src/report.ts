@@ -218,11 +218,32 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
         const threshold = inputs.flakyThreshold ?? 3;
         const heads = [...new Set(runs.map(r => r.gitHead).filter((g): g is string => !!g))];
         const flaky = heads.flatMap(head => findFlakyTests(runs, ids => h.queryTestFailures(ids), head, threshold));
+        // Coverage delta (M132): a single % per run = lines ?? statements
+        // (matches the Trends chart). Current-window average vs the equal window
+        // before it. Null-safe — no coverage data yields a note, never an error.
+        const covOf = (r: { covLinesPct: number | null; covStmtsPct: number | null }): number | null => r.covLinesPct ?? r.covStmtsPct ?? null;
+        const avgCov = (rs: typeof runs): number | null => {
+          const vs = rs.map(covOf).filter((v): v is number => v != null);
+          return vs.length ? Math.round((vs.reduce((a, b) => a + b, 0) / vs.length) * 10) / 10 : null;
+        };
+        const curCov = avgCov(runs);
+        const prevRuns = h.queryTestRuns({ app: opts.app, since: since - windowMs, limit: 500 })
+          .filter(r => r.ts < since && inScope(r.app));
+        const prevCov = avgCov(prevRuns);
+        const coverage = curCov != null
+          ? { pct: curCov, previousPct: prevCov, delta: prevCov != null ? Math.round((curCov - prevCov) * 10) / 10 : null }
+          : null;
+        // Quarantine (M132): count + oldest-since, so a parked test is visible
+        // in the daily surface forever. From the registry's first-seen map.
+        const q = registry.quarantineSummary();
         S.tests = {
           runs: runs.length,
           failedRuns: runs.filter(r => (r.failed ?? 0) > 0 || (r.exitCode != null && r.exitCode !== 0)).length,
           passRatePct: total > 0 ? Math.round((passed / total) * 1000) / 10 : null,
           flakiest: flaky.sort((a, b) => b.flips - a.flips).slice(0, 5),
+          coverage,
+          ...(coverage ? {} : { coverageNote: 'no coverage data in window' }),
+          ...(q.count > 0 ? { quarantine: { count: q.count, oldestSince: q.oldestSince } } : {}),
         };
       }
     }
@@ -445,6 +466,20 @@ export function renderReportMd(r: Report): string {
   if (S.tests?.note) L.push(`> ${S.tests.note}`);
   else {
     L.push(`${S.tests.runs} run${S.tests.runs === 1 ? '' : 's'} · ${S.tests.failedRuns} failed · pass rate ${S.tests.passRatePct != null ? S.tests.passRatePct + '%' : 'n/a'}`);
+    // Coverage (M132): current % + signed delta vs the previous period.
+    if (S.tests.coverage) {
+      const c = S.tests.coverage;
+      const delta = c.delta != null ? ` (${c.delta >= 0 ? '+' : ''}${c.delta}% vs prev)` : '';
+      L.push(`coverage: ${c.pct}%${delta}`);
+    } else if (S.tests.coverageNote) {
+      L.push(`> coverage: ${S.tests.coverageNote}`);
+    }
+    // Quarantine (M132): count + oldest-since — never silent.
+    if (S.tests.quarantine) {
+      const q = S.tests.quarantine;
+      const since = q.oldestSince != null ? `, oldest since ${new Date(q.oldestSince).toISOString().slice(0, 10)}` : '';
+      L.push(`quarantine: ${q.count} pattern${q.count === 1 ? '' : 's'}${since}`);
+    }
     for (const f of S.tests.flakiest ?? []) {
       L.push(`- flaky: \`${f.test ?? f.fingerprint}\` (${f.flips} flips)`);
     }

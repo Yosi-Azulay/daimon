@@ -330,6 +330,7 @@ interface Flags {
   kinds?: string;
   open?: boolean;
   steal?: boolean;
+  failed?: boolean;
   json?: boolean;
   min?: number;
   limit?: number;
@@ -408,6 +409,7 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--for') f.forDur = args[++i];
     else if (a === '--open') f.open = true;
     else if (a === '--steal') f.steal = true;
+    else if (a === '--failed') f.failed = true;
     else if (a === '--json') f.json = true;
     else if (a === '--limit') f.limit = Number(args[++i]);
     else if (a === '--agent') f.agentId = args[++i];
@@ -1174,6 +1176,7 @@ async function main() {
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
       if (f.steal) params.set('steal', '1');
+      if (f.failed) params.set('failedOnly', '1');
       let timeoutSec = 300;
       if (f.timeout) {
         const t = durationToSeconds(f.timeout);

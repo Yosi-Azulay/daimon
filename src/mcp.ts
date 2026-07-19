@@ -452,15 +452,17 @@ export function buildServer(): McpServer {
   });
 
   server.registerTool('daimon_run_tests', {
-    description: 'Run the app\'s own test suite once (daimon wraps the project\'s runner — vitest/jest/pytest/go/cargo/dotnet or overrides.<app>.testCommand; it never installs one). Returns parsed failures {suite,test,file,line,message,fingerprint} + totals; the run is recorded in history. Takes the per-app soft lock — a concurrent run by another agent returns locked-by-other-agent.',
+    description: 'Run the app\'s own test suite once (daimon wraps the project\'s runner — vitest/jest/pytest/go/cargo/dotnet or overrides.<app>.testCommand; it never installs one). Returns parsed failures {suite,test,file,line,message,fingerprint} + totals + coverage {linesPct,statementsPct}|null; the run is recorded in history. Set failedOnly to rerun just the last run\'s failures via the runner\'s declared rerunFlag (errors if the runner declares none or there is no prior run). Takes the per-app soft lock — a concurrent run by another agent returns locked-by-other-agent.',
     inputSchema: {
       name: z.string(),
       timeoutMs: z.number().int().positive().max(600_000).optional(),
+      failedOnly: z.boolean().optional(),
       cwd: cwdField,
     },
-  }, async ({ name, timeoutMs, cwd }) => {
+  }, async ({ name, timeoutMs, failedOnly, cwd }) => {
     const qs = new URLSearchParams({ cwd: cwd ?? defaultCwd });
     qs.set('timeoutMs', String(Math.min(timeoutMs ?? 300_000, 600_000)));
+    if (failedOnly) qs.set('failedOnly', '1');
     const r = await callJson(`/api/apps/${encodeURIComponent(name)}/test?${qs.toString()}`, 'POST');
     if (r.status === 0) return err(r.body?.error || 'unknown');
     if (r.status === 404) return err('unknown app');

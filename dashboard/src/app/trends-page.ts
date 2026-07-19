@@ -19,7 +19,7 @@ import { DaimonApi } from './daimon-api';
 import { EmptyStateComponent, SkeletonComponent, MonoComponent } from './ui-primitives';
 import type { TestRun } from './tests-page-helpers';
 import {
-  fmtBucketLabel, unionLabels, alignSeries, TREND_METRICS,
+  fmtBucketLabel, unionLabels, alignSeries, alignSeriesNullable, TREND_METRICS,
   type Window, type Series, type SeriesPoint, type TrendMetric,
 } from './trends-page-helpers';
 
@@ -145,7 +145,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     <div class="dm-page-header">
       <div>
         <h1>Trends</h1>
-        <div class="dm-page-sub">Historical compile · bundle · error · restart · test pass-rate · flaky · resource trends</div>
+        <div class="dm-page-sub">Historical compile · bundle · error · restart · test pass-rate · coverage · flaky · resource trends</div>
       </div>
       <div class="dm-controls">
         <mat-button-toggle-group [value]="window()" (change)="onWindowChange($event.value)" hideSingleSelectionIndicator aria-label="Time window">
@@ -173,6 +173,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
       <dm-trend-chart #restartChart></dm-trend-chart>
       <dm-trend-chart #testPassRateChart></dm-trend-chart>
       <dm-trend-chart #flakyChart></dm-trend-chart>
+      <dm-trend-chart #coverageChart></dm-trend-chart>
       <dm-trend-chart #rssChart></dm-trend-chart>
       <dm-trend-chart #cpuChart></dm-trend-chart>
       @if (showSelf()) {
@@ -204,6 +205,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
   @ViewChild('restartChart') restartChart?: TrendChartComponent;
   @ViewChild('testPassRateChart') testPassRateChart?: TrendChartComponent;
   @ViewChild('flakyChart') flakyChart?: TrendChartComponent;
+  @ViewChild('coverageChart') coverageChart?: TrendChartComponent;
   @ViewChild('rssChart') rssChart?: TrendChartComponent;
   @ViewChild('cpuChart') cpuChart?: TrendChartComponent;
   @ViewChild('selfChart') selfChart?: TrendChartComponent;
@@ -235,6 +237,7 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       this.restartChart?.setLoading();
       this.testPassRateChart?.setLoading();
       this.flakyChart?.setLoading();
+      this.coverageChart?.setLoading();
       this.rssChart?.setLoading();
       this.cpuChart?.setLoading();
     }
@@ -368,6 +371,55 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
         borderColor: palette[i % palette.length],
         backgroundColor: 'transparent',
         borderWidth: 1.4, tension: 0.3, pointRadius: 0,
+      })),
+      yLabel: '%',
+    });
+
+    // Coverage over time (M129, v1.7 — experimental): rides the SAME
+    // testRuns fetch as pass-rate above (no extra round-trip). Coverage % =
+    // linesPct, falling back to statementsPct, else null (M128 shape). A
+    // bucket is tracked as soon as ANY run of that app lands in it — even a
+    // run with no coverage — so a null-coverage run in the middle of an
+    // otherwise-covered history still reserves its spot on the x-axis and
+    // renders as a GAP (via alignSeriesNullable), never a fabricated 0%.
+    // An app whose runs never carry coverage contributes no dataset at all
+    // (not an all-zero line) — setData already treats an empty dataset list
+    // as "empty", not an error.
+    const coverageByApp = new Map<string, SeriesPoint[]>();
+    const coverageBucketSet = new Set<number>();
+    for (const app of apps) {
+      const appRuns = testRuns.filter(r => r.app === app);
+      const sums = new Map<number, { sum: number; count: number }>();
+      for (const r of appRuns) {
+        const key = this.bucketKey(r.ts, win);
+        coverageBucketSet.add(key);
+        const pct = r.coverage?.linesPct ?? r.coverage?.statementsPct ?? null;
+        if (typeof pct !== 'number') continue;
+        const s = sums.get(key) ?? { sum: 0, count: 0 };
+        s.sum += pct;
+        s.count += 1;
+        sums.set(key, s);
+      }
+      const points = [...sums.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([t, s]) => ({ t, v: Math.round((s.sum / s.count) * 10) / 10 }));
+      if (points.length) coverageByApp.set(app, points);
+    }
+    const coverageBuckets = [...coverageBucketSet].sort((a, b) => a - b);
+    const coverageLabelsArr = coverageBuckets.map(t => fmtBucketLabel(t, win));
+    const coverageSeries: Series[] = [...coverageByApp.entries()].map(([app, points]) => ({ app, points }));
+    this.coverageChart?.setData({
+      title: 'Test coverage',
+      subtitle: 'line % (or statement %) per ' + (win === '24h' ? 'hour' : 'day') + ', from daimon test runs; gaps = no coverage data',
+      chartType: 'line',
+      labels: coverageLabelsArr,
+      datasets: coverageSeries.map((s, i) => ({
+        label: s.app,
+        data: alignSeriesNullable(s.points, coverageBuckets, 'v'),
+        borderColor: palette[i % palette.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.4, tension: 0.3, pointRadius: 0,
+        spanGaps: false,
       })),
       yLabel: '%',
     });
