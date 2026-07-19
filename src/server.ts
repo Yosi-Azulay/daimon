@@ -442,7 +442,89 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const lockList = locks.list();
         const lockByApp: Record<string, { agent: string; lockedAt: number; expiresAt: number }> = {};
         for (const l of lockList) lockByApp[l.app] = { agent: l.agent, lockedAt: l.lockedAt, expiresAt: l.expiresAt };
-        sendJson(res, 200, { agents: list, locks: lockByApp, self: agentId === 'unknown' ? null : agentId });
+
+        // Roster (M123) + contention (M124): DERIVED at query time by merging the
+        // live in-memory registry (5-min window), the audit-derived history
+        // (firstSeen/action counts across both audit files), the LockManager's
+        // held locks, and its contention ring. No new state, no new table.
+        const { readAuditEntries, deriveAuditRow, aggregateAgents, aggregateAppSteals } = await import('./auditQuery.js');
+        const { entries } = readAuditEntries();
+        const auditRows = entries.map(deriveAuditRow);
+        const stats = aggregateAgents(auditRows);
+        const durableSteals = aggregateAppSteals(auditRows);
+        const analytics = locks.analytics();
+
+        const locksByAgent = new Map<string, string[]>();
+        for (const l of lockList) { const arr = locksByAgent.get(l.agent) ?? []; arr.push(l.app); locksByAgent.set(l.agent, arr); }
+        const liveById = new Map(list.map(a => [a.id, a]));
+        const ids = new Set<string>([...liveById.keys(), ...stats.keys()]);
+        const roster = [...ids].map(id => {
+          const live = liveById.get(id);
+          const st = stats.get(id);
+          const cont = analytics.perAgent.get(id);
+          const lastSeenAudit = st?.lastSeen ? Date.parse(st.lastSeen) : null;
+          const firstSeenAudit = st?.firstSeen ? Date.parse(st.firstSeen) : null;
+          return {
+            id,
+            lastSeen: live ? live.lastSeen : (Number.isFinite(lastSeenAudit as number) ? lastSeenAudit : null),
+            active: !!live,
+            cwd: live?.cwd ?? null,
+            callCount: live?.callCount ?? 0,
+            firstSeen: live ? live.firstSeen : (Number.isFinite(firstSeenAudit as number) ? firstSeenAudit : null),
+            actions: st?.actions ?? {},
+            locks: locksByAgent.get(id) ?? [],
+            waits: cont?.waits ?? 0,
+            steals: cont?.steals ?? 0,
+          };
+        }).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
+
+        const appSet = new Set<string>([...analytics.perApp.keys(), ...durableSteals.keys()]);
+        const hotspots = [...appSet].map(app => {
+          const pa = analytics.perApp.get(app);
+          const durable = durableSteals.get(app);
+          const steals = durable != null ? durable : (pa ? pa.stealsLive + pa.stealsAfterExpiry : 0);
+          return {
+            app,
+            waits: pa?.waits ?? 0,
+            steals,
+            stealsLive: pa?.stealsLive ?? 0,
+            stealsAfterExpiry: pa?.stealsAfterExpiry ?? 0,
+            longestHoldMs: pa?.longestHoldMs ?? 0,
+          };
+        }).filter(h => h.waits || h.steals || h.longestHoldMs)
+          .sort((a, b) => (b.waits + b.steals) - (a.waits + a.steals))
+          .slice(0, 20);
+
+        sendJson(res, 200, {
+          agents: list,
+          locks: lockByApp,
+          self: agentId === 'unknown' ? null : agentId,
+          roster,
+          contention: { hotspots },
+          advisoryIdentity: true,
+        });
+        return;
+      }
+
+      // The queryable audit trail (M122, v1.6). Reads audit.log + audit.log.1,
+      // derives `{ ts, agent, action, app, changedKeys, remote }` rows from the
+      // `verb:<app>` convention, applies AND filters, newest-first. `skipped`
+      // counts fail-soft parse misses; never an error, never a fabricated row.
+      if (url.pathname === '/api/audit' && method === 'GET') {
+        const { queryAudit } = await import('./auditQuery.js');
+        const sinceP = parseSinceParam(url.searchParams.get('since'));
+        const sinceTs = sinceP.sinceTs ?? (sinceP.sinceMs != null ? Date.now() - sinceP.sinceMs : undefined);
+        const limitRaw = url.searchParams.get('limit');
+        let limit = limitRaw ? Number(limitRaw) : 100;
+        if (!Number.isFinite(limit) || limit <= 0) limit = 100;
+        limit = Math.min(limit, 1000);
+        const { rows, skipped, total } = queryAudit({
+          agent: url.searchParams.get('agent') || undefined,
+          app: url.searchParams.get('app') || undefined,
+          sinceTs,
+          limit,
+        });
+        sendJson(res, 200, { rows, skipped, total, limit });
         return;
       }
 
@@ -1277,10 +1359,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const reportMembers = resolveGroupFilter(reportGroup);
         if (reportMembers === null) return; // 400 already sent
         const { buildReport, renderReportMd } = await import('./report.js');
+        const { readAuditEntries: readAuditR, deriveAuditRow: deriveR } = await import('./auditQuery.js');
         const report = buildReport({
           registry,
           history: registry.getHistory(),
           agents: agents.list().map(a => ({ id: a.id, lastSeen: a.lastSeen })),
+          auditRows: readAuditR().entries.map(deriveR),
           flakyThreshold: opts.getConfig?.().tests?.flakyThreshold ?? 3,
         }, {
           since: sinceTs,
@@ -1311,10 +1395,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           return;
         }
         const { buildExport, renderExportMd, renderExportCsv } = await import('./export.js');
+        const { readAuditEntries: readAuditX, deriveAuditRow: deriveX } = await import('./auditQuery.js');
         const bundle = buildExport({
           registry,
           history: registry.getHistory(),
           agents: agents.list().map(a => ({ id: a.id, lastSeen: a.lastSeen })),
+          auditRows: readAuditX().entries.map(deriveX),
           flakyThreshold: opts.getConfig?.().tests?.flakyThreshold ?? 3,
         }, {
           since: sinceTs,
@@ -1798,13 +1884,26 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       // can re-call freely. Defined here (before the per-verb handlers) so every
       // state-changing verb — including ensure and try-fix — serialises through
       // the same gate.
+      // Widened audit coverage (M122, v1.6): mutating lifecycle actions leave a
+      // row using the existing 6-col format + `verb:<app>` changedKeys
+      // convention (`test:<app>` is the precedent) — no new column, no format
+      // change. `daimon audit` derives action/app back from these rows.
+      const auditAction = (action: string): void => {
+        try {
+          const remote = (req.socket as any).remoteAddress || '127.0.0.1';
+          appendAuditEntry(remote, { action, app: name }, { action, app: name }, [`${action}:${name}`], cwdHdr, agentId === 'unknown' ? null : agentId);
+        } catch {}
+      };
+
       const tryLock = (action: string): boolean => {
         // Validate the app before locking — otherwise 409s (and interaction
         // history) can materialize for app names that don't exist.
         if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return false; }
         const stealQ = url.searchParams.get('steal');
         const steal = stealQ === '1' || stealQ === 'true';
-        if (steal) { locks.steal(name, agentId, action); return true; }
+        // A steal leaves its own durable `steal:<app>` row so live-steal counts
+        // survive a daemon restart (the in-memory ring does not).
+        if (steal) { auditAction('steal'); locks.steal(name, agentId, action); return true; }
         const blocker = locks.acquire(name, agentId, action);
         if (blocker) {
           sendJson(res, 409, {
@@ -2237,12 +2336,14 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (!toAgent) { sendJson(res, 400, { error: 'body { to: <agentId> } required' }); return; }
         const current = locks.current(name);
         const next = locks.handoff(name, toAgent, agentId === 'unknown' ? null : agentId);
+        auditAction('handoff');
         sendJson(res, 200, { handedOff: name, from: current?.agent ?? null, to: next.agent, lockedAt: next.lockedAt, expiresAt: next.expiresAt });
         return;
       }
 
       if (sub === 'start' && method === 'POST') {
         if (!tryLock('start')) return;
+        auditAction('start');
         const withDeps = url.searchParams.get('withDeps') === '1';
         if (withDeps) {
           const r = await registry.startWithDeps(name);
@@ -2255,6 +2356,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
       if (sub === 'start-with-deps' && method === 'POST') {
         if (!tryLock('start-with-deps')) return;
+        auditAction('start');
         const r = await registry.startWithDeps(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;
@@ -2358,6 +2460,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
       }
       if (sub === 'stop' && method === 'POST') {
         if (!tryLock('stop')) return;
+        auditAction('stop');
         const r = await registry.stop(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;
@@ -2367,16 +2470,19 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
         const body: any = await readJsonBody(req);
         const forMs = typeof body?.forMs === 'number' && body.forMs > 0 ? body.forMs : null;
+        auditAction('mute');
         sendJson(res, 200, registry.mute(name, forMs));
         return;
       }
       if (sub === 'unmute' && method === 'POST') {
         if (!registry.summary(name)) { sendJson(res, 404, UNKNOWN_APP); return; }
+        auditAction('unmute');
         sendJson(res, 200, registry.unmute(name));
         return;
       }
       if (sub === 'restart' && method === 'POST') {
         if (!tryLock('restart')) return;
+        auditAction('restart');
         const r = await registry.restart(name);
         sendJson(res, r.ok ? 200 : 400, r);
         return;

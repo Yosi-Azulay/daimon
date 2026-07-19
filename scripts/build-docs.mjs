@@ -16,7 +16,7 @@ const dist = p => pathToFileURL(path.resolve(repoRoot, 'dist', p)).href;
 const { CLI_SUBCOMMANDS, CLI_GROUPS } = await import(dist('cliSurface.js'));
 const { DAIMON_VERSION } = await import(dist('version.js'));
 const { HTTP_ENDPOINTS } = await import(dist('httpSurface.js'));
-const { MCP_TOOL_STABILITY } = await import(dist('mcp.js'));
+const { MCP_TOOL_STABILITY, MCP_RESOURCE_STABILITY, MCP_PROMPT_STABILITY } = await import(dist('mcp.js'));
 const { CONFIG_KEY_STABILITY } = await import(dist('config.js'));
 const { EVENT_KIND_STABILITY } = await import(dist('types.js'));
 const { DOCTOR_COVERAGE } = await import(dist('doctor.js'));
@@ -97,6 +97,21 @@ const MCP_DESCRIPTIONS = {
   daimon_top: 'Live resource table (v1.3): running apps with pid, RSS (MB), CPU %, uptime — RSS-sorted, nulls never errors. Warn-only; daimon never kills.',
   daimon_export: 'One-way carry-out bundle (v1.4): events, error groups, test runs, compiles, crashes (bounded tails), and the report in a versioned envelope (schemaVersion 1, additive-only). No import exists; redaction holds (key names + hashes, never values).',
   daimon_plugins: 'Loaded plug-ins (Plugin API v1, v1.5): name, file, apiVersion, status (active|disabled|load-error), declared hooks, error. NOT sandboxed — trusted user-placed files; see PLUGINS.md.',
+  daimon_audit: 'Queryable audit trail (v1.6): who did what, when. Derives { ts, agent, action, app, changedKeys, remote } rows from audit.log + audit.log.1 via the verb:<app> convention. Filters (agent/app/since/limit) compose; fail-soft skipped count. Identity is advisory (self-declared header, unverified).',
+  daimon_agents: 'Agent roster (v1.6): per-agent id, last-seen, action counts, held soft-locks, contention (waits/steals) + contention hotspots. Derived at query time from the audit log + live registry + lock manager. (unknown) aggregates undeclared callers. Identity is advisory.',
+};
+
+// MCP resources + prompts (M125, v1.6) — rendered alongside the tools. Every
+// resource/prompt in the source-of-truth stability maps must carry a
+// description here, and vice versa.
+const MCP_RESOURCE_DESCRIPTIONS = {
+  'daimon://report': 'The digest (GET /api/report) as a read-only JSON resource.',
+  'daimon://context/{app}': 'The agent context pack for one app (GET /api/context/:app) — templated by app name.',
+  'daimon://logs/{app}': 'The last 200 log lines for one app (GET /api/apps/:app/logs?tail=200) — templated by app name.',
+};
+const MCP_PROMPT_DESCRIPTIONS = {
+  triage: 'Triage briefing for one app, composed from live why + errors + recent logs.',
+  handoff: 'Handoff briefing for one app: current state + soft-lock holder for the next agent.',
 };
 
 function renderMcp() {
@@ -108,6 +123,27 @@ function renderMcp() {
   }
   for (const name of Object.keys(MCP_DESCRIPTIONS)) {
     if (!(name in MCP_TOOL_STABILITY)) throw new Error(`[build-docs] MCP_DESCRIPTIONS has "${name}" but src/mcp.ts's catalog does not`);
+  }
+  out.push('</dl>');
+  // Resources + prompts (M125, v1.6) — the protocol's own shapes.
+  out.push('<h3>Resources</h3><dl class="cli-grid">');
+  for (const [uri, tier] of Object.entries(MCP_RESOURCE_STABILITY)) {
+    const desc = MCP_RESOURCE_DESCRIPTIONS[uri];
+    if (!desc) throw new Error(`[build-docs] MCP resource "${uri}" has no description — add one to MCP_RESOURCE_DESCRIPTIONS`);
+    out.push(`<dt><code>${esc(uri)}</code> ${tierBadge(tier)}</dt><dd>${esc(desc)}</dd>`);
+  }
+  for (const uri of Object.keys(MCP_RESOURCE_DESCRIPTIONS)) {
+    if (!(uri in MCP_RESOURCE_STABILITY)) throw new Error(`[build-docs] MCP_RESOURCE_DESCRIPTIONS has "${uri}" but src/mcp.ts's catalog does not`);
+  }
+  out.push('</dl>');
+  out.push('<h3>Prompts</h3><dl class="cli-grid">');
+  for (const [name, tier] of Object.entries(MCP_PROMPT_STABILITY)) {
+    const desc = MCP_PROMPT_DESCRIPTIONS[name];
+    if (!desc) throw new Error(`[build-docs] MCP prompt "${name}" has no description — add one to MCP_PROMPT_DESCRIPTIONS`);
+    out.push(`<dt><code>${esc(name)}</code> ${tierBadge(tier)}</dt><dd>${esc(desc)}</dd>`);
+  }
+  for (const name of Object.keys(MCP_PROMPT_DESCRIPTIONS)) {
+    if (!(name in MCP_PROMPT_STABILITY)) throw new Error(`[build-docs] MCP_PROMPT_DESCRIPTIONS has "${name}" but src/mcp.ts's catalog does not`);
   }
   out.push('</dl>');
   return out.join('\n');

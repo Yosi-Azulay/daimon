@@ -382,6 +382,42 @@ The surface is deliberately small: **observe + doctor-rule contribution only.** 
 
 The trust model, stated plainly: **plugins are not sandboxed.** They run in-process with full Node privileges — daimon only loads files you placed in your own `~/.daimon/plugins`, and treats them as code you chose to run. No marketplace, no remote fetch, no auto-install, ever. [PLUGINS.md](PLUGINS.md) is the full manual: API reference, lifecycle, `apiVersion` policy, cookbook. All plugin surfaces ship `experimental`.
 
+## Agent accountability (v1.6)
+
+daimon already knew *who* was calling (every request carries an `X-Daimon-Agent`
+header) and arbitrated *when* two agents reached for the same app (soft-locks).
+v1.6 makes all of it **queryable** — the agent ledger:
+
+```bash
+daimon audit                                 # the trail: who did what, when (newest first)
+daimon audit --agent host-1234-ab12 --since 2h
+daimon audit --app web-admin --json          # every lifecycle + config action on one app
+daimon agents                                # the roster: ids, action counts, held locks, contention
+```
+
+`daimon audit` reads the append-only audit log (`audit.log` + the rotated
+`audit.log.1`) and derives `{ ts, agent, action, app, changedKeys, remote }`
+rows from the actions daimon already records — `start`, `stop`, `restart`,
+`steal`, `handoff`, `mute`, `unmute`, `test`, group actions, and config writes.
+Filters compose (AND); malformed lines are skipped and counted, never faked.
+
+`daimon agents` is the roster: every declared agent merged from the live registry
+and the audit history, with per-action counts, currently-held soft-locks, and a
+**contention** view — waits (denied acquires), steals (split live vs
+after-expiry), and longest holds. The report's `agents` section deepens with the
+same signal. Nothing here is stored: the roster and analytics are **derived at
+query time** from the audit log + the in-memory registry + the lock manager — no
+new table, no new state.
+
+**Agent identity is advisory.** The `<host>-<pid>-<rand4>` id is a self-declared
+header — daimon does not, and will not, authenticate it. The ledger records what
+each *declared* identity did, not who they really were, and every output says so.
+The ledger records; it does not police — no per-agent permissions, quotas, or
+rate limits, ever. All v1.6 surfaces (`daimon audit`, `GET /api/audit`, the
+roster/contention additions to `daimon agents` / `GET /api/agents`, MCP
+`daimon_audit` / `daimon_agents`, and the MCP resources/prompts below) ship
+`experimental`.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -592,7 +628,8 @@ daimon context <name> [--budget <chars>]   # agent context pack: 6 round-trips i
 daimon focus <name> [--until serving|healthy|stable] [--timeout 180s]          # one-shot subscribe-then-act
 daimon try-fix <name> [--until serving|healthy] [--timeout 180s]               # doctor + restart + wait
 daimon orchestrate <profile> [--goal serving|healthy|stable] [--dry-run] [--budget <tokens>]
-daimon agents                      # active agents + per-app soft-locks (v0.10)
+daimon agents [--json]             # roster: ids, action counts, held locks, contention (v1.6 deepened; identity advisory)
+daimon audit [--agent <id>] [--app <name>] [--since 2h] [--limit 100] [--json]   # the queryable audit trail (v1.6)
 daimon handoff <app> <agentId>     # transfer a soft-lock to another agent (v0.10)
 daimon profiles suggest [--since 30d] [--min 5]   # profile candidates from co-starts (v0.10)
 daimon ci start <profile> [--until ready|healthy] [--timeout 5m] [--json]      # CI helper (v0.10)
@@ -656,6 +693,8 @@ GET  /api/why/:name                             # crash forensics composition (v
 GET  /api/context/:name?budget=                 # agent context pack (v0.12)
 GET  /api/report?since=&app=&workspace=[&md=1]  # the digest (v0.13)
 GET  /api/export?since=&app=&format=json|md|csv # one-way carry-out bundle, schemaVersion 1 (v1.4)
+GET  /api/audit?agent=&app=&since=&limit=100    # queryable audit trail (v1.6, experimental; advisory identity)
+GET  /api/agents                                # active agents + locks; v1.6 adds derived roster + contention
 GET  /api/env/:name                             # env-file awareness — names only, never values (v0.13)
 GET  /api/env/:name/diff?from=&to=              # env diff between spawns (v0.13)
 GET  /api/ports                                 # port map + foreign holders (v0.13)
@@ -701,7 +740,9 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes 30 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored), the v1.3 `daimon_top` (live RSS/CPU table — warn-only, never kills), and the v1.4 `daimon_export` (the one-way carry-out bundle). Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
+The MCP server exposes 32 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored), the v1.3 `daimon_top` (live RSS/CPU table — warn-only, never kills), the v1.4 `daimon_export` (the one-way carry-out bundle), and the v1.6 agent-ledger pair `daimon_audit` / `daimon_agents`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
+
+The v1.6 server also grows the protocol's own shapes (all `experimental`): three read-only **resources** — `daimon://report`, `daimon://context/{app}`, and `daimon://logs/{app}` (200-line tail), each a thin wrapper over the matching HTTP endpoint — and two **prompts** rendered from live API data, `triage` (why + errors + recent logs for one app) and `handoff` (current state + lock holder for the next agent). A client can read a resource or expand a prompt without the model choosing a tool call.
 
 ## State files (in `~/.daimon/`)
 

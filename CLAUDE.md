@@ -66,6 +66,16 @@ src/
                     # doctor rules ONLY — no mutating hooks in v1. NOT sandboxed
                     # (trusted-by-placement); see PLUGINS.md.
   agents.ts         # Agent identity (`<host>-<pid>-<rand4>`) + 30s per-app LockManager.
+                    # LockManager ring tags each event outcome (denied / steal-live /
+                    # steal-after-expiry / acquired / handoff) and derives contention
+                    # analytics (waits, steal split, longest hold) — memory-only,
+                    # never persisted (M124, v1.6). Identity stays ADVISORY.
+  auditQuery.ts     # Queryable view over the audit trail (M122, v1.6): PURE reader
+                    # over audit.log + audit.log.1. Derives { ts, agent, action,
+                    # app, changedKeys, remote } rows from the verb:<app> convention
+                    # (NO new column). Fail-soft: malformed lines counted in
+                    # `skipped`, never fabricated. Roster + report analytics DERIVE
+                    # from these rows at query time (no new state, no timer).
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
                     # (netstat -ano / ss), daimon signature probe, EADDRINUSE
@@ -86,6 +96,9 @@ src/
                     # > package.json test script), execution with tree-kill timeout,
                     # and query-derived flaky detection (M75).
   audit.ts          # Tab-delimited audit log; 6 columns (5-col rows still parse).
+                    # v1.6 widened WRITE coverage: lifecycle actions (start/stop/
+                    # restart/steal/handoff/mute/unmute) leave a `verb:<app>` row in
+                    # the SAME 6-col format — appendAuditEntry unchanged, no new column.
   webhooks.ts       # Outbound webhooks: queue + rate limit + Slack/Discord shape detection.
                     # Per-app scoping via webhooks[].apps + overrides.<app>.webhooks (M72).
                     # DigestScheduler (M84): webhooks[].digest "HH:MM" — ONE 1-min
@@ -111,7 +124,7 @@ dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
 completions/        # GENERATED shell completion (bash/zsh/powershell) — never hand-edit.
                     # Regen: npm run build:completions; drift-gated by test/completion.test.mjs.
 scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIMON_HOME only.
-test/               # node --test suite. 833 test cases (v1.5); files run in parallel child processes.
+test/               # node --test suite. 865 test cases (v1.6); files run in parallel child processes.
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
 
@@ -120,7 +133,7 @@ vscode-extension/   # VS Code extension (published as flycotech.daimon). Indepen
 | Purpose | Command (repo root unless noted) | Runtime | Success signal |
 |---|---|---|---|
 | Build daemon | `npm run build` | ~5s | exit 0, silent; `dist/*.js` refreshed |
-| Full test suite | `npm test` | ~1–2 min | TAP tail: `# pass 795`, `# fail 0` |
+| Full test suite | `npm test` | ~1–2 min | TAP tail: `# pass 865`, `# fail 0` |
 | One test file | `node --test test/<name>.test.mjs` | 3–60s | `# fail 0` |
 | Dashboard unit | `npx vitest run` (in `dashboard/`) | ~5s | `Tests  68 passed` (count grows; signal is 0 failed) |
 | Dashboard bundle | `npm run build:dashboard` | ~30s | `Application bundle generation complete` → `dist/dashboard` |
@@ -161,7 +174,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - TS strict mode (3 tsconfig projects: root, dashboard/app, vscode-extension).
 - Tests run against compiled `dist/*.js`, not `src/*.ts` — always `npm run build` before `npm test`.
 - New HTTP endpoints belong in `server.ts` and follow the `parts[]` switch pattern.
-- New MCP tools belong in `mcp.ts` and use `callJson(...)` so the X-Daimon-Agent header is forwarded.
+- New MCP tools belong in `mcp.ts` and use `callJson(...)` so the X-Daimon-Agent header is forwarded. Resources (`registerResource`) and prompts (`registerPrompt`) go there too (M125, v1.6) — resources wrap existing endpoints via `callJson`; prompts render from live API data (never canned); each declares a tier in `MCP_RESOURCE_STABILITY` / `MCP_PROMPT_STABILITY` and gets a `test/mcp-contract.test.mjs` case. Never bump the MCP SDK for a new capability — verify the shipped version supports it, else STOP and ask.
 - New CLI verbs go in `cliSurface.ts` (one entry per verb), then dispatch in `cli.ts`'s `switch (cmd)`.
 - New audit columns must keep the older row count parseable — `parseAuditLine` already handles 5- and 6-col rows.
 - New tests must be added to the `test` script in `package.json` (`node --test test/foo.test.mjs ...`).
@@ -257,6 +270,51 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   (`test/plugins-docs.test.mjs`) — edit the example and the manual together.
   Legacy `{ name, scan }` doctor plug-ins deliberately stopped loading in
   v1.5 (migration message points at PLUGINS.md).
+
+- **The agent ledger is DERIVED, never stored (M122–M124, v1.6).** Agent
+  identity stays ADVISORY — the `X-Daimon-Agent` header, unauthenticated, said
+  so in every output/doc. `daimon audit` / `GET /api/audit` read the audit log
+  (`audit.log` + `audit.log.1`) through `src/auditQuery.ts` and derive rows from
+  the append-forever `verb:<app>` changedKeys convention — the ONE permanent
+  decision of the release: widened WRITE coverage (start/stop/restart/steal/
+  handoff/mute/unmute) reuses the existing 6-col format, adds NO column, and
+  `parseAuditLine` keeps reading 5- and 6-col rows. Parsing is fail-soft:
+  malformed lines are counted in `skipped`, never fabricated, never an error.
+  The roster (`daimon agents` / the additive `roster`+`contention` keys on the
+  UNCHANGED `GET /api/agents`) and the report's deepened `agents` section are
+  computed at query time from audit rows + the in-memory `AgentRegistry` +
+  `LockManager` — NO new table, NO new persisted file, NO new timer, NO history
+  migration. Lock contention (waits/steals/longest-hold) lives in the
+  LockManager's memory-only ring; durable live-steal counts come from
+  `steal:<app>` audit rows so they survive a restart. New MCP surfaces
+  (`daimon_audit`, `daimon_agents`, the `daimon://report|context/{app}|logs/{app}`
+  resources, the `triage`/`handoff` prompts) go through `callJson` with
+  `X-Daimon-Agent` forwarded and are contract-tested in `test/mcp-contract.test.mjs`.
+  SDK gate (M125): the shipped `@modelcontextprotocol/sdk` 1.29.0 exposes
+  `registerResource`/`registerPrompt`/`ResourceTemplate` cleanly — verified, no
+  upgrade, no new dep. Every v1.6 surface ships `experimental`; the roster,
+  resources, and prompts declare tiers at their source of truth
+  (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
+  `MCP_PROMPT_STABILITY`).
+
+## v1.6 highlights (what landed this release)
+
+- **Agent Ledger (M122–M127)**: `daimon audit [--agent --app --since --limit
+  --json]` / `GET /api/audit` (queryable trail over the audit log; 5/6-col rows
+  fail-soft with a `skipped` count); `daimon agents [--json]` roster deepened
+  (`roster` + `contention` additive on `GET /api/agents`; `(unknown)`
+  aggregation; advisory-identity disclaimer); lock analytics (denial /
+  steal-after-expiry vs live tagging, waits + longest holds) + report `agents`
+  section deepening (top agents, contention hotspots) inside the closed section
+  list, report bench budget kept; MCP deepening — resources `daimon://report`,
+  `daimon://context/{app}`, `daimon://logs/{app}` + prompts `triage`/`handoff`
+  (rendered from live API data) + tools `daimon_audit`/`daimon_agents`
+  (**32 tools**); dashboard agents panel (roster, action chips, contention,
+  timeline deep-links) + soft-lock badge on app cards. All new surfaces
+  `experimental`; no frozen shape moved; no config or history migration. Tests:
+  `test/agent-ledger.test.mjs` (query + roster + routes + report deepening),
+  `test/agents.test.mjs` (LockManager analytics), `test/mcp-contract.test.mjs`
+  (tools + resources + prompts).
 
 ## v1.5 highlights (what landed this release)
 

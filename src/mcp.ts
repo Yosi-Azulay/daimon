@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
@@ -48,6 +48,22 @@ export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stabili
   daimon_top: 'experimental', // v1.3 (M106)
   daimon_export: 'experimental', // v1.4 (M111)
   daimon_plugins: 'experimental', // v1.5 (M118)
+  daimon_audit: 'experimental', // v1.6 (M122/M125)
+  daimon_agents: 'experimental', // v1.6 (M123/M125)
+};
+
+// MCP resource + prompt catalogs with stability tiers (M125, v1.6). Every MCP
+// surface — tool, resource, or prompt — declares a tier at its source of truth;
+// test/mcp-contract.test.mjs pins the set and build-docs renders it. All v1.6
+// additions ship `experimental`.
+export const MCP_RESOURCE_STABILITY: Record<string, import('./stability.js').Stability> = {
+  'daimon://report': 'experimental',
+  'daimon://context/{app}': 'experimental',
+  'daimon://logs/{app}': 'experimental',
+};
+export const MCP_PROMPT_STABILITY: Record<string, import('./stability.js').Stability> = {
+  triage: 'experimental',
+  handoff: 'experimental',
 };
 
 function apiPort(): number {
@@ -632,6 +648,103 @@ export function buildServer(): McpServer {
       if (arr.length) await new Promise(res => setTimeout(res, 500));
     }
     return ok({ timedOut: true, waitedMs: Date.now() - start });
+  });
+
+  // ── Agent ledger tools (M125, v1.6) ──────────────────────────────────────
+  server.registerTool('daimon_audit', {
+    description: 'Query the audit trail (v1.6): who did what, when. Derives { ts, agent, action, app, changedKeys, remote } rows from the append-only audit log (audit.log + rotated audit.log.1) via the verb:<app> convention — lifecycle (start/stop/restart/steal/handoff/mute/unmute/test), group actions, and config writes. Filters compose (AND); newest first; default limit 100. Response { rows, skipped, total, limit } — skipped counts fail-soft parse misses, never a fabricated row. NOTE: agent ids are ADVISORY (self-declared X-Daimon-Agent headers, never authenticated) — the trail records what each declared identity did, not who they really were.',
+    inputSchema: {
+      agent: z.string().optional().describe('Filter to a declared agent id (advisory, unverified)'),
+      app: z.string().optional(),
+      since: z.string().optional().describe('Window like 15m, 2h, 7d'),
+      limit: z.number().int().positive().max(1000).optional().describe('Max rows (default 100)'),
+    },
+  }, async ({ agent, app, since, limit }) => {
+    const qs = new URLSearchParams();
+    if (agent) qs.set('agent', agent);
+    if (app) qs.set('app', app);
+    if (since) qs.set('since', since);
+    if (limit) qs.set('limit', String(limit));
+    const q = qs.toString();
+    const r = await callJson('/api/audit' + (q ? '?' + q : ''));
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_agents', {
+    description: 'Agent roster (v1.6): each declared agent\'s id, last-seen, active flag, cwd, call count, per-action counts, currently-held soft-locks, and per-agent contention (waits/steals) — plus contention.hotspots (apps with the most denials/steals). Derived at query time from the audit log + live registry + lock manager; nothing new is persisted. Rows with no declared agent aggregate under (unknown). NOTE: agent ids are ADVISORY — self-declared headers, never authenticated.',
+    inputSchema: {},
+  }, async () => {
+    const r = await callJson('/api/agents');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    return ok(r.body);
+  });
+
+  // ── Resources (M125, v1.6): read-only wrappers over existing HTTP endpoints
+  // via callJson (X-Daimon-Agent forwarded). Contents are the same JSON the
+  // endpoint returns — never re-derived. A daemon-down call yields the
+  // structured-error JSON as text; it never throws or hangs.
+  const resourceJson = async (pathname: string, uri: string) => {
+    const r = await callJson(pathname);
+    return { contents: [{ uri, mimeType: 'application/json', text: typeof r.body === 'string' ? r.body : JSON.stringify(r.body) }] };
+  };
+  const templateVar = (v: unknown): string => String(Array.isArray(v) ? v[0] : v);
+
+  server.registerResource('daimon-report', 'daimon://report', {
+    title: 'daimon report',
+    description: 'The digest (M83) over the default window — per-app uptime, error groups, test pass-rate, compiles, crashes, agents, env changes. JSON, same shape as GET /api/report.',
+    mimeType: 'application/json',
+  }, async (uri) => resourceJson('/api/report', uri.href));
+
+  server.registerResource('daimon-context', new ResourceTemplate('daimon://context/{app}', { list: undefined }), {
+    title: 'daimon app context pack',
+    description: 'The agent context pack for one app: status/url/framework, top error groups, last crash, last test run, compile stats, suspect commits, active locks/agents. JSON, same shape as GET /api/context/:app.',
+    mimeType: 'application/json',
+  }, async (uri, variables) => resourceJson(`/api/context/${encodeURIComponent(templateVar(variables.app))}`, uri.href));
+
+  server.registerResource('daimon-logs', new ResourceTemplate('daimon://logs/{app}', { list: undefined }), {
+    title: 'daimon app log tail',
+    description: 'The last 200 log lines for one app (fixed cap). JSON, same shape as GET /api/apps/:app/logs?tail=200.',
+    mimeType: 'application/json',
+  }, async (uri, variables) => resourceJson(`/api/apps/${encodeURIComponent(templateVar(variables.app))}/logs?tail=200`, uri.href));
+
+  // ── Prompts (M125, v1.6): rendered from LIVE API data, never canned text ──
+  server.registerPrompt('triage', {
+    title: 'Triage a daimon app',
+    description: 'Compose a triage briefing for one app from its why-analysis, recent errors, and recent logs (all live).',
+    argsSchema: { app: z.string() },
+  }, async ({ app }) => {
+    const [why, errors, logs] = await Promise.all([
+      callJson(`/api/why/${encodeURIComponent(app)}`),
+      callJson(`/api/apps/${encodeURIComponent(app)}/errors`),
+      callJson(`/api/apps/${encodeURIComponent(app)}/logs?tail=40`),
+    ]);
+    const text = [
+      `Triage the daimon app "${app}". Use only the live data below; do not invent state.`,
+      ``, `## why`, '```json', JSON.stringify(why.body ?? why, null, 2), '```',
+      ``, `## recent errors`, '```json', JSON.stringify(errors.body ?? errors, null, 2), '```',
+      ``, `## recent logs (tail 40)`, '```json', JSON.stringify(logs.body ?? logs, null, 2), '```',
+      ``, `Identify the most likely root cause and the single next action.`,
+    ].join('\n');
+    return { messages: [{ role: 'user', content: { type: 'text', text } }] };
+  });
+
+  server.registerPrompt('handoff', {
+    title: 'Hand off a daimon app',
+    description: 'Summarize an app\'s current state + soft-lock holder so the next agent knows what to expect (all live).',
+    argsSchema: { app: z.string() },
+  }, async ({ app }) => {
+    const [status, lock] = await Promise.all([
+      callJson(`/api/apps/${encodeURIComponent(app)}`),
+      callJson(`/api/apps/${encodeURIComponent(app)}/lock`),
+    ]);
+    const text = [
+      `You are taking over the daimon app "${app}" from another agent. Brief yourself from the live data below.`,
+      ``, `## current status`, '```json', JSON.stringify(status.body ?? status, null, 2), '```',
+      ``, `## soft-lock + recent agents`, '```json', JSON.stringify(lock.body ?? lock, null, 2), '```',
+      ``, `Note: agent ids are advisory (self-declared, not authenticated). State what is running, who last held the lock, and what to check first.`,
+    ].join('\n');
+    return { messages: [{ role: 'user', content: { type: 'text', text } }] };
   });
 
   return server;

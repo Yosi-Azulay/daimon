@@ -90,6 +90,46 @@ export interface LockSnapshot {
   expiresAt: number;
 }
 
+// Merged live + audit-derived agent roster (M123, v1.6 — experimental).
+// Rows with no declared `X-Daimon-Agent` header aggregate under id
+// "(unknown)". Agent identity is ADVISORY — a self-declared header, never
+// authenticated — see `advisoryIdentity` on the /api/agents response.
+export interface AgentRosterRow {
+  id: string;
+  lastSeen: number | null;
+  active: boolean;
+  cwd: string | null;
+  callCount: number;
+  firstSeen: number | null;
+  actions: Record<string, number>;
+  locks: string[];
+  waits: number;
+  steals: number;
+}
+
+// Per-app lock-contention summary (M124, v1.6 — experimental), derived from
+// the LockManager's contention ring + durable audit-log steal counts.
+export interface ContentionHotspot {
+  app: string;
+  waits: number;
+  steals: number;
+  stealsLive: number;
+  stealsAfterExpiry: number;
+  longestHoldMs: number;
+}
+
+// One row of the queryable audit trail (M122, v1.6). Mirrors the server's
+// `deriveAuditRow` shape — `changedKeys` reflects the `verb:<app>` convention
+// and is `[]` when the action carries none.
+export interface AuditRow {
+  ts: string;
+  agent: string | null;
+  action: string;
+  app: string | null;
+  changedKeys: string[];
+  remote: string;
+}
+
 export interface DiscoveryMeta {
   searchRoots: string[];
   scanned: number;
@@ -511,15 +551,48 @@ export class DaimonApi {
     } catch { return { hits: [], fallback: false }; }
   }
 
-  async getAgents(): Promise<{ agents: AgentRecord[]; locks: Record<string, LockSnapshot>; self: string | null }> {
+  // `roster`/`contention`/`advisoryIdentity` are additive (M123/M124, v1.6 —
+  // experimental): a pre-v1.6 daemon simply omits them, so callers must fall
+  // back to the legacy `agents` array rather than assume roster is present.
+  async getAgents(): Promise<{
+    agents: AgentRecord[];
+    locks: Record<string, LockSnapshot>;
+    self: string | null;
+    roster?: AgentRosterRow[];
+    contention?: { hotspots: ContentionHotspot[] };
+    advisoryIdentity?: boolean;
+  }> {
     try {
       const r = await firstValueFrom(this.http.get<any>('/api/agents'));
       return {
         agents: Array.isArray(r?.agents) ? r.agents : [],
         locks: r?.locks && typeof r.locks === 'object' ? r.locks : {},
         self: typeof r?.self === 'string' ? r.self : null,
+        roster: Array.isArray(r?.roster) ? r.roster : undefined,
+        contention: r?.contention && Array.isArray(r.contention.hotspots) ? r.contention : undefined,
+        advisoryIdentity: typeof r?.advisoryIdentity === 'boolean' ? r.advisoryIdentity : undefined,
       };
     } catch { return { agents: [], locks: {}, self: null }; }
+  }
+
+  // The queryable audit trail (M122, v1.6). Used by the agents page's
+  // "recent actions" deep-link and any future per-agent/per-app history view.
+  async getAudit(opts: { agent?: string; app?: string; since?: string; limit?: number } = {}): Promise<{ rows: AuditRow[]; skipped: number; total: number; limit: number }> {
+    try {
+      const qs = new URLSearchParams();
+      if (opts.agent) qs.set('agent', opts.agent);
+      if (opts.app) qs.set('app', opts.app);
+      if (opts.since) qs.set('since', opts.since);
+      if (opts.limit) qs.set('limit', String(opts.limit));
+      const q = qs.toString();
+      const r = await firstValueFrom(this.http.get<any>('/api/audit' + (q ? '?' + q : '')));
+      return {
+        rows: Array.isArray(r?.rows) ? r.rows : [],
+        skipped: typeof r?.skipped === 'number' ? r.skipped : 0,
+        total: typeof r?.total === 'number' ? r.total : 0,
+        limit: typeof r?.limit === 'number' ? r.limit : (opts.limit ?? 100),
+      };
+    } catch { return { rows: [], skipped: 0, total: 0, limit: opts.limit ?? 100 }; }
   }
 
   async getHistoryEvents(opts: { type?: string; app?: string; since?: string; limit?: number } = {}): Promise<EventRecord[]> {

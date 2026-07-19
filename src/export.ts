@@ -35,6 +35,9 @@ export interface ExportInputs {
   registry: Registry;
   history: History | null;
   agents?: { id: string; lastSeen: number }[];
+  // Audit-derived rows (M124, v1.6) forwarded into the embedded report's agents
+  // section — same composition-only discipline; export adds no analytics state.
+  auditRows?: { ts: string; agent: string | null; action: string; app: string | null }[];
   flakyThreshold?: number;
 }
 
@@ -130,7 +133,7 @@ export function buildExport(inputs: ExportInputs, opts: ExportOpts): ExportBundl
   // --- report (M83, embedded whole — its sections degrade on their own) -----
   try {
     S.report = buildReport(
-      { registry, history: h, agents: inputs.agents, flakyThreshold: inputs.flakyThreshold },
+      { registry, history: h, agents: inputs.agents, auditRows: inputs.auditRows, flakyThreshold: inputs.flakyThreshold },
       { since, until, app },
     );
   } catch (err: any) {

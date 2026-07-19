@@ -79,7 +79,7 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'POST', path: '/api/workspaces/remove', stability: 'stable', summary: 'Remove a searchRoot ({ path }).' },
   { method: 'GET', path: '/api/discovery/explain', stability: 'stable', summary: 'Read-only discovery pass with per-folder stats.' },
   { method: 'GET', path: '/api/frameworks', stability: 'stable', summary: 'Framework adapter registry + match counts.' },
-  { method: 'GET', path: '/api/agents', stability: 'stable', summary: 'Active agents + per-app soft-locks.' },
+  { method: 'GET', path: '/api/agents', stability: 'stable', summary: 'Active agents + per-app soft-locks; v1.6 (M123/M124) adds derived roster + contention (advisory identity).' },
   { method: 'GET', path: '/api/self', stability: 'stable', summary: 'Daemon self-metrics snapshot.' },
   { method: 'GET', path: '/api/self/history', stability: 'stable', summary: 'Persisted self-metrics rows.' },
   { method: 'GET', path: '/api/presets', stability: 'stable', summary: 'Built-in config presets.' },
@@ -98,6 +98,9 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/api/ports', stability: 'experimental', summary: 'Port map + foreign holders.' },
   { method: 'GET', path: '/api/top', stability: 'experimental', summary: 'Live resource table: app → pid → rssMB → cpu → uptimeMs, RSS-sorted; nulls for apps without a reading (v1.3).' },
   { method: 'POST', path: '/api/apps/:name/mute', stability: 'experimental', summary: 'Mute OS notifications ({ forMs }).' },
+
+  // ── experimental: v1.6 agent ledger (M122) ────────────────────────────────
+  { method: 'GET', path: '/api/audit', stability: 'experimental', summary: 'Queryable audit trail (?agent=, ?app=, ?since=, ?limit=100): derives { ts, agent, action, app, changedKeys, remote } rows from audit.log + audit.log.1 via the verb:<app> convention. Fail-soft: malformed lines counted in skipped, never fabricated. Agent identity is advisory (header-declared, unverified).' },
 
   // ── experimental: v1.4 carry-out (M111) ───────────────────────────────────
   { method: 'GET', path: '/api/export', stability: 'experimental', summary: 'One-way carry-out bundle (?since=7d, ?app=, ?format=json|md|csv): versioned envelope { schemaVersion: 1 } over events, error groups, test runs, compiles, crashes (bounded tails only), and the report. No import endpoint exists, by design.' },

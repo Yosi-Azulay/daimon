@@ -14,7 +14,7 @@ _daimon_complete() {
     return 0
   fi
   if [ "$cword" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "agents ci claude clean completion config context daemon dashboard discover doctor down ensure ensure-up env errors events export export-config focus frameworks free-port handoff history init list log logs ls mute orchestrate overview pin-health plugin plugins ports profiles ps record replay report restart run search self snapshot start status stop tasks test test-history timeline top try-fix unmute up wait why why-empty workspaces" -- "$cur") )
+    COMPREPLY=( $(compgen -W "agents audit ci claude clean completion config context daemon dashboard discover doctor down ensure ensure-up env errors events export export-config focus frameworks free-port handoff history init list log logs ls mute orchestrate overview pin-health plugin plugins ports profiles ps record replay report restart run search self snapshot start status stop tasks test test-history timeline top try-fix unmute up wait why why-empty workspaces" -- "$cur") )
     return 0
   fi
   canon="${COMP_WORDS[1]}"
@@ -57,7 +57,8 @@ _daimon_complete() {
   fi
   flags="--help --no-color --no-spawn"
   case "$canon" in
-    agents) flags="--help --no-color --no-spawn" ;;
+    agents) flags="--json --help --no-color --no-spawn" ;;
+    audit) flags="--agent --app --since --limit --json --help --no-color --no-spawn" ;;
     ci) flags="--until --timeout --json --help --no-color --no-spawn" ;;
     claude) flags="--help --no-color --no-spawn" ;;
     clean) flags="--deep --yes --help --no-color --no-spawn" ;;

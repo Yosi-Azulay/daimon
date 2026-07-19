@@ -36,7 +36,12 @@ const EXPECTED_TOOLS = [
   'daimon_export',
   // v1.5 (M118): Plugin API v1 visibility.
   'daimon_plugins',
+  // v1.6 (M122/M123): the agent ledger — queryable trail + roster.
+  'daimon_audit', 'daimon_agents',
 ].sort();
+
+const EXPECTED_RESOURCES = ['daimon://report', 'daimon://context/{app}', 'daimon://logs/{app}'].sort();
+const EXPECTED_PROMPTS = ['triage', 'handoff'].sort();
 
 async function connectedClient() {
   const server = buildServer();
@@ -66,7 +71,7 @@ function minimalArgs(schema) {
 const client = await connectedClient();
 const { tools } = await client.listTools();
 
-test('mcp surface: tools/list returns exactly the expected 30 tools', () => {
+test('mcp surface: tools/list returns exactly the expected 32 tools', () => {
   assert.deepEqual(tools.map(t => t.name).sort(), EXPECTED_TOOLS);
 });
 
@@ -96,6 +101,51 @@ for (const tool of tools) {
     if (result.isError) {
       assert.ok(typeof parsed.error === 'string' && parsed.error.length > 0, 'isError results carry { error }');
     }
+  });
+}
+
+// --- v1.6 (M125): resources + prompts contract ----------------------------
+
+const { resources } = await client.listResources();
+const { resourceTemplates } = await client.listResourceTemplates();
+const { prompts } = await client.listPrompts();
+
+test('mcp surface: resources cover report + templated context/logs', () => {
+  const uris = [
+    ...resources.map(r => r.uri),
+    ...resourceTemplates.map(t => t.uriTemplate),
+  ].sort();
+  assert.deepEqual(uris, EXPECTED_RESOURCES);
+});
+
+test('mcp surface: prompts cover triage + handoff', () => {
+  assert.deepEqual(prompts.map(p => p.name).sort(), EXPECTED_PROMPTS);
+  for (const p of prompts) {
+    assert.ok(typeof p.description === 'string' && p.description.length >= 20, `${p.name} has a meaningful description`);
+    assert.ok((p.arguments ?? []).some(a => a.name === 'app'), `${p.name} takes an app argument`);
+  }
+});
+
+test('mcp resource read: daimon://report returns JSON text contents (daemon down)', async () => {
+  const r = await client.readResource({ uri: 'daimon://report' });
+  assert.ok(Array.isArray(r.contents) && r.contents.length > 0, 'returns contents');
+  assert.equal(r.contents[0].mimeType, 'application/json');
+  const parsed = JSON.parse(r.contents[0].text); // structured error JSON with the daemon down — never a throw
+  assert.equal(typeof parsed, 'object');
+});
+
+test('mcp resource read: templated daimon://context/{app} resolves the variable', async () => {
+  const r = await client.readResource({ uri: 'daimon://context/web' });
+  assert.equal(r.contents[0].uri, 'daimon://context/web');
+  JSON.parse(r.contents[0].text); // must be JSON (structured error when down)
+});
+
+for (const p of EXPECTED_PROMPTS) {
+  test(`mcp prompt get: ${p} renders messages from live data (daemon down)`, async () => {
+    const r = await client.getPrompt({ name: p, arguments: { app: 'web' } });
+    assert.ok(Array.isArray(r.messages) && r.messages.length > 0, 'returns messages');
+    assert.equal(r.messages[0].content.type, 'text');
+    assert.ok(r.messages[0].content.text.includes('web'), 'the app name is woven into the prompt');
   });
 }
 

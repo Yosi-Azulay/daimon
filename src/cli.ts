@@ -343,6 +343,8 @@ interface Flags {
   // `daimon export` (M111, v1.4): output format + atomic file target.
   format?: string;
   outFile?: string;
+  // `daimon audit` (M122, v1.6): filter by declared agent id.
+  agentId?: string;
   passthrough: string[];
 }
 
@@ -408,6 +410,7 @@ function parseFlags(args: string[]): Flags {
     else if (a === '--steal') f.steal = true;
     else if (a === '--json') f.json = true;
     else if (a === '--limit') f.limit = Number(args[++i]);
+    else if (a === '--agent') f.agentId = args[++i];
     else if (a === '--flaky') f.flaky = true;
     else if (a === '--kind') f.kind = args[++i];
     else if (a === '--grep') f.grep = args[++i];
@@ -1102,9 +1105,67 @@ async function main() {
       out(r.body);
       return;
     }
+    case 'audit': {
+      // Queryable audit trail (M122, v1.6). Filters compose (AND); newest first.
+      const params = new URLSearchParams();
+      if (f.agentId) params.set('agent', f.agentId);
+      if (f.app) params.set('app', f.app);
+      if (f.since) params.set('since', f.since);
+      if (f.limit && Number.isFinite(f.limit) && f.limit > 0) params.set('limit', String(Math.floor(f.limit)));
+      const qs = params.toString();
+      const r = await call(`/api/audit${qs ? '?' + qs : ''}`);
+      const b: any = r.body;
+      if (!f.json && process.stdout.isTTY && isColorEnabled() && b && Array.isArray(b.rows)) {
+        const dim = (s: string) => color.dim(s);
+        const L: string[] = [];
+        const shown = b.rows.length < b.total ? ` (showing ${b.rows.length})` : '';
+        const skip = b.skipped ? ` · ${b.skipped} skipped` : '';
+        L.push(color.bold('audit') + dim(`  ${b.total} row${b.total === 1 ? '' : 's'}${shown}${skip}`));
+        for (const row of b.rows) {
+          const agent = row.agent ?? '(unknown)';
+          L.push(`  ${dim(String(row.ts))}  ${String(row.action).padEnd(9)} ${String(row.app ?? '—').padEnd(22)} ${agent === '(unknown)' ? dim(agent) : agent}`);
+        }
+        if (!b.rows.length) L.push(dim('  (no matching audit rows)'));
+        L.push(dim('  note: agent ids are self-declared headers, not verified identities'));
+        process.stdout.write(L.join('\n') + '\n');
+        return;
+      }
+      out(b);
+      return;
+    }
     case 'agents': {
+      // Roster (M123/M124): merged live registry + audit history + locks.
       const r = await call('/api/agents');
-      out(r.body);
+      const b: any = r.body;
+      if (!f.json && process.stdout.isTTY && isColorEnabled() && b && Array.isArray(b.roster)) {
+        const dim = (s: string) => color.dim(s);
+        const ago = (ms: number | null | undefined): string => {
+          if (ms == null) return '';
+          const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+          if (s < 90) return `${s}s ago`;
+          const m = Math.round(s / 60);
+          if (m < 90) return `${m}m ago`;
+          return `${Math.round(m / 60)}h ago`;
+        };
+        const L: string[] = [];
+        L.push(color.bold('agents') + dim(`  ${b.roster.length} in roster`));
+        for (const a of b.roster) {
+          const acts = Object.entries(a.actions || {}).map(([k, v]) => `${k}×${v}`).join(' ');
+          const locks = Array.isArray(a.locks) && a.locks.length ? ` ${color.bold('lock')} ${a.locks.join(',')}` : '';
+          const idle = a.active ? '' : dim(' idle');
+          L.push(`  ${String(a.id).padEnd(24)} ${dim(ago(a.lastSeen).padEnd(8))}${idle}  ${dim(acts)}${locks}`);
+        }
+        if (!b.roster.length) L.push(dim('  (no agent activity)'));
+        const hotspots = b.contention?.hotspots ?? [];
+        if (hotspots.length) {
+          L.push(color.bold('contention'));
+          for (const h of hotspots) L.push(`  ${String(h.app).padEnd(22)} ${dim(`waits=${h.waits} steals=${h.steals} steals-after-expiry=${h.stealsAfterExpiry ?? 0}`)}`);
+        }
+        L.push(dim('  note: agent ids are self-declared headers, not verified identities'));
+        process.stdout.write(L.join('\n') + '\n');
+        return;
+      }
+      out(b);
       return;
     }
     case 'test': {

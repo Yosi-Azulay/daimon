@@ -99,3 +99,45 @@ test('LockManager.list ignores expired locks', () => {
   const live = lm.list(2000);
   assert.equal(live.length, 0);
 });
+
+// --- M124 (v1.6) contention analytics -------------------------------------
+
+test('analytics tags a denial when a second agent is refused within TTL', () => {
+  const lm = new LockManager(30_000);
+  lm.acquire('web', 'A', 'start', 0);
+  lm.acquire('web', 'B', 'restart', 100); // denied — A holds
+  const a = lm.analytics(200).perApp.get('web');
+  assert.equal(a.waits, 1);
+  assert.equal(a.stealsLive, 0);
+  const bAgent = lm.analytics(200).perAgent.get('B');
+  assert.equal(bAgent.waits, 1);
+});
+
+test('analytics distinguishes a live steal from a steal-after-expiry', () => {
+  const lm = new LockManager(1000);
+  lm.acquire('web', 'A', 'start', 0);
+  lm.steal('web', 'B', 'restart', 100);   // live — A still holds
+  lm.acquire('web', 'B', 'start', 200);   // B refreshes (own lock)
+  // let B's lock expire, then C steals nothing live
+  lm.steal('web', 'C', 'restart', 5000);  // after-expiry — B's lock lapsed
+  const a = lm.analytics(5000).perApp.get('web');
+  assert.equal(a.stealsLive, 1, 'one live steal');
+  assert.equal(a.stealsAfterExpiry, 1, 'one steal after expiry');
+});
+
+test('analytics measures the longest hold from first acquire to last refresh', () => {
+  const lm = new LockManager(30_000);
+  lm.acquire('web', 'A', 'start', 1000);
+  lm.acquire('web', 'A', 'restart', 6000); // same agent refresh — hold spans 5s
+  const a = lm.analytics(6000).perApp.get('web');
+  assert.ok(a.longestHoldMs >= 5000, `longest hold ${a.longestHoldMs} >= 5000`);
+});
+
+test('analytics: a non-contended acquire produces no waits or steals', () => {
+  const lm = new LockManager(30_000);
+  lm.acquire('web', 'A', 'start', 0);
+  const a = lm.analytics(10).perApp.get('web');
+  assert.equal(a.waits, 0);
+  assert.equal(a.stealsLive, 0);
+  assert.equal(a.stealsAfterExpiry, 0);
+});

@@ -28,6 +28,11 @@ export interface ReportInputs {
   history: History | null;
   // Live agent registry snapshot (server-side); optional for CLI-side calls.
   agents?: { id: string; lastSeen: number }[];
+  // Audit-derived rows (M124, v1.6) for the agents-section deepening: top
+  // agents by action count + contention hotspots (steal counts are durable, so
+  // they survive a restart; denials are live-only and not in the report). The
+  // caller reads the audit files — report.ts stays fs-free and composition-only.
+  auditRows?: { ts: string; agent: string | null; action: string; app: string | null }[];
   flakyThreshold?: number;
 }
 
@@ -285,7 +290,27 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
     const taskRuns = h
       ? h.queryTasks({ app: opts.app, since, limit: 500 }).filter(t => t.ts <= until && inScope(t.app))
       : [];
-    if (!active.length && !taskRuns.length) {
+    // Audit-derived deepening (M124, v1.6): top agents by action count +
+    // contention hotspots (steals — durable; denials are live-only). Windowed
+    // and scoped like every other section.
+    const rows = (inputs.auditRows ?? []).filter(r => {
+      const t = Date.parse(r.ts);
+      if (!Number.isFinite(t) || t < since || t > until) return false;
+      if (r.app != null && !inScope(r.app)) return false;
+      if (opts.app && r.app !== opts.app) return false;
+      return true;
+    });
+    const byAgent = new Map<string, number>();
+    const stealsByApp = new Map<string, number>();
+    for (const r of rows) {
+      const key = r.agent ?? '(unknown)';
+      byAgent.set(key, (byAgent.get(key) ?? 0) + 1);
+      if (r.action === 'steal' && r.app) stealsByApp.set(r.app, (stealsByApp.get(r.app) ?? 0) + 1);
+    }
+    const topAgents = [...byAgent.entries()].map(([id, actions]) => ({ id, actions })).sort((a, b) => b.actions - a.actions).slice(0, 10);
+    const hotspots = [...stealsByApp.entries()].map(([app, steals]) => ({ app, steals })).sort((a, b) => b.steals - a.steals).slice(0, 10);
+
+    if (!active.length && !taskRuns.length && !rows.length) {
       S.agents = { note: 'no agent activity in the window' };
     } else {
       const tasksByApp = new Map<string, number>();
@@ -294,6 +319,9 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
         active: active.slice(0, 10),
         taskRuns: taskRuns.length,
         taskRunsByApp: [...tasksByApp.entries()].map(([app, count]) => ({ app, count })).sort((a, b) => b.count - a.count).slice(0, 10),
+        auditActions: rows.length,
+        topAgents,
+        contentionHotspots: hotspots,
       };
     }
   } catch (err: any) {
@@ -444,8 +472,18 @@ export function renderReportMd(r: Report): string {
   L.push('## Agents');
   if (S.agents?.note) L.push(`> ${S.agents.note}`);
   else {
-    L.push(`${(S.agents.active ?? []).length} active agent${(S.agents.active ?? []).length === 1 ? '' : 's'} · ${S.agents.taskRuns} task run${S.agents.taskRuns === 1 ? '' : 's'}`);
+    L.push(`${(S.agents.active ?? []).length} active agent${(S.agents.active ?? []).length === 1 ? '' : 's'} · ${S.agents.taskRuns} task run${S.agents.taskRuns === 1 ? '' : 's'}${S.agents.auditActions ? ` · ${S.agents.auditActions} audited action${S.agents.auditActions === 1 ? '' : 's'}` : ''}`);
     for (const t of (S.agents.taskRunsByApp ?? []).slice(0, 5)) L.push(`- **${t.app}** ×${t.count}`);
+    if ((S.agents.topAgents ?? []).length) {
+      L.push('');
+      L.push('_Top agents_ (ids are self-declared, not verified):');
+      for (const a of S.agents.topAgents.slice(0, 5)) L.push(`- \`${a.id}\` ×${a.actions}`);
+    }
+    if ((S.agents.contentionHotspots ?? []).length) {
+      L.push('');
+      L.push('_Contention hotspots_ (lock steals):');
+      for (const c of S.agents.contentionHotspots.slice(0, 5)) L.push(`- **${c.app}** ${c.steals} steal${c.steals === 1 ? '' : 's'}`);
+    }
   }
   L.push('');
 

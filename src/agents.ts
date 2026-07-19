@@ -25,10 +25,35 @@ export interface AppLock {
   expiresAt: number;
 }
 
+// M124 (v1.6): the interaction ring tags each lock event's outcome so contention
+// can be surfaced after the fact. 'denied' = an acquire refused because another
+// agent held a live lock; 'steal-live' = a forced take over a live foreign lock;
+// 'steal-expired' = a forced take when the prior lock had already expired (or
+// none was held); 'acquired'/'handoff' are non-contended.
+export type InteractionOutcome = 'acquired' | 'denied' | 'steal-live' | 'steal-expired' | 'handoff';
+
 export interface AppInteraction {
   agent: string;
   at: number;
   action: string;
+  outcome?: InteractionOutcome;
+}
+
+export interface AppContention {
+  waits: number;             // acquires denied (another agent held the lock)
+  stealsLive: number;        // forced takes over a live foreign lock
+  stealsAfterExpiry: number; // forced takes after the prior lock expired
+  longestHoldMs: number;     // longest observed single hold (first acquire → last refresh)
+}
+
+export interface AgentContention {
+  waits: number;   // times THIS agent was denied
+  steals: number;  // times THIS agent force-took a lock (live or after expiry)
+}
+
+export interface LockAnalytics {
+  perApp: Map<string, AppContention>;
+  perAgent: Map<string, AgentContention>;
 }
 
 // Stable, per-session agent id: <short-hostname>-<pid>-<4hex>. Kept in env so a
@@ -79,35 +104,53 @@ export class AgentRegistry {
   }
 }
 
+// Widened from 16 (M124): analytics read the whole ring, so a slightly deeper
+// per-app window gives better contention signal. Still memory-only, still
+// bounded — no persistence, no new state.
+const INTERACTION_RING = 64;
+
 export class LockManager {
   private readonly locks = new Map<string, AppLock>();
   private readonly history = new Map<string, AppInteraction[]>();
+  // Longest single observed hold per app (first acquire → last same-agent
+  // refresh). Tracked as the lock refreshes since expired locks are never
+  // explicitly released.
+  private readonly longestHold = new Map<string, number>();
 
   constructor(private readonly ttlMs = DEFAULT_LOCK_TTL_MS) {}
 
   // Returns null when the lock was acquired (or refreshed by the same agent),
-  // or the live AppLock when another agent currently holds it.
+  // or the live AppLock when another agent currently holds it (a denial).
   acquire(app: string, agent: string, action: string, now = Date.now()): AppLock | null {
-    this.recordInteraction(app, agent, action, now);
     const existing = this.locks.get(app);
     if (existing && existing.expiresAt > now && existing.agent !== agent) {
+      this.recordInteraction(app, agent, action, now, 'denied');
       return { ...existing };
     }
-    const next: AppLock = { app, agent, lockedAt: now, expiresAt: now + this.ttlMs };
+    // Same-agent refresh keeps the original lockedAt so a hold's duration spans
+    // first acquire → last refresh; a fresh/expired lock starts a new hold.
+    const refresh = existing && existing.agent === agent && existing.expiresAt > now;
+    const lockedAt = refresh ? existing!.lockedAt : now;
+    const next: AppLock = { app, agent, lockedAt, expiresAt: now + this.ttlMs };
     this.locks.set(app, next);
+    this.noteHold(app, now - lockedAt);
+    this.recordInteraction(app, agent, action, now, 'acquired');
     return null;
   }
 
   // Force-take a lock regardless of holder. Used by --steal and by handoff.
   steal(app: string, agent: string, action: string, now = Date.now()): AppLock {
-    this.recordInteraction(app, agent, action, now);
+    const existing = this.locks.get(app);
+    const outcome: InteractionOutcome =
+      existing && existing.agent !== agent && existing.expiresAt > now ? 'steal-live' : 'steal-expired';
+    this.recordInteraction(app, agent, action, now, outcome);
     const next: AppLock = { app, agent, lockedAt: now, expiresAt: now + this.ttlMs };
     this.locks.set(app, next);
     return next;
   }
 
   handoff(app: string, toAgent: string, fromAgent: string | null, now = Date.now()): AppLock {
-    this.recordInteraction(app, toAgent, `handoff${fromAgent ? `<-${fromAgent}` : ''}`, now);
+    this.recordInteraction(app, toAgent, `handoff${fromAgent ? `<-${fromAgent}` : ''}`, now, 'handoff');
     const next: AppLock = { app, agent: toAgent, lockedAt: now, expiresAt: now + this.ttlMs };
     this.locks.set(app, next);
     return next;
@@ -133,10 +176,39 @@ export class LockManager {
     return arr.slice(-limit).reverse();
   }
 
-  private recordInteraction(app: string, agent: string, action: string, now: number): void {
+  // Contention analytics (M124), derived from the in-memory ring — session-
+  // scoped (denials are never persisted; durable live-steal counts come from
+  // `steal:<app>` audit rows). Longest hold folds in any currently-live hold.
+  analytics(now = Date.now()): LockAnalytics {
+    const perApp = new Map<string, AppContention>();
+    const perAgent = new Map<string, AgentContention>();
+    for (const [app, ring] of this.history) {
+      const a: AppContention = { waits: 0, stealsLive: 0, stealsAfterExpiry: 0, longestHoldMs: this.longestHold.get(app) ?? 0 };
+      for (const it of ring) {
+        if (it.outcome === 'denied') a.waits++;
+        else if (it.outcome === 'steal-live') a.stealsLive++;
+        else if (it.outcome === 'steal-expired') a.stealsAfterExpiry++;
+        if (it.outcome === 'denied' || it.outcome === 'steal-live' || it.outcome === 'steal-expired') {
+          const ag = perAgent.get(it.agent) ?? { waits: 0, steals: 0 };
+          if (it.outcome === 'denied') ag.waits++; else ag.steals++;
+          perAgent.set(it.agent, ag);
+        }
+      }
+      const live = this.locks.get(app);
+      if (live && live.expiresAt > now) a.longestHoldMs = Math.max(a.longestHoldMs, now - live.lockedAt);
+      perApp.set(app, a);
+    }
+    return { perApp, perAgent };
+  }
+
+  private noteHold(app: string, ms: number): void {
+    if (ms > (this.longestHold.get(app) ?? 0)) this.longestHold.set(app, ms);
+  }
+
+  private recordInteraction(app: string, agent: string, action: string, now: number, outcome?: InteractionOutcome): void {
     const arr = this.history.get(app) ?? [];
-    arr.push({ agent, at: now, action });
-    while (arr.length > 16) arr.shift();
+    arr.push({ agent, at: now, action, outcome });
+    while (arr.length > INTERACTION_RING) arr.shift();
     this.history.set(app, arr);
   }
 }
