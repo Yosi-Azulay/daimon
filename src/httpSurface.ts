@@ -83,8 +83,9 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/api/self', stability: 'stable', summary: 'Daemon self-metrics snapshot.' },
   { method: 'GET', path: '/api/self/history', stability: 'stable', summary: 'Persisted self-metrics rows.' },
   { method: 'GET', path: '/api/presets', stability: 'stable', summary: 'Built-in config presets.' },
-  { method: 'GET', path: '/api/plugins', stability: 'stable', summary: 'Installed doctor plug-ins.' },
-  { method: 'POST', path: '/api/plugins/scan', stability: 'stable', summary: 'Run plug-in scans now.' },
+  // Reshaped in v1.5 (M118, Plugin API v1) — see RELEASE-v1.5.0.md Migration.
+  { method: 'GET', path: '/api/plugins', stability: 'experimental', summary: 'Loaded plug-ins: name, file, apiVersion, status (active|disabled|load-error), hooks, error.' },
+  { method: 'POST', path: '/api/plugins/scan', stability: 'experimental', summary: 'Run plug-in-contributed doctor rules now (advise-only).' },
   { method: 'POST', path: '/api/session/record', stability: 'stable', summary: 'Toggle session recording (?action=start|stop|toggle).' },
   { method: 'GET', path: '/api/session/status', stability: 'stable', summary: 'Session recording state.' },
   { method: 'POST', path: '/api/snapshot-state', stability: 'stable', summary: 'Write the daemon-handoff state file.' },

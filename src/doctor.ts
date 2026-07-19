@@ -9,6 +9,7 @@ import { analyseRestartCadence } from './profiles.js';
 import { configValidationWarnings } from './config.js';
 import { allProfiles, matchDetect, RootFs } from './frameworks.js';
 import { daimonDir, readLock } from './daemon.js';
+import { loadPlugins, pluginsDir } from './plugins.js';
 import { inspectApiPort } from './portDiag.js';
 import { resolveEnvFilePath } from './envFiles.js';
 
@@ -49,9 +50,10 @@ export const DOCTOR_COVERAGE: DoctorCoverageRow[] = [
   { failure: 'Health probe pointed at a 404 path', kind: 'auto-fix', coverage: '`health-probe-missing`; `daimon pin-health <app> --accept` persists the discovered path.' },
   { failure: 'Child unverifiable after a daemon handoff', kind: 'gap', coverage: 'No auto-fix by design (verify-then-kill: daimon never kills what it cannot positively identify). The app surfaces as status `orphaned` with a per-case remedy in `daimon list` / `daimon why` (M88).' },
   { failure: 'CLI and daemon running different versions', kind: 'built-in', coverage: 'Every CLI call compares versions via the x-daimon-version header and warns on stderr with the remedy (`daimon daemon restart`) — never a hard fail (M88).' },
+  { failure: 'Plugin failed to load, or was disabled after a hook threw', kind: 'rule', coverage: '`plugin-load-error: <file>` (M118, v1.5) — advise-only: names the captured error and the remedy (fix or remove the file, then `daimon daemon restart`). Doctor never deletes or edits plugin files; a hook throw disables the plugin for the session with one `plugin-error` self-event (M117 crash isolation), never a daemon-down. `daimon plugins` is the detail view.' },
 ];
 
-export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Promise<{ ok: boolean; checks: Check[] }> {
+export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opts?: { plugins?: boolean }): Promise<{ ok: boolean; checks: Check[] }> {
   const checks: Check[] = [];
   const appNames = new Set(apps.map(a => a.name));
 
@@ -400,6 +402,52 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[]): Pr
       });
     }
   }
+
+  // Plugin API v1 (M118): surface files that failed to load or validate, and
+  // run plugin-contributed doctor rules. Advise-only both ways — doctor never
+  // deletes or edits a user's plugin files (never-edit-user-source rule).
+  // opts.plugins === false skips this section: the daemon's per-request
+  // runDoctor call (/api/why) must not re-import plugin files — each
+  // cache-busted import() is cached forever by Node's ESM loader, so loading
+  // here on a request path would grow the daemon's module registry without
+  // bound. CLI doctor runs in a short-lived process where fresh reads are
+  // exactly what we want.
+  if (opts?.plugins !== false) try {
+    const loaded = await loadPlugins(pluginsDir(config.plugins?.dir ?? undefined));
+    for (const p of loaded) {
+      if (p.status !== 'active') {
+        checks.push({
+          name: `plugin-load-error: ${path.basename(p.file)}`,
+          ok: false,
+          detail: `${p.error} — fix or remove the file yourself, then 'daimon daemon restart' (doctor never touches plugin files)`,
+        });
+      }
+    }
+    const pluginCtx = Object.freeze({
+      config,
+      apps: apps.map(a => ({ name: a.name, framework: a.serverProfile ?? a.workspaceType ?? null, workspaceRoot: a.workspaceRoot ?? null })),
+    });
+    for (const p of loaded) {
+      if (p.status !== 'active' || !p.rules?.length) continue;
+      for (const rule of p.rules) {
+        try {
+          const r = await rule.check(pluginCtx);
+          const arr = Array.isArray(r) ? r : [r];
+          for (const f of arr) {
+            if (f && typeof f === 'object' && typeof f.ok === 'boolean') {
+              checks.push({ name: `plugin:${p.name}/${rule.id}`, ok: f.ok, detail: f.detail });
+            }
+          }
+        } catch (err: any) {
+          checks.push({
+            name: `plugin:${p.name}/${rule.id}`,
+            ok: false,
+            detail: `check threw: ${err?.message ?? String(err)} — fix or remove the plugin file (advise-only; built-in rules are unaffected)`,
+          });
+        }
+      }
+    }
+  } catch { /* plugins must never break doctor's built-in rules */ }
 
   checks.push({ name: 'agent token footprint', ok: true, detail: tokenFootprint(apps) });
 

@@ -342,6 +342,7 @@ export const EVENT_KIND_STABILITY = {
   'resource-leak-suspect': 'experimental', // v1.3 (M107)
   'cpu-storm': 'experimental', // v1.3 (M108)
   'resource-budget-exceeded': 'experimental', // v1.3 (M108)
+  'plugin-error': 'experimental', // v1.5 (M117)
 } as const satisfies Record<string, import('./stability.js').Stability>;
 
 export type AppEventType = keyof typeof EVENT_KIND_STABILITY;

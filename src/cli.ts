@@ -740,6 +740,32 @@ async function main() {
     failHint(`unknown plugin subcommand: ${sub}`, 'usage: daimon plugin <list|show <name>|validate <path>>');
   }
 
+  if (cmd === 'plugins') {
+    // Plugin API v1 (M118): what loaded, what didn't, and why. TTY table by
+    // default; compact JSON with --json or when piped.
+    const fp = parseFlags(rest);
+    await ensureDaemon();
+    const r = await call('/api/plugins');
+    const arr: any[] = Array.isArray(r.body) ? r.body : [];
+    if (!fp.json && process.stdout.isTTY && isColorEnabled()) {
+      const dim = (s: string) => color.dim(s);
+      const L: string[] = [];
+      const nonActive = arr.filter(p => p.status !== 'active').length;
+      L.push(color.bold('plugins') + dim(`  ${arr.length} file${arr.length === 1 ? '' : 's'} in ~/.daimon/plugins${nonActive ? ` · ${nonActive} not active` : ''}`));
+      for (const p of arr) {
+        const rawStatus = String(p.status).padEnd(10);
+        const status = p.status === 'active' ? rawStatus : color.red(rawStatus);
+        L.push(`  ${String(p.name).padEnd(26)} ${status} v${p.apiVersion ?? '—'}  ${dim((p.hooks ?? []).join(',') || '(no hooks)')}`);
+        if (p.error) L.push(dim(`    ${p.error}`));
+      }
+      if (!arr.length) L.push(dim('  (none — drop a .mjs file exporting { name, apiVersion: 1 } into ~/.daimon/plugins; see PLUGINS.md)'));
+      process.stdout.write(L.join('\n') + '\n');
+      return;
+    }
+    out(r.body);
+    return;
+  }
+
   if (cmd === 'workspaces') {
     await ensureDaemon();
     const sub = rest[0];

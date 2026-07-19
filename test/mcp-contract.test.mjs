@@ -34,6 +34,8 @@ const EXPECTED_TOOLS = [
   'daimon_top',
   // v1.4 (M111): the one-way carry-out bundle.
   'daimon_export',
+  // v1.5 (M118): Plugin API v1 visibility.
+  'daimon_plugins',
 ].sort();
 
 async function connectedClient() {

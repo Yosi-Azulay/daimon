@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.4.0 — docs</title>
+<title>daimon v1.5.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.4.0</span></h1>
+<h1>daimon <span class="badge">v1.5.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -222,7 +222,9 @@ npx daimon init --auto</code></pre>
 <h3>plugin</h3>
 <dl class="cli-grid">
 <dt><code>daimon plugin list|show &lt;name&gt;|validate &lt;path&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>Manage doctor plug-ins.</dd>
+<dd>Manage plug-ins (Plugin API v1): list, show one, validate a file offline.</dd>
+<dt><code>daimon plugins [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>List loaded plug-ins: name, apiVersion, status (active|disabled|load-error), hooks, error.</dd>
 </dl>
 
 <h2 id="http">HTTP API reference</h2>
@@ -350,10 +352,10 @@ npx daimon init --auto</code></pre>
 <dd>Persisted self-metrics rows.</dd>
 <dt><code>GET /api/presets</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Built-in config presets.</dd>
-<dt><code>GET /api/plugins</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>Installed doctor plug-ins.</dd>
-<dt><code>POST /api/plugins/scan</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>Run plug-in scans now.</dd>
+<dt><code>GET /api/plugins</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Loaded plug-ins: name, file, apiVersion, status (active|disabled|load-error), hooks, error.</dd>
+<dt><code>POST /api/plugins/scan</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Run plug-in-contributed doctor rules now (advise-only).</dd>
 <dt><code>POST /api/session/record</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Toggle session recording (?action=start|stop|toggle).</dd>
 <dt><code>GET /api/session/status</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -423,6 +425,7 @@ npx daimon init --auto</code></pre>
 <dt><code>daimon_groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Named app groups (v1.1): apps, autoStart, status counts, healthy/total per group.</dd>
 <dt><code>daimon_top</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Live resource table (v1.3): running apps with pid, RSS (MB), CPU %, uptime — RSS-sorted, nulls never errors. Warn-only; daimon never kills.</dd>
 <dt><code>daimon_export</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>One-way carry-out bundle (v1.4): events, error groups, test runs, compiles, crashes (bounded tails), and the report in a versioned envelope (schemaVersion 1, additive-only). No import exists; redaction holds (key names + hashes, never values).</dd>
+<dt><code>daimon_plugins</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Loaded plug-ins (Plugin API v1, v1.5): name, file, apiVersion, status (active|disabled|load-error), declared hooks, error. NOT sandboxed — trusted user-placed files; see PLUGINS.md.</dd>
 </dl>
 
 <h2 id="config">Config reference</h2>
@@ -510,6 +513,7 @@ npx daimon init --auto</code></pre>
 <dt><code>resource-leak-suspect</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>cpu-storm</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>resource-budget-exceeded</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>plugin-error</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 </dl>
 
 <h2 id="doctor">Doctor coverage</h2>
@@ -535,6 +539,7 @@ npx daimon init --auto</code></pre>
 <tr><td>Health probe pointed at a 404 path</td><td><span class="cov cov-auto-fix">auto-fix</span></td><td><code>health-probe-missing</code>; <code>daimon pin-health &lt;app&gt; --accept</code> persists the discovered path.</td></tr>
 <tr><td>Child unverifiable after a daemon handoff</td><td><span class="cov cov-gap">by design: no rule</span></td><td>No auto-fix by design (verify-then-kill: daimon never kills what it cannot positively identify). The app surfaces as status <code>orphaned</code> with a per-case remedy in <code>daimon list</code> / <code>daimon why</code> (M88).</td></tr>
 <tr><td>CLI and daemon running different versions</td><td><span class="cov cov-built-in">built-in</span></td><td>Every CLI call compares versions via the x-daimon-version header and warns on stderr with the remedy (<code>daimon daemon restart</code>) — never a hard fail (M88).</td></tr>
+<tr><td>Plugin failed to load, or was disabled after a hook threw</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>plugin-load-error: &lt;file&gt;</code> (M118, v1.5) — advise-only: names the captured error and the remedy (fix or remove the file, then <code>daimon daemon restart</code>). Doctor never deletes or edits plugin files; a hook throw disables the plugin for the session with one <code>plugin-error</code> self-event (M117 crash isolation), never a daemon-down. <code>daimon plugins</code> is the detail view.</td></tr>
 </tbody></table>
 
 <h2 id="faq">FAQ</h2>

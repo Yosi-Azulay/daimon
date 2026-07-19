@@ -362,6 +362,26 @@ daimon completion powershell | Out-String | Invoke-Expression   # PowerShell (ad
 
 `node scripts/demo/run-demo.mjs` replays a deterministic session (start → error surfaced → report → export) against a throwaway state dir — the source of the README screencast, and provably unable to touch your real `~/.daimon`.
 
+## Plugin API v1 (v1.5)
+
+Drop a file into `~/.daimon/plugins`, restart the daemon, and daimon calls your code:
+
+```js
+// ~/.daimon/plugins/my-plugin.mjs
+export default {
+  name: 'my-plugin',
+  apiVersion: 1,
+  onEvent(evt) { /* every event, off the write path */ },
+  onAppStart(app) { /* { name, framework, port, pid, status } */ },
+  onAppStop(app) { },
+  registerDoctorRules() { return [/* advise-only rules for `daimon doctor` */]; },
+};
+```
+
+The surface is deliberately small: **observe + doctor-rule contribution only.** Hooks receive read-only frozen snapshots; a v1 plugin cannot mutate app state, config, or history. Crash isolation is the other half of the contract: a file that explodes at load is skipped (its siblings still load), and a hook that throws disables that plugin for the session with one `plugin-error` self-event — a plugin bug never takes the daemon down. `daimon plugins` shows what loaded, what didn't, and why; `daimon plugin validate <path>` checks a file offline; two runnable examples live in [`examples/plugins/`](examples/plugins/).
+
+The trust model, stated plainly: **plugins are not sandboxed.** They run in-process with full Node privileges — daimon only loads files you placed in your own `~/.daimon/plugins`, and treats them as code you chose to run. No marketplace, no remote fetch, no auto-install, ever. [PLUGINS.md](PLUGINS.md) is the full manual: API reference, lifecycle, `apiVersion` policy, cookbook. All plugin surfaces ship `experimental`.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -603,7 +623,8 @@ daimon completion <bash|zsh|fish|powershell>
 
 # claude / plugins
 daimon claude install|update|uninstall|status
-daimon plugin list|show <name>|validate <path>
+daimon plugins [--json]            # loaded plug-ins: apiVersion, status, hooks, errors (v1.5 — see PLUGINS.md)
+daimon plugin list|show <name>|validate <path>   # validate checks a file offline against Plugin API v1
 ```
 
 All CLI commands print compact JSON on stdout by default (`--full` for the verbose v0.4 shape). Errors are compact JSON on stderr with non-zero exit. Exit codes: `0` success, `1` generic error, `2` timeout (used by `daimon wait`, `daimon focus`, `daimon ensure*`, `daimon ci`), `5` soft-lock held by another agent (pass `--steal` to override).

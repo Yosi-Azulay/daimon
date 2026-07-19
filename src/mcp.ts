@@ -47,6 +47,7 @@ export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stabili
   daimon_groups: 'experimental', // v1.1 (M98)
   daimon_top: 'experimental', // v1.3 (M106)
   daimon_export: 'experimental', // v1.4 (M111)
+  daimon_plugins: 'experimental', // v1.5 (M118)
 };
 
 function apiPort(): number {
@@ -507,6 +508,15 @@ export function buildServer(): McpServer {
     inputSchema: {},
   }, async () => {
     const r = await callJson('/api/top');
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_plugins', {
+    description: 'Loaded plug-ins (Plugin API v1, v1.5): one row per file in ~/.daimon/plugins as { name, file, apiVersion, status, hooks, description, error, findings }. status is "active" (loaded and hooked), "disabled" (a hook threw this session — unhooked until the next daemon restart), or "load-error" (failed to import or validate; error says why). Plug-ins are NOT sandboxed: they run in-process with full Node privileges and are trusted code the user placed themselves — see PLUGINS.md.',
+    inputSchema: {},
+  }, async () => {
+    const r = await callJson('/api/plugins');
     if (r.status === 0) return err(r.body?.error || 'unknown');
     return ok(r.body);
   });

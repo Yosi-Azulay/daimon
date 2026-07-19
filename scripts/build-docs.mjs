@@ -96,6 +96,7 @@ const MCP_DESCRIPTIONS = {
   daimon_groups: 'Named app groups (v1.1): apps, autoStart, status counts, healthy/total per group.',
   daimon_top: 'Live resource table (v1.3): running apps with pid, RSS (MB), CPU %, uptime — RSS-sorted, nulls never errors. Warn-only; daimon never kills.',
   daimon_export: 'One-way carry-out bundle (v1.4): events, error groups, test runs, compiles, crashes (bounded tails), and the report in a versioned envelope (schemaVersion 1, additive-only). No import exists; redaction holds (key names + hashes, never values).',
+  daimon_plugins: 'Loaded plug-ins (Plugin API v1, v1.5): name, file, apiVersion, status (active|disabled|load-error), declared hooks, error. NOT sandboxed — trusted user-placed files; see PLUGINS.md.',
 };
 
 function renderMcp() {

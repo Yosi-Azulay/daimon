@@ -26,7 +26,7 @@ import { installCrashHandlers } from './crashDump.js';
 import { consumeHandoff } from './stateHandoff.js';
 import { loadSessionState, saveSessionState } from './sessionState.js';
 import { SelfMetricsCollector } from './selfMetrics.js';
-import { loadPlugins, pluginsDir, runPluginScans, buildContext, type LoadedPlugin } from './plugins.js';
+import { loadPlugins, pluginsDir, PluginHost } from './plugins.js';
 import { DigestScheduler, WebhookDispatcher, effectiveWebhooks, redactWebhookUrl } from './webhooks.js';
 import { buildReport, renderReportMd } from './report.js';
 import App from './tui/App.js';
@@ -238,13 +238,47 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     try { registry.pruneOldErrors(); } catch {}
   }, 60 * 60 * 1000);
 
-  let plugins: LoadedPlugin[] = [];
-  try {
-    plugins = await loadPlugins(pluginsDir(config.plugins?.dir ?? undefined));
-    for (const p of plugins) {
-      if (p.status === 'failed') process.stderr.write(`[daimon] plug-in skipped: ${path.basename(p.file)} — ${p.error}\n`);
+  // Plugin API v1 (M116): enumerate ~/.daimon/plugins once at startup; every
+  // load failure is a skipped file + self-warn, never a daemon-down. Hook
+  // dispatch rides the registry 'event' emitter, deferred off the write path.
+  const pluginHost = await (async () => {
+    let loaded: Awaited<ReturnType<typeof loadPlugins>> = [];
+    try {
+      loaded = await loadPlugins(pluginsDir(config.plugins?.dir ?? undefined));
+    } catch {}
+    const host = new PluginHost(loaded, {
+      onPluginError: info => {
+        try {
+          registry.recordEvent({
+            app: '__daemon__', type: 'plugin-error',
+            message: `plugin "${info.plugin}" disabled for this session — ${info.hook} threw: ${info.message}${info.stack ? `\n${info.stack}` : ''}`,
+          });
+        } catch {}
+      },
+    });
+    host.setSnapshotProvider(name => {
+      const app = registry.getApp(name);
+      const st = registry.getState(name);
+      if (!app && !st) return null;
+      return {
+        name,
+        framework: app?.serverProfile ?? app?.workspaceType ?? null,
+        port: st?.port ?? null,
+        pid: st?.pid ?? null,
+        status: st?.status ?? 'unknown',
+      };
+    });
+    registry.on('event', evt => host.handleRegistryEvent(evt));
+    // Skip warnings land AFTER the host subscribes, so active plugins observe
+    // their broken siblings' self-warn events like any other event.
+    for (const p of loaded) {
+      if (p.status !== 'active') {
+        process.stderr.write(`[daimon] plug-in skipped: ${path.basename(p.file)} — ${p.error}\n`);
+        try { registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `plug-in skipped: ${path.basename(p.file)} — ${p.error}` }); } catch {}
+      }
     }
-  } catch {}
+    return host;
+  })();
 
   // Global webhooks + per-app overrides.<app>.webhooks blocks (M72).
   const allWebhooks = effectiveWebhooks(config);
@@ -351,14 +385,16 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
       return { ok: true, addedApps: r.addedApps, removedApps: r.removedApps, restartRequired: r.restartRequired };
     },
     selfMetrics,
-    getPlugins: () => plugins.map(p => ({ name: p.name, description: p.description, file: p.file, status: p.status, error: p.error, lastFindings: p.lastFindings })),
+    getPlugins: () => pluginHost.list(),
+    getPluginCounts: () => pluginHost.counts(),
     runPluginScans: async () => {
-      const ctx = buildContext({
+      await pluginHost.runDoctorRules({
         config: registry.getConfig(),
-        apps: registry.names().map(n => ({ name: n, workspaceRoot: registry.getApp(n)?.workspaceRoot ?? '' })),
-        history,
+        apps: registry.names().map(n => {
+          const app = registry.getApp(n);
+          return { name: n, framework: app?.serverProfile ?? app?.workspaceType ?? null, workspaceRoot: app?.workspaceRoot ?? null };
+        }),
       });
-      await runPluginScans(plugins, ctx);
     },
   });
   // A live lock observed before our bind = a running daemon we may be

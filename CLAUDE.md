@@ -59,6 +59,12 @@ src/
                     # ignore unknown keys). No import exists, ever (import edges
                     # toward sync — standing NO). Sections degrade to { note };
                     # md/csv renderers + the atomic --out helper live here too.
+  plugins.ts        # Plugin API v1 (M116, v1.5): loadPlugins (validate-per-file,
+                    # never throws) + PluginHost (off-write-path dispatch via one
+                    # setImmediate; frozen snapshots; first hook throw = session-
+                    # disable + one plugin-error event). Observe + advise-only
+                    # doctor rules ONLY — no mutating hooks in v1. NOT sandboxed
+                    # (trusted-by-placement); see PLUGINS.md.
   agents.ts         # Agent identity (`<host>-<pid>-<rand4>`) + 30s per-app LockManager.
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
@@ -105,7 +111,7 @@ dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
 completions/        # GENERATED shell completion (bash/zsh/powershell) — never hand-edit.
                     # Regen: npm run build:completions; drift-gated by test/completion.test.mjs.
 scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIMON_HOME only.
-test/               # node --test suite. 795 test cases (v1.4); files run in parallel child processes.
+test/               # node --test suite. 833 test cases (v1.5); files run in parallel child processes.
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
 
@@ -148,7 +154,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - Never push to git or run `npm publish`. The human (Yosi) does that, with 2FA.
 - Never share `yosi@flycotech.com` in published artifacts. Public author is `Yosi Azulay (https://flycotech.com)`.
 - Never mutate global state outside `~/.daimon/*` and a local `daimon.config.json`.
-- Plug-ins are opt-in but NOT sandboxed: they run in-process with full Node privileges, so daimon only loads files the user placed in `~/.daimon/plugins` themselves. Treat them as trusted code, not a confined extension (see `src/plugins.ts`).
+- Plug-ins are opt-in but NOT sandboxed: they run in-process with full Node privileges, so daimon only loads files the user placed in `~/.daimon/plugins` themselves. Treat them as trusted code, not a confined extension. No marketplace, no remote fetch, no auto-install — ever (see `src/plugins.ts`, PLUGINS.md).
 
 ## Conventions
 
@@ -231,6 +237,40 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   process serves; sequential CLI calls need one pinned `DAIMON_AGENT_ID` or
   they trip each other's soft-locks; CLI `cwd` (workspace) and `DAIMON_HOME`
   (state) must stay separate params. GIF recording stays human.
+
+- **Plugin API v1 is observe-only and crash-isolated (v1.5, M116–M117).** A
+  plugin exports `{ name, apiVersion: 1, onEvent?, onAppStart?, onAppStop?,
+  registerDoctorRules? }` — nothing a hook returns is consumed except doctor
+  rules (advise-only, no auto-fix), and hooks receive FROZEN copies: no v1
+  hook can mutate app state, config, or history (a mutating hook is a
+  different, unplanned apiVersion). Dispatch is off the event write path (one
+  setImmediate, zero when no plugin subscribes — benched in
+  `test/plugins.test.mjs`). Isolation semantics: throw at load → that file is
+  `load-error`, siblings load; first throw in any hook (sync or async
+  rejection) → session-disable with exactly one `plugin-error` self-event —
+  NEVER a daemon-down, torture-gated by `test/plugin-isolation.test.mjs`.
+  Unknown `apiVersion` → skip + self-warn naming the supported version.
+  `registerDoctorRules()` runs once at load; its throw is a load-error, while
+  a rule `check()` throw is a session-disable. Example plugins live in
+  `examples/plugins/` and ship in the repo but NOT the npm tarball
+  (pack-asserted); PLUGINS.md cookbook embeds are diffed byte-for-byte
+  (`test/plugins-docs.test.mjs`) — edit the example and the manual together.
+  Legacy `{ name, scan }` doctor plug-ins deliberately stopped loading in
+  v1.5 (migration message points at PLUGINS.md).
+
+## v1.5 highlights (what landed this release)
+
+- **Plugin API v1 (M116–M121)**: the hook surface + isolation above;
+  `daimon plugins [--json]` / `GET /api/plugins` / MCP `daimon_plugins`
+  (31 tools) with status `active`|`disabled`|`load-error`; doctor
+  `plugin-load-error` (advise-only, never touches user plugin files) +
+  plugin rules as `plugin:<name>/<rule>` checks; `/api/overview` additive
+  `plugins` count badge (dashboard overview tile, Playwright + axe covered
+  via `dashboard/e2e/plugins-badge.spec.ts` route interception); PLUGINS.md
+  (trust model verbatim, no-sandbox statement) + two exercised examples.
+  All new surfaces `experimental`. Tests: `test/plugins.test.mjs` (rewritten),
+  `test/plugin-isolation.test.mjs`, `test/plugin-surfaces.test.mjs`,
+  `test/plugin-examples.test.mjs`, `test/plugins-docs.test.mjs`.
 
 ## v1.4 highlights (what landed this release)
 

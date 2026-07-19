@@ -172,7 +172,8 @@ export interface ServerOpts {
   reloadConfig?: () => Promise<{ ok: boolean; addedApps: string[]; removedApps: string[] }>;
   patchConfig?: (patch: any) => { ok: true; applied: string[]; addedApps?: string[]; removedApps?: string[]; restartRequired?: string[] } | { ok: false; error: string };
   selfMetrics?: SelfMetricsCollector | null;
-  getPlugins?: () => { name: string; description?: string; file: string; status: string; error?: string; lastFindings?: any[] }[];
+  getPlugins?: () => import('./plugins.js').PluginInfo[];
+  getPluginCounts?: () => { total: number; active: number; nonActive: number };
   runPluginScans?: () => Promise<void>;
 }
 
@@ -422,12 +423,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
       if (url.pathname === '/api/plugins' && method === 'GET') {
+        // Plugin API v1 (M118): rows carry apiVersion + declared hooks; status
+        // is 'active' | 'disabled' | 'load-error' (see PLUGINS.md).
         const list = opts.getPlugins ? opts.getPlugins() : [];
-        sendJson(res, 200, list.map(p => ({
-          name: p.name, description: p.description ?? null, file: p.file,
-          status: p.status, error: p.error ?? null,
-          findings: p.lastFindings ?? [],
-        })));
+        sendJson(res, 200, list);
         return;
       }
       if (url.pathname === '/api/plugins/scan' && method === 'POST') {
@@ -1501,7 +1500,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           if (cfg) {
             const { runDoctor } = await import('./doctor.js');
             const allApps = registry.names().map(n => registry.getApp(n)!).filter(Boolean);
-            const result = await runDoctor(cfg, allApps);
+            // plugins:false — never re-import plugin files on a request path
+            // (unbounded ESM module-registry growth; see runDoctor).
+            const result = await runDoctor(cfg, allApps, { plugins: false });
             const root = (appRow?.workspaceRoot ?? '').toLowerCase();
             doctorFindings = result.checks.filter(c =>
               c.name.includes(whyName)
@@ -1634,6 +1635,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           .slice(-5)
           .map(ev => ({ name: ev.app, transition: `${ev.from ?? '?'}→${ev.to ?? '?'}`, msAgo: Date.now() - ev.ts }));
         const out: any = { ts: Date.now(), version: DAIMON_VERSION, totals, byStatus, needsAttention, recentlyChanged };
+        // Plugin count badge (M118, additive): pointer only — `daimon plugins`
+        // is the detail view. Omitted entirely when no plugin files exist.
+        const pluginCounts = opts.getPluginCounts?.();
+        if (pluginCounts && pluginCounts.total > 0) out.plugins = pluginCounts;
         if (totals.apps === 0) {
           out._meta = { suggestion: "no apps registered. run 'daimon doctor' for recommended next step, or 'daimon init --auto' from a workspace folder." };
         }

@@ -1,45 +1,57 @@
-// Sample doctor plug-in for daimon v0.8+.
+// Sample daimon plug-in (Plugin API v1, daimon v1.5+). See PLUGINS.md.
 //
-// Drop this file (or a copy renamed `doctor-<your-name>.mjs`) into
-// ~/.daimon/plugins/ and restart the daemon. `daimon plugin list` will then show
-// it. The plug-in is **inert** until its `name` ("example-doctor" below) is
-// added to `doctor.autoFix.permitted` in daimon.config.json — this is the same
-// opt-in gate built-in rules use, applied uniformly to the bundled sample and
-// to user-authored plug-ins. Auditable in one sentence: if a plug-in's name
-// isn't in `permitted`, its `fix` never runs.
+// Drop this file (any name ending in .mjs/.js/.cjs) into ~/.daimon/plugins/
+// and restart the daemon (`daimon daemon restart`) — plugins are enumerated
+// once at startup, no hot reload. `daimon plugins` then lists it.
 //
-// The DoctorContext exposes only the M36 mutation primitives — plug-ins cannot
-// shell out to `npm`/`pip`/`bundle`/`cargo`/`go mod`. Edits to user source code
-// are not allowed; state is confined to ~/.daimon/* and daimon.config.json.
+// TRUST MODEL — plug-ins are NOT sandboxed. This file runs in-process with
+// full Node privileges; daimon only loads files you placed in your own
+// ~/.daimon/plugins directory. Treat any plug-in as trusted code you chose
+// to run.
+//
+// The v1 hook surface is observe + doctor-rule contribution only: hooks
+// receive read-only frozen snapshots, and nothing a hook returns is consumed
+// except registerDoctorRules(). A hook that throws disables the plug-in for
+// the session (one `plugin-error` self-event) — it never takes the daemon
+// down. Fix the file, then `daimon daemon restart` to reload it.
 
 export default {
   name: 'example-doctor',
-  description: 'No-op example plug-in that demonstrates the v0.8 doctor surface.',
-  requires: ['apps'],
+  apiVersion: 1,
+  description: 'No-op example plug-in demonstrating the v1 hook surface.',
 
-  async scan(ctx) {
-    // `ctx.apps` is the read-only list of discovered apps; `ctx.config` is the
-    // active AppmanConfig; `ctx.history` exposes self-metrics queries.
-    const findings = [];
-    for (const app of ctx.apps) {
-      if (app.name.length > 32) {
-        findings.push({
-          pluginName: 'example-doctor',
-          id: `app-name-long:${app.name}`,
-          severity: 'info',
-          message: `app name "${app.name}" is longer than 32 characters`,
-        });
-      }
-    }
-    return findings;
+  // Fires after each event is recorded (off the write path, fire-and-forget).
+  // `evt` is a frozen copy: { ts, app, type, from?, to?, message? }.
+  onEvent(evt) {
+    void evt; // observe only — e.g. append to your own log file
   },
 
-  // `fix` is optional. When absent, the plug-in is read-only. When present, it
-  // will be invoked only if `doctor.autoFix.permitted` contains "example-doctor".
-  async fix(_finding, _ctx) {
-    return {
-      ok: true,
-      description: 'example-doctor has no real fix; this is a teaching sample.',
-    };
+  // Fire on app lifecycle transitions. `app` is a frozen snapshot:
+  // { name, framework, port, pid, status }.
+  onAppStart(app) {
+    void app;
+  },
+  onAppStop(app) {
+    void app;
+  },
+
+  // Contribute advise-only doctor rules. Rules can flag, never fix — plugin
+  // rules have no auto-fix capability in v1. `ctx` is read-only:
+  // { config, apps: [{ name, framework, workspaceRoot }] }.
+  registerDoctorRules() {
+    return [
+      {
+        id: 'app-name-length',
+        description: 'Flags apps whose names are longer than 32 characters.',
+        check(ctx) {
+          const long = ctx.apps.filter(a => a.name.length > 32);
+          if (long.length === 0) return { ok: true };
+          return long.map(a => ({
+            ok: false,
+            detail: `app name "${a.name}" is longer than 32 characters — consider a shorter override name`,
+          }));
+        },
+      },
+    ];
   },
 };

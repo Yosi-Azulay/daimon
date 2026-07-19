@@ -62,6 +62,8 @@ export interface Overview {
   byStatus: Record<string, string[]>;
   needsAttention: { name: string; status: string; errCount: number; firstError: { file: string | null; line: number | null; code: string | null; message: string } | null }[];
   recentlyChanged: { name: string; transition: string; msAgo: number }[];
+  // Plugin count badge (M118, v1.5): present only when plugin files exist.
+  plugins?: { total: number; active: number; nonActive: number };
   _meta?: { suggestion?: string };
 }
 

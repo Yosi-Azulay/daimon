@@ -379,6 +379,14 @@ export class AppsListViewComponent {
             @if (ov.totals.totalErrCount > 0) {
               <div class="dm-total dm-total-error"><span class="dm-total-num">{{ ov.totals.totalErrCount }}</span><span class="dm-total-label">errors</span></div>
             }
+            @if (ov.plugins; as pl) {
+              <div class="dm-total" [class.dm-total-error]="pl.nonActive > 0"
+                   [matTooltip]="pl.nonActive > 0 ? pl.nonActive + ' plugin(s) not active — run: daimon plugins' : 'Plugin API v1 — run: daimon plugins'"
+                   data-testid="plugins-badge">
+                <span class="dm-total-num">{{ pl.active }}<span class="dm-plugin-frac">/{{ pl.total }}</span></span>
+                <span class="dm-total-label">plugins</span>
+              </div>
+            }
           </div>
           @if (ov.needsAttention.length) {
             <div class="dm-attention">
@@ -541,6 +549,7 @@ export class AppsListViewComponent {
     .dm-total-label{font:500 .6875rem/1rem Roboto;text-transform:uppercase;letter-spacing:.04rem;color:var(--mat-sys-on-surface-variant)}
     .dm-total-serving .dm-total-num{color:var(--mat-sys-primary)}
     .dm-total-error .dm-total-num{color:var(--mat-sys-error)}
+    .dm-plugin-frac{font:500 .875rem/1rem Roboto;color:var(--mat-sys-on-surface-variant)}
     .dm-total-error.dm-zero .dm-total-num{color:var(--mat-sys-on-surface-variant)}
     .dm-attention{display:flex;flex-direction:column;gap:.5rem;min-width:0}
     .dm-att-title{display:inline-flex;align-items:center;gap:.25rem;font:500 .8125rem/1.25rem Roboto;color:var(--mat-sys-error)}
