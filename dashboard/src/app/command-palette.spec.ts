@@ -58,7 +58,7 @@ describe('command-palette search helpers', () => {
     // the deep-linked buffer isn't hidden behind a stale level/regex filter.
     expect(routeForHit(hit({ kind: 'logs', app: 'web' }))).toBe('/logs/web?from=search');
     expect(routeForHit(hit({ kind: 'errors', app: 'api' }))).toBe('/apps/api?tab=errors');
-    expect(routeForHit(hit({ kind: 'events', app: 'api', ts: 12345 }))).toBe('/timeline?at=12345');
+    expect(routeForHit(hit({ kind: 'events', app: 'api', ts: 12345 }))).toBe('/timeline?at=12345&app=api');
   });
 
   it('fmtHitAgo formats relative time buckets', () => {

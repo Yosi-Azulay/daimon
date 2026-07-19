@@ -427,6 +427,65 @@ roster/contention additions to `daimon agents` / `GET /api/agents`, MCP
 `daimon_audit` / `daimon_agents`, and the MCP resources/prompts below) ship
 `experimental`.
 
+## Rewind (v1.8)
+
+daimon's history answered point questions well — `search`, `why`, `report` — but
+100k events had no shape and no time surface to scrub. v1.8 gives history its
+natural unit (the **session**), a way to walk it (the **timeline**), and a
+summary that greets you after a gap.
+
+### `daimon sessions` — history by work session
+
+```bash
+daimon sessions                       # work sessions, newest first
+daimon sessions --since 7d            # only slices overlapping the last week
+daimon sessions show s-1721400000000  # one slice expanded into a digest
+```
+
+A **session** is a contiguous daemon-uptime slice — the stretch between the
+daemon starting and stopping. Each carries its id (`s-<startMs>`, stable
+forever), start/end, duration, whether it ended cleanly, whether it's the
+current running slice, the apps it touched, and error/test/compile counts.
+`sessions show <id>` expands one slice into a closed block list — apps
+started/stopped, error groups (new vs recurring), test runs, compiles (p50/p95),
+crashes, and env changes (key names only) — each block degrading to a note when
+there's nothing to say.
+
+Sessions are **derived, never recorded**: no sessions table, no session events,
+no history migration. daimon derives them on demand from the daemon's own
+start/stop lifecycle events — pure composition over the history it already has.
+
+### The timeline — walk the event stream
+
+- **TUI:** press `i` to open the timeline. Events bucket by hour or day (Enter
+  drills a day into hours, Esc backs out); `←/→` move between buckets, `g`/`G`
+  jump to the oldest/newest edge, and `n`/`p` jump the selected app to its
+  next/previous start/stop/crash — "when did this last die" in two keystrokes.
+- **Dashboard:** the Timeline route brushes and zooms (drag to narrow the
+  range), filters by kind and app, and is fully keyboard-navigable with live
+  announcements. Every deep-link converges here — a search hit, a why-panel
+  entry, and a session all resolve to a timeline position
+  (`/timeline?ts=&app=&kind=&session=`).
+
+### "While you were away"
+
+Come back after a gap and the first attach greets you with what changed while
+you weren't looking — new errors, resolved errors, crashes, env changes — as one
+dismissible line (TUI header) or panel (dashboard). It fires only after a real
+gap (over 4 hours), reuses the `report` composition (no new engine, no new
+timer), and once you dismiss it (Esc), it never nags again for that gap.
+
+### `daimon why` — the failure, situated
+
+`daimon why <app>` now adds `sessionContext`: the session the failure belongs to
+plus what else happened in that slice before it — errors in *other* apps, env
+changes, compile regressions. It links to the timeline (`?session=<id>`) so you
+can scrub the surrounding events.
+
+All v1.8 surfaces (`daimon sessions`, `GET /api/sessions*`, the timeline routes,
+MCP `daimon_sessions`, the `daemon-start`/`daemon-stop` event kinds, and `why`'s
+`sessionContext`) ship `experimental`.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -749,7 +808,7 @@ For raw MCP use:
 claude mcp add daimon -- daimon mcp
 ```
 
-The MCP server exposes 32 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored), the v1.3 `daimon_top` (live RSS/CPU table — warn-only, never kills), the v1.4 `daimon_export` (the one-way carry-out bundle), and the v1.6 agent-ledger pair `daimon_audit` / `daimon_agents`. Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
+The MCP server exposes 33 tools: `list_apps`, `get_status`, `get_errors`, `get_logs`, `start_app`, `stop_app`, `restart_app`, `wait_for_app`, the agent-first verbs `overview`, `ensure`, `ensure_up`, `focus`, `try_fix`, `diff_errors`, `orchestrate`, the v0.10 coordination tools `daimon_who_owns`, `daimon_subscribe_events`, `daimon_notify_on_error`, `daimon_frameworks`, the v0.12 whole-loop tools `daimon_context`, `daimon_run_tests`, `daimon_why`, `daimon_search`, the v0.13 pair `daimon_report`, `daimon_env`, the v1.1 `daimon_groups` (with `ensure_up` resolving groups first and `stop_app` falling back to a group where the app name previously errored), the v1.3 `daimon_top` (live RSS/CPU table — warn-only, never kills), the v1.4 `daimon_export` (the one-way carry-out bundle), the v1.6 agent-ledger pair `daimon_audit` / `daimon_agents`, and the v1.8 `daimon_sessions` (walk history by derived work session). Every MCP call forwards the same `X-Daimon-Agent` identity as the CLI. The recommended session opener is `overview`; when debugging one app, `daimon_context` first, then targeted calls.
 
 The v1.6 server also grows the protocol's own shapes (all `experimental`): three read-only **resources** — `daimon://report`, `daimon://context/{app}`, and `daimon://logs/{app}` (200-line tail), each a thin wrapper over the matching HTTP endpoint — and two **prompts** rendered from live API data, `triage` (why + errors + recent logs for one app) and `handoff` (current state + lock holder for the next agent). A client can read a resource or expand a prompt without the model choosing a tool call.
 

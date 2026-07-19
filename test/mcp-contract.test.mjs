@@ -38,6 +38,8 @@ const EXPECTED_TOOLS = [
   'daimon_plugins',
   // v1.6 (M122/M123): the agent ledger — queryable trail + roster.
   'daimon_audit', 'daimon_agents',
+  // v1.8 (M134): walk history by derived work session.
+  'daimon_sessions',
 ].sort();
 
 const EXPECTED_RESOURCES = ['daimon://report', 'daimon://context/{app}', 'daimon://logs/{app}'].sort();

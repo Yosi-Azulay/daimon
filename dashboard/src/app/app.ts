@@ -4,6 +4,7 @@ import { NavRailComponent } from './nav-rail';
 import { TopbarComponent } from './topbar';
 import { CommandPaletteComponent } from './command-palette';
 import { OnboardingTourComponent } from './onboarding-tour';
+import { AwayPanelComponent } from './away-panel';
 import { KeyboardShortcutsService } from './keyboard-shortcuts';
 import { DaimonApi } from './daimon-api';
 
@@ -13,7 +14,7 @@ const WS_KEY = 'daimon.workspace';
   selector: 'dm-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent, OnboardingTourComponent],
+  imports: [RouterOutlet, NavRailComponent, TopbarComponent, CommandPaletteComponent, OnboardingTourComponent, AwayPanelComponent],
   template: `
     <a class="dm-skip-link" href="#dm-main-content">Skip to content</a>
     <div class="dm-shell">
@@ -34,6 +35,7 @@ const WS_KEY = 'daimon.workspace';
             <button type="button" class="dm-cwd-dismiss" (click)="dismissBanner()" aria-label="Dismiss" title="Dismiss">×</button>
           </div>
         }
+        <dm-away-panel></dm-away-panel>
         <router-outlet />
       </main>
     </div>

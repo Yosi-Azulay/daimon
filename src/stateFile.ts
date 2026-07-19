@@ -14,6 +14,10 @@ export interface PersistedState {
   // Quarantine first-seen (M130, v1.7): pattern → first-seen ts. Powers
   // "oldest since <date>" so a parked test can't rot invisibly. Additive.
   quarantineFirstSeen?: Record<string, number>;
+  // "While you were away" acknowledgement (M135, v1.8): the ts through which
+  // the away summary has been dismissed. Refines the gap baseline so a dismissed
+  // summary never re-nags on re-attach. Additive; absent = never acknowledged.
+  awayAck?: number;
 }
 
 // What the last loadPersistedState() had to do to produce a usable state
@@ -42,6 +46,7 @@ function parseState(raw: string): PersistedState | null {
       ...(parsed.mutes && typeof parsed.mutes === 'object' ? { mutes: parsed.mutes } : {}),
       ...(parsed.digests && typeof parsed.digests === 'object' ? { digests: parsed.digests } : {}),
       ...(parsed.quarantineFirstSeen && typeof parsed.quarantineFirstSeen === 'object' ? { quarantineFirstSeen: parsed.quarantineFirstSeen } : {}),
+      ...(typeof parsed.awayAck === 'number' ? { awayAck: parsed.awayAck } : {}),
     };
   }
   return null;

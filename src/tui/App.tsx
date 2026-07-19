@@ -12,6 +12,9 @@ import { computeRibbon, renderRibbon } from './ribbon.js';
 import { allProfiles, profileBadge } from '../frameworks.js';
 import { TEST_CHORD_KEY, TEST_CHORD_HELP, canStartTestRun, formatTestSummary } from './testChord.js';
 import { GROUP_CHORD_KEY, GROUP_CHORD_HELP, cycleGroupFilter, filterByGroup, computeGroupHealth, formatGroupHeader } from './groupChord.js';
+import { renderAwayLine, type AwaySummary } from '../away.js';
+import { TIMELINE_CHORD_KEY, TIMELINE_CHORD_HELP } from './timelineChord.js';
+import TimelinePane from './TimelinePane.js';
 
 // Framework badge tags for TUI rows (M72): [next], [flask], ...
 const BADGE_BY_ID = new Map(allProfiles(undefined).map(p => [p.id, profileBadge(p)]));
@@ -36,6 +39,10 @@ interface Props {
   registry: Registry;
   apiPort: number;
   onQuit: () => void;
+  // "While you were away" (M135): computed once at startup by main.ts; shown
+  // dismissibly in the header. onAckAway persists the dismissal to state.json.
+  initialAway?: AwaySummary | null;
+  onAckAway?: () => void;
 }
 
 const STATUS_COLORS: Record<AppStatus, string> = {
@@ -63,7 +70,7 @@ function fmtUptime(ms: number | null): string {
   return `${h}h ${m % 60}m`;
 }
 
-export default function App({ registry, apiPort, onQuit }: Props) {
+export default function App({ registry, apiPort, onQuit, initialAway, onAckAway }: Props) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [apps, setApps] = useState<AppSummary[]>(registry.list());
@@ -86,6 +93,8 @@ export default function App({ registry, apiPort, onQuit }: Props) {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [events, setEvents] = useState<AppEvent[]>(registry.events({ sinceMs: 60 * 60 * 1000 }));
   const [testRuns, setTestRuns] = useState<Record<string, { running: boolean; summary: string | null }>>({});
+  const [away, setAway] = useState<AwaySummary | null>(initialAway ?? null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
 
   useEffect(() => {
     const onChange = () => setApps(registry.list());
@@ -164,6 +173,9 @@ export default function App({ registry, apiPort, onQuit }: Props) {
       exit();
       return;
     }
+    // "While you were away" (M135): Esc dismisses the summary and acks it so it
+    // never re-nags. Handled before app navigation so it works with zero apps.
+    if (away && key.escape) { setAway(null); onAckAway?.(); return; }
     if (apps.length === 0) return;
 
     if (chord === 'g') {
@@ -204,6 +216,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     }
     else if (input === 'O') { setOrchestrateAsking(true); }
     else if (input === 'L') setFullLog(true);
+    else if (input === TIMELINE_CHORD_KEY) setTimelineOpen(true);
     else if (input === 't') { setTagPicking(true); setTagInput(tagFilter.join(' ')); }
     else if (input === GROUP_CHORD_KEY) {
       const names = Object.keys(registry.getConfig().groups ?? {});
@@ -356,12 +369,25 @@ export default function App({ registry, apiPort, onQuit }: Props) {
     return <LogPane registry={registry} appName={current.name} onExit={() => setFullLog(false)} />;
   }
 
+  // Timeline chord (M136): walk the event stream by hour/day bucket. Windowed
+  // query on open; empty history renders a note, not a crash.
+  if (timelineOpen) {
+    return <TimelinePane registry={registry} appName={current?.name ?? null} onExit={() => setTimelineOpen(false)} />;
+  }
+
   return (
     <Box flexDirection="column" width={cols}>
       <Box borderStyle="round" borderColor="cyan" paddingX={1}>
         <Text bold color="cyan">daimon</Text>
         <Text dimColor>  •  api http://127.0.0.1:{apiPort}</Text>
       </Box>
+
+      {away ? (
+        <Box paddingX={1}>
+          <Text color="yellow">↩ {renderAwayLine(away)}</Text>
+          <Text dimColor>  [esc to dismiss]</Text>
+        </Box>
+      ) : null}
 
       <Box flexDirection="row">
         <Box flexDirection="column" width={leftWidth} borderStyle="single" borderColor="gray" paddingX={1}>
@@ -495,7 +521,7 @@ export default function App({ registry, apiPort, onQuit }: Props) {
           </Box>
         ) : null}
         {statusMsg ? <Text color="cyan">[i] {statusMsg}</Text> : null}
-        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  {TEST_CHORD_HELP}  [O] orchestrate  [o] open URL  [/] filter  {GROUP_CHORD_HELP}  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log (level/grep inside)  [q] quit</Text>
+        <Text dimColor>[j/k or ↑/↓] move  [s] start  [S] stop  [r] restart  [f] focus  [x] try-fix  {TEST_CHORD_HELP}  [O] orchestrate  [o] open URL  [/] filter  {GROUP_CHORD_HELP}  [g a|e|v|s|n] view hint  [e] edit  [E] env  [V] $EDITOR  [l] log focus  [Shift+L] full log (level/grep inside)  {TIMELINE_CHORD_HELP}  [q] quit</Text>
       </Box>
     </Box>
   );

@@ -99,6 +99,7 @@ const MCP_DESCRIPTIONS = {
   daimon_plugins: 'Loaded plug-ins (Plugin API v1, v1.5): name, file, apiVersion, status (active|disabled|load-error), declared hooks, error. NOT sandboxed — trusted user-placed files; see PLUGINS.md.',
   daimon_audit: 'Queryable audit trail (v1.6): who did what, when. Derives { ts, agent, action, app, changedKeys, remote } rows from audit.log + audit.log.1 via the verb:<app> convention. Filters (agent/app/since/limit) compose; fail-soft skipped count. Identity is advisory (self-declared header, unverified).',
   daimon_agents: 'Agent roster (v1.6): per-agent id, last-seen, action counts, held soft-locks, contention (waits/steals) + contention hotspots. Derived at query time from the audit log + live registry + lock manager. (unknown) aggregates undeclared callers. Identity is advisory.',
+  daimon_sessions: 'Walk history by work session (v1.8): DERIVED daemon-uptime slices bounded by daemon-start/daemon-stop — id (s-<startMs>, stable), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. Pass id to expand one slice into a digest (apps, error groups, tests, compiles p50/p95, crashes, env changes — key names only); each block degrades to a note. No sessions table; pure composition over history.',
 };
 
 // MCP resources + prompts (M125, v1.6) — rendered alongside the tools. Every

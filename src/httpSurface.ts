@@ -105,6 +105,10 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   // ── experimental: v1.4 carry-out (M111) ───────────────────────────────────
   { method: 'GET', path: '/api/export', stability: 'experimental', summary: 'One-way carry-out bundle (?since=7d, ?app=, ?format=json|md|csv): versioned envelope { schemaVersion: 1 } over events, error groups, test runs, compiles, crashes (bounded tails only), and the report. No import endpoint exists, by design.' },
 
+  // ── experimental: v1.8 rewind (M134) ──────────────────────────────────────
+  { method: 'GET', path: '/api/sessions', stability: 'experimental', summary: 'Derived work sessions (?since=): daemon-uptime slices bounded by daemon-start/daemon-stop, newest first — id (s-<startMs>), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. No sessions table; pure composition over history.' },
+  { method: 'GET', path: '/api/sessions/:id', stability: 'experimental', summary: 'Expand one session into a digest: apps started/stopped, error groups (new/recurring), test runs, compiles p50/p95, crashes, env changes (key names only). Each block degrades to { note }. 404 with remedy for an unknown id.' },
+
   // ── experimental: v1.1 groups (M93–M95) ───────────────────────────────────
   { method: 'GET', path: '/api/groups', stability: 'experimental', summary: 'Named app groups: name → { apps, autoStart, statusCounts, healthy, total }.' },
   { method: 'POST', path: '/api/groups/:name/up', stability: 'experimental', summary: 'Start a group: members ∪ depends closure in topo order; readiness summary (?until=, ?timeoutMs=, ?steal=1). Soft-lock gated per member.' },

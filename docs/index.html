@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.7.0 — docs</title>
+<title>daimon v1.8.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.7.0</span></h1>
+<h1>daimon <span class="badge">v1.8.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -168,6 +168,8 @@ npx daimon init --auto</code></pre>
 <dd>The digest: per-app uptime, errors (new/recurring/resolved), test pass-rate + flakiest, compile p50/p95 + regressions, crashes/storms, agent activity, env changes.</dd>
 <dt><code>daimon export [--since 7d] [--app &lt;a&gt;] [--format json|md|csv] [--out &lt;file&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>One-way carry-out bundle: events, error groups, test runs, compiles, crashes (bounded tails), and the report in one versioned envelope (schemaVersion 1). JSON canonical; --format md paste-ready; --format csv flat rows.</dd>
+<dt><code>daimon sessions [--since 7d] [--json] | show &lt;id&gt; [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Walk history by daemon-uptime slice. Each session is DERIVED from the daemon-start/daemon-stop lifecycle: id (s-&lt;startMs&gt;), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. `show &lt;id&gt;` expands one slice into a digest (apps started/stopped, error groups, test runs, compiles p50/p95, crashes, env changes) — each block degrades to a note.</dd>
 <dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;] | diff &lt;name&gt; [--from &lt;ts&gt;] [--to &lt;ts&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Env-file awareness: convention files (found/missing), key names, snapshot age; `env diff` shows files/keys added/removed/changed between spawns. --use sets the active env file (pre-v0.13 behavior). Values are NEVER shown.</dd>
 <dt><code>daimon why &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -382,6 +384,10 @@ npx daimon init --auto</code></pre>
 <dd>Queryable audit trail (?agent=, ?app=, ?since=, ?limit=100): derives { ts, agent, action, app, changedKeys, remote } rows from audit.log + audit.log.1 via the verb:&lt;app&gt; convention. Fail-soft: malformed lines counted in skipped, never fabricated. Agent identity is advisory (header-declared, unverified).</dd>
 <dt><code>GET /api/export</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>One-way carry-out bundle (?since=7d, ?app=, ?format=json|md|csv): versioned envelope { schemaVersion: 1 } over events, error groups, test runs, compiles, crashes (bounded tails only), and the report. No import endpoint exists, by design.</dd>
+<dt><code>GET /api/sessions</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Derived work sessions (?since=): daemon-uptime slices bounded by daemon-start/daemon-stop, newest first — id (s-&lt;startMs&gt;), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. No sessions table; pure composition over history.</dd>
+<dt><code>GET /api/sessions/:id</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Expand one session into a digest: apps started/stopped, error groups (new/recurring), test runs, compiles p50/p95, crashes, env changes (key names only). Each block degrades to { note }. 404 with remedy for an unknown id.</dd>
 <dt><code>GET /api/groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Named app groups: name → { apps, autoStart, statusCounts, healthy, total }.</dd>
 <dt><code>POST /api/groups/:name/up</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
@@ -432,6 +438,7 @@ npx daimon init --auto</code></pre>
 <dt><code>daimon_plugins</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Loaded plug-ins (Plugin API v1, v1.5): name, file, apiVersion, status (active|disabled|load-error), declared hooks, error. NOT sandboxed — trusted user-placed files; see PLUGINS.md.</dd>
 <dt><code>daimon_audit</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Queryable audit trail (v1.6): who did what, when. Derives { ts, agent, action, app, changedKeys, remote } rows from audit.log + audit.log.1 via the verb:&lt;app&gt; convention. Filters (agent/app/since/limit) compose; fail-soft skipped count. Identity is advisory (self-declared header, unverified).</dd>
 <dt><code>daimon_agents</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Agent roster (v1.6): per-agent id, last-seen, action counts, held soft-locks, contention (waits/steals) + contention hotspots. Derived at query time from the audit log + live registry + lock manager. (unknown) aggregates undeclared callers. Identity is advisory.</dd>
+<dt><code>daimon_sessions</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Walk history by work session (v1.8): DERIVED daemon-uptime slices bounded by daemon-start/daemon-stop — id (s-&lt;startMs&gt;, stable), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. Pass id to expand one slice into a digest (apps, error groups, tests, compiles p50/p95, crashes, env changes — key names only); each block degrades to a note. No sessions table; pure composition over history.</dd>
 </dl>
 <h3>Resources</h3><dl class="cli-grid">
 <dt><code>daimon://report</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>The digest (GET /api/report) as a read-only JSON resource.</dd>
@@ -529,6 +536,8 @@ npx daimon init --auto</code></pre>
 <dt><code>cpu-storm</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>resource-budget-exceeded</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 <dt><code>plugin-error</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>daemon-start</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
+<dt><code>daemon-stop</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd></dd>
 </dl>
 
 <h2 id="doctor">Doctor coverage</h2>

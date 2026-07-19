@@ -1339,6 +1339,25 @@ async function main() {
       process.stdout.write(text.endsWith('\n') ? text : text + '\n');
       return;
     }
+    // `daimon sessions` (M134, v1.8): walk history by daemon-uptime slice.
+    // Derived, composition-only — the daemon does all the work; the CLI routes.
+    case 'sessions': {
+      const first = f.positional[0];
+      if (first === 'show') {
+        const id = f.positional[1];
+        if (!id) fail(JSON.stringify({ error: 'usage: daimon sessions show <id>', remedy: 'run `daimon sessions` to list ids (e.g. s-1721400000000)' }));
+        const r = await call(`/api/sessions/${encodeURIComponent(id)}`);
+        if (r.status === 404) fail(JSON.stringify({ error: `unknown session: ${id} — run \`daimon sessions\` to list valid ids` }));
+        out(r.body);
+        return;
+      }
+      const params = new URLSearchParams();
+      if (f.since) params.set('since', f.since);
+      const qs = params.toString();
+      const r = await call(`/api/sessions${qs ? '?' + qs : ''}`);
+      out(r.body);
+      return;
+    }
     case 'env': {
       const first = f.positional[0];
       if (first === 'diff') {
@@ -1410,6 +1429,20 @@ async function main() {
         for (const g of b.errorGroups ?? []) L.push(head('error') + ` ×${g.count}  ${g.message.slice(0, 120)}`);
         for (const rg of (b.regressions ?? []).slice(0, 3)) L.push(head('regression') + `  ${rg.kind ?? '?'} ×${rg.factor ?? '?'}${rg.suspectCommit ? dim('  suspect ' + rg.suspectCommit) : ''}`);
         if (b.suspectCommit) L.push(head('suspect commit') + `  ${b.suspectCommit}`);
+        // sessionContext (M138, v1.8): the failure situated in its session.
+        if (b.sessionContext) {
+          const sc = b.sessionContext;
+          if (sc.sessionId) {
+            const parts: string[] = [];
+            if (sc.otherAppErrors?.length) parts.push(`${sc.otherAppErrors.length} other-app error${sc.otherAppErrors.length === 1 ? '' : 's'}`);
+            if (sc.envChanges?.length) parts.push(`${sc.envChanges.length} env change${sc.envChanges.length === 1 ? '' : 's'}`);
+            if (sc.regressions?.length) parts.push(`${sc.regressions.length} regression${sc.regressions.length === 1 ? '' : 's'}`);
+            L.push(head('session') + `  ${sc.sessionId}${parts.length ? '  ' + parts.join(' · ') : dim('  ' + (sc.note ?? 'quiet'))}`);
+            for (const e of (sc.otherAppErrors ?? []).slice(0, 3)) L.push(dim(`  · ${e.app} ×${e.count}: ${e.message.slice(0, 80)}`));
+          } else if (sc.note) {
+            L.push(head('session') + dim(`  ${sc.note}`));
+          }
+        }
         for (const d of b.doctor ?? []) L.push(head(d.ok ? 'note' : 'doctor') + `  ${d.name}${d.detail ? dim(' — ' + d.detail) : ''}`);
         process.stdout.write(L.join('\n') + '\n');
         return;

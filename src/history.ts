@@ -941,6 +941,27 @@ export class History {
     }
   }
 
+  // Per-session slice aggregates (M134, v1.8). Windowed COUNT/DISTINCT over the
+  // indexed ts columns — the session-derivation counting primitive. Kept in the
+  // DB layer (where all SQL lives) so sessions.ts stays pure composition and the
+  // 100k-corpus derivation bench holds without materializing every row in JS.
+  // Non-overlapping session windows mean daemon-down gap rows fall outside every
+  // [since, until] and are naturally excluded.
+  sliceCounts(since: number, until: number): { apps: string[]; errorCount: number; compileCount: number; testRunCount: number } {
+    const empty = { apps: [] as string[], errorCount: 0, compileCount: 0, testRunCount: 0 };
+    if (!this.db) return empty;
+    try {
+      const apps = (this.prepared('SELECT DISTINCT app FROM events WHERE ts >= ? AND ts <= ? AND app != ?').all(since, until, '__daemon__') as { app: string }[])
+        .map(r => r.app).sort();
+      const errorCount = (this.prepared("SELECT COUNT(*) AS c FROM events WHERE ts >= ? AND ts <= ? AND type IN ('error-new','error-recur')").get(since, until) as { c: number }).c;
+      const compileCount = (this.prepared('SELECT COUNT(*) AS c FROM compile_times WHERE ts >= ? AND ts <= ?').get(since, until) as { c: number }).c;
+      const testRunCount = (this.prepared('SELECT COUNT(*) AS c FROM test_runs WHERE ts >= ? AND ts <= ?').get(since, until) as { c: number }).c;
+      return { apps, errorCount, compileCount, testRunCount };
+    } catch {
+      return empty;
+    }
+  }
+
   queryCrashes(opts: { app?: string; since?: number; limit?: number } = {}): CrashRow[] {
     if (!this.db) return [];
     const wh: string[] = [];

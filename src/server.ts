@@ -1417,6 +1417,29 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // `daimon sessions` (M134, v1.8 "Rewind"): DERIVED daemon-uptime slices,
+      // newest first. Pure composition over history — no sessions table, no new
+      // state. GET /api/sessions[?since=] lists; GET /api/sessions/<id> expands.
+      if (parts[0] === 'api' && parts[1] === 'sessions' && !parts[2] && method === 'GET') {
+        const { listSessions } = await import('./sessions.js');
+        const sinceP = parseSinceParam(url.searchParams.get('since'));
+        const since = sinceP.sinceTs ?? (sinceP.sinceMs != null ? Date.now() - sinceP.sinceMs : undefined);
+        const sessions = listSessions(registry.getHistory(), since != null ? { since } : {});
+        sendJson(res, 200, { sessions, total: sessions.length });
+        return;
+      }
+      if (parts[0] === 'api' && parts[1] === 'sessions' && parts[2] && !parts[3] && method === 'GET') {
+        const { showSession } = await import('./sessions.js');
+        const id = decodeURIComponent(parts[2]);
+        const detail = showSession(registry.getHistory(), id);
+        if (!detail) {
+          sendJson(res, 404, { error: `unknown session: ${id}`, remedy: 'GET /api/sessions lists valid ids (e.g. s-1721400000000)' });
+          return;
+        }
+        sendJson(res, 200, detail);
+        return;
+      }
+
       // Full-text search (M77): everything daimon has seen, greppable.
       // ?q=&app=&since=&kind=logs|errors|events&limit=. Falls back to LIKE
       // (fallback:true) when FTS is unavailable — never errors the daemon.
@@ -1578,6 +1601,17 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const { suspectCommitForDir } = await import('./regressions.js');
         const suspectCommit = await suspectCommitForDir(appRow?.workspaceRoot ?? null);
 
+        // sessionContext (M138, v1.8 — experimental, additive): the failure
+        // situated in its session — errors in other apps, env changes, compile
+        // regressions before it. Anchored on the last crash, else now (the
+        // current session). Composition over the M134 slice queries; degrades
+        // to a note, never an error, and links to the timeline via ?session=.
+        let sessionContext: any = null;
+        try {
+          const { buildSessionContext } = await import('./sessions.js');
+          sessionContext = buildSessionContext(h, { app: whyName, ts: lastCrash?.ts ?? Date.now() });
+        } catch {}
+
         // Doctor findings scoped to this app: per-app rules (restart-storm,
         // smart-restart-tune), plus hygiene findings covering its workspace.
         let doctorFindings: { name: string; ok: boolean; detail?: string }[] = [];
@@ -1618,6 +1652,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           // parked; global (patterns aren't per-app) but shown on every why.
           quarantine: (() => { const q = registry.quarantineSummary(); return q.count > 0 ? q : null; })(),
           suspectCommit,
+          // sessionContext (M138, v1.8 — experimental): same-session errors/env/
+          // regressions around the failure; links to the timeline via ?session=.
+          sessionContext,
           doctor: doctorFindings,
         });
         return;

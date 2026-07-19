@@ -348,6 +348,8 @@ export const EVENT_KIND_STABILITY = {
   'cpu-storm': 'experimental', // v1.3 (M108)
   'resource-budget-exceeded': 'experimental', // v1.3 (M108)
   'plugin-error': 'experimental', // v1.5 (M117)
+  'daemon-start': 'experimental', // v1.8 (M134) — session boundary marker
+  'daemon-stop': 'experimental', // v1.8 (M134) — session boundary marker
 } as const satisfies Record<string, import('./stability.js').Stability>;
 
 export type AppEventType = keyof typeof EVENT_KIND_STABILITY;

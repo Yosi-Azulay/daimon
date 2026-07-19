@@ -66,7 +66,10 @@ export function flattenGroups(groups: SearchHitGroup[]): SearchHit[] {
 //    filter happened to be set before the deep-link landed;
 //  - errors land on the app's detail page with its Errors tab preselected.
 export function routeForHit(hit: SearchHit): string {
-  if (hit.kind === 'events') return `/timeline?at=${hit.ts}`;
+  // `&app=` (M137, v1.8) presets the Timeline page's app filter so a
+  // palette hit lands already scoped to the app it came from, not just
+  // anchored at its timestamp.
+  if (hit.kind === 'events') return `/timeline?at=${hit.ts}&app=${encodeURIComponent(hit.app)}`;
   if (hit.kind === 'logs') return `/logs/${hit.app}?from=search`;
   return `/apps/${hit.app}?tab=errors`;
 }

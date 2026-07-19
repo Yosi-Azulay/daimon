@@ -76,6 +76,19 @@ src/
                     # (NO new column). Fail-soft: malformed lines counted in
                     # `skipped`, never fabricated. Roster + report analytics DERIVE
                     # from these rows at query time (no new state, no timer).
+  sessions.ts       # Session derivation (M134, v1.8): sessions are DERIVED,
+                    # never stored — a session is a contiguous daemon-uptime
+                    # slice bounded by the __daemon__ daemon-start/daemon-stop
+                    # lifecycle events. Pure composition over History queries
+                    # (deriveBoundaries → listSessions/showSession); unclean
+                    # closure at last-observed event; deterministic s-<startMs>
+                    # ids; per-slice counts via history.sliceCounts (windowed
+                    # SQL aggregates, NOT a 100k-row JS scan — benched <300ms so
+                    # NO cache ships). buildSessionContext feeds `why` (M138).
+  away.ts           # "While you were away" (M135, v1.8): gap detection (4h
+                    # fixed constant, NO config key) + report-subset extraction.
+                    # REUSES the report composition — no new engine, no new
+                    # timer. Dismissal acks to state.json (awayAck). Pure.
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
                     # (netstat -ano / ss), daimon signature probe, EADDRINUSE
@@ -194,6 +207,32 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - **Coverage is parsed where documented, fixture-gated, null over fabricated — the same law as test totals (M128, v1.7).** daimon reads the coverage summary the run ALREADY printed (istanbul text table/summary, pytest-cov `TOTAL`, go `-cover`) — it never injects a coverage flag or edits a test config. A runner opts in via `TEST_RUNNER_META[id].supportsCoverage` + a `parseCoverage`; that gates a `coverage` block in its fixture (with-coverage → the documented %, without/malformed → null) enforced by `test/testrunners.test.mjs`. Fail-soft is absolute: absent/unparseable/out-of-range (`<0`/`>100`) → null, always; a fabricated percentage is the same violation as a fabricated pass count. cargo/dotnet ship WITHOUT coverage (no confirmed documented default) — explicit non-participation, never a guess. Storage is the additive nullable `covLinesPct`/`covStmtsPct` columns on `test_runs` (guarded ALTER); summary numbers only, no per-file storage ever.
 
 - **`--failed` rerun is registry-declared — the portFlag discipline (M131, v1.7).** `daimon test <app> --failed` reruns only the last recorded run's failures, and ONLY where the runner's `TEST_RUNNER_META` row declares a `rerunFlag` (pytest `--lf` stateful; go `-run {tests}` regex-escaped alternation; jest/vitest/dotnet name-filter). Templates come from the runner's docs, never guessed — no `rerunFlag` = explicit non-participation. It NEVER silently falls back to a full run: no prior run, undeclared runner, and unparseable names each return an error naming the gap + a remedy; an all-green prior run is an honest no-op. The run records with the additive `failedOnly` flag; totals reflect only what ran.
+- **Sessions are DERIVED, never stored (M134, v1.8).** A session is a
+  contiguous daemon-uptime slice bounded by the `__daemon__` `daemon-start` /
+  `daemon-stop` lifecycle events already in history — there is NO sessions
+  table, NO session events, NO new analytics state, NO history migration.
+  `src/sessions.ts` derives them by pure composition over existing History
+  queries (the report/context discipline): a start opens a slice, its matching
+  stop closes it cleanly; a boot with no intervening stop closes the previous
+  slice unclean at its last observed event; the newest open slice is `current`.
+  IDs are deterministic (`s-<startMs>`) so deep links never rot. Per-slice
+  counts use `history.sliceCounts` (windowed, indexed SQL COUNT/DISTINCT — never
+  a full-table JS scan). Derivation benched **< 300ms on the 100k corpus**, so
+  no cache ships; any future cache must be a rebuildable in-memory boundary map
+  (never a table) and invalidate on retention — measure first. The two boundary
+  event kinds are the ONLY new storage, and they are additive `experimental`
+  markers recorded exactly like `self-warn`/`digest-sent` (main.ts records
+  `daemon-start` first at boot so recovery self-warns land inside the slice, and
+  `daemon-stop` before `history.close()` which flushes synchronously — a handoff
+  restart records it too, since each daemon uptime is one session).
+- **"While you were away" reuses the report composition (M135, v1.8).** The away
+  summary is NOT a new engine and NOT a new timer — `src/away.ts` derives the
+  gap baseline from the session list + the `awayAck` state.json key and pulls a
+  strict subset (new/resolved errors, crashes, env changes) out of a `buildReport`
+  window. The 4h gap is a fixed constant (zero new config keys). The TUI composes
+  it in-process at start; the dashboard calls `GET /api/report?since=`. Dismissal
+  merge-writes `awayAck` (additive state.json key). The digest's single 1-min
+  interval stays the ONLY scheduler.
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
 - **History migrations are additive** — `CREATE TABLE IF NOT EXISTS`, plus (since v1.2) a guarded nullable `ALTER TABLE … ADD COLUMN` (check `PRAGMA table_info` first; column must be nullable; every INSERT names its columns so an older daimon keeps writing the same table). Never a rename, drop, retype, or NOT NULL addition — a v0.11 DB must open cleanly under v1.2 and vice versa.
 - **Every surface declares a stability tier (M87).** New CLI verbs, HTTP endpoints, MCP tools, config keys, and event kinds MUST carry `frozen`/`stable`/`experimental` at their source of truth (`cliSurface.ts` / `httpSurface.ts` / `mcp.ts` MCP_TOOL_STABILITY / `config.ts` CONFIG_KEY_STABILITY / `types.ts` EVENT_KIND_STABILITY). New work defaults to experimental. A `frozen` surface needs a golden-shape snapshot in `test/fixtures/contract/` — `test/contract.test.mjs` fails without one, and fails forever on a frozen-shape change (regenerate with `UPDATE_CONTRACT_SNAPSHOTS=1` only for reviewed ADDITIVE changes). See STABILITY.md.
@@ -306,6 +345,27 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   resources, and prompts declare tiers at their source of truth
   (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
   `MCP_PROMPT_STABILITY`).
+
+## v1.8 highlights (what landed this release)
+
+- **Rewind (M134–M139)**: history becomes walkable. **Session derivation
+  (M134)**: `daimon sessions [--since --json]` / `sessions show <id>` /
+  `GET /api/sessions*` / MCP `daimon_sessions` (**33 tools**) — DERIVED
+  daemon-uptime slices (see the sessions-are-derived rule above), deterministic
+  `s-<startMs>` ids, unclean-exit closure, per-slice counts, `< 300ms` bench,
+  no cache. Two additive `experimental` event kinds `daemon-start`/`daemon-stop`
+  under `__daemon__` are the only new storage. **While you were away (M135)**:
+  4h-gap summary reusing the report composition (no new engine/timer), TUI
+  header line + dashboard panel, `awayAck` in state.json. **TUI timeline chord
+  (M136)**: `i` opens hour/day bucket navigation (density strip, arrows, g/G
+  edges, Enter drill, n/p app state-change jumps), windowed query on open. **Dashboard
+  timeline (M137)**: brush/zoom + kind filter + keyboard/aria-live; deep-link
+  convergence `?ts=&app=&kind=&session=` (search hits + why panel resolve here).
+  **why sessionContext (M138)**: additive same-session errors/env/regressions,
+  degradable, links to the timeline. All new surfaces `experimental`; no frozen
+  shape moved; no config or history migration. Tests: `test/sessions.test.mjs`,
+  `test/away.test.mjs`, `test/tui-timeline-chord.test.mjs`, plus the dashboard
+  timeline Playwright/axe spec.
 
 ## v1.7 highlights (what landed this release)
 

@@ -29,6 +29,8 @@ import { SelfMetricsCollector } from './selfMetrics.js';
 import { loadPlugins, pluginsDir, PluginHost } from './plugins.js';
 import { DigestScheduler, WebhookDispatcher, effectiveWebhooks, redactWebhookUrl } from './webhooks.js';
 import { buildReport, renderReportMd } from './report.js';
+import { listSessions } from './sessions.js';
+import { awayGap, extractAwaySummary } from './away.js';
 import App from './tui/App.js';
 
 export interface StartOpts {
@@ -104,6 +106,11 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   registry.reconcileQuarantine();
   const history = new History(config.history);
   registry.setHistory(history);
+  // Session boundary (M134, v1.8): mark this daemon's boot FIRST, so any
+  // recovery self-warns below land inside the new session's slice. Sessions
+  // are DERIVED from these markers (see src/sessions.ts) — this is a lifecycle
+  // event, not a session record.
+  registry.recordEvent({ app: '__daemon__', type: 'daemon-start', message: `pid ${process.pid}` });
   const archivedDb = history.archivedCorruptDbPath();
   if (archivedDb) {
     registry.recordEvent({ app: '__daemon__', type: 'self-warn', message: `history.db was corrupt and was rebuilt; previous db archived at ${archivedDb}` });
@@ -350,6 +357,12 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     // log-storm-end events land — an unmatched log-storm would keep doctor's
     // rule red for its whole lookback window.
     try { registry.endActiveLogStorms(); } catch {}
+    // Session boundary (M134, v1.8): a clean daemon-stop closes the current
+    // session. A handoff restart still records it — each daemon uptime is one
+    // session, and the incoming daemon's daemon-start opens the next slice.
+    // Recorded before history.close() (which flushes synchronously) so it
+    // persists even on SIGTERM.
+    try { registry.recordEvent({ app: '__daemon__', type: 'daemon-stop', message: `pid ${process.pid}` }); } catch {}
     try { history.close(); } catch {}
     try {
       // Handoff shutdown (M88): a snapshot-state call in the last 60s means a
@@ -453,7 +466,22 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
     return;
   }
 
-  const inst = render(React.createElement(App, { registry, apiPort, onQuit: () => void shutdown() }));
+  // "While you were away" (M135, v1.8): computed ONCE at TUI start from the
+  // session list + the report composition — no new timer, no new engine. Shown
+  // dismissibly in the header; dismissal merge-writes an ack to state.json so it
+  // never re-nags on the next attach.
+  const initialAway = (() => {
+    try {
+      const sessions = listSessions(history);
+      const baseline = awayGap(sessions, Date.now(), persisted.awayAck ?? null);
+      if (baseline == null) return null;
+      const report = buildReport({ registry, history }, { since: baseline });
+      return extractAwaySummary(report, baseline, Date.now());
+    } catch { return null; }
+  })();
+  const onAckAway = () => { try { savePersistedState({ awayAck: Date.now() }); } catch {} };
+
+  const inst = render(React.createElement(App, { registry, apiPort, onQuit: () => void shutdown(), initialAway, onAckAway }));
   await inst.waitUntilExit();
   await shutdown();
 }

@@ -552,6 +552,22 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     exitCodes: stdExit,
   },
   {
+    name: 'sessions',
+    args: '[--since 7d] [--json] | show <id> [--json]',
+    summary: 'Walk history by daemon-uptime slice. Each session is DERIVED from the daemon-start/daemon-stop lifecycle: id (s-<startMs>), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. `show <id>` expands one slice into a digest (apps started/stopped, error groups, test runs, compiles p50/p95, crashes, env changes) — each block degrades to a note.',
+    description: 'List work sessions — contiguous daemon-uptime slices bounded by the daemon\'s own start/stop events, newest first. A session that ended without a clean stop (crash/kill) is flagged endedCleanly:false and closed at its last observed event; the still-running slice is current:true with end:null. Sessions are pure derivation over existing history (no sessions table, no new state); ids are stable across re-derivations so deep links never rot. `daimon sessions show <id>` composes one slice into a closed block list, each block degradable to a { note }. JSON is the default.',
+    example: 'daimon sessions --since 7d',
+    examples: ['daimon sessions', 'daimon sessions --since 7d', 'daimon sessions show s-1721400000000'],
+    options: [
+      { flag: '--since', arg: '<window>', description: 'Only sessions overlapping this window (e.g. 24h, 7d).' },
+      { flag: '--json', description: 'Emit compact JSON (default).' },
+    ],
+    needsDaemon: true,
+    group: 'introspection',
+    stability: 'experimental',
+    exitCodes: stdExit,
+  },
+  {
     name: 'env',
     args: '<name> [--use <file>] | diff <name> [--from <ts>] [--to <ts>]',
     summary: 'Env-file awareness: convention files (found/missing), key names, snapshot age; `env diff` shows files/keys added/removed/changed between spawns. --use sets the active env file (pre-v0.13 behavior). Values are NEVER shown.',

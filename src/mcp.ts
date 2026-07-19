@@ -50,6 +50,7 @@ export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stabili
   daimon_plugins: 'experimental', // v1.5 (M118)
   daimon_audit: 'experimental', // v1.6 (M122/M125)
   daimon_agents: 'experimental', // v1.6 (M123/M125)
+  daimon_sessions: 'experimental', // v1.8 (M134)
 };
 
 // MCP resource + prompt catalogs with stability tiers (M125, v1.6). Every MCP
@@ -501,6 +502,27 @@ export function buildServer(): McpServer {
     const r = await callJson('/api/report' + (q ? '?' + q : ''));
     if (r.status === 0) return err(r.body?.error || 'unknown');
     if (r.status === 400) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_sessions', {
+    description: 'Walk history by work session (M134, v1.8): contiguous daemon-uptime slices DERIVED from the daemon\'s own start/stop events, newest first. Each session carries id (s-<startMs>, stable across re-derivations), start/end, duration, endedCleanly (false = crash/kill, null = the current still-running slice), current, apps touched, and error/test/compile counts. Pass id to expand one slice into a digest (apps started/stopped, error groups new/recurring, test runs, compiles p50/p95, crashes, env changes — key names only, never values); each block degrades to { note }. Use for "what happened in that session on Tuesday" and to anchor a timeline deep-link (?session=<id>).',
+    inputSchema: {
+      since: z.string().optional().describe('Only sessions overlapping this window, e.g. 24h or 7d (list mode)'),
+      id: z.string().optional().describe('Expand one session by id (e.g. s-1721400000000)'),
+    },
+  }, async ({ since, id }) => {
+    if (id) {
+      const r = await callJson('/api/sessions/' + encodeURIComponent(id));
+      if (r.status === 0) return err(r.body?.error || 'unknown');
+      if (r.status === 404) return err(JSON.stringify(r.body));
+      return ok(r.body);
+    }
+    const qs = new URLSearchParams();
+    if (since) qs.set('since', since);
+    const q = qs.toString();
+    const r = await callJson('/api/sessions' + (q ? '?' + q : ''));
+    if (r.status === 0) return err(r.body?.error || 'unknown');
     return ok(r.body);
   });
 

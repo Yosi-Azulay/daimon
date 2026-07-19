@@ -139,6 +139,37 @@ export interface DiscoveryMeta {
   suggestion: string;
 }
 
+// A derived daemon-uptime slice (M134, v1.8 "Rewind" — experimental).
+// Sessions are DERIVED, never stored server-side — `id` is deterministic
+// (`s-<startTsMs>`) so a deep link never rots across re-derivations.
+export interface SessionSummary {
+  id: string;
+  start: number;
+  end: number | null;
+  durationMs: number;
+  endedCleanly: boolean | null;
+  current: boolean;
+  apps: string[];
+  errorCount: number;
+  testRunCount: number;
+  compileCount: number;
+}
+
+// `GET /api/sessions/<id>` (M134). `blocks` is a closed, composition-only
+// list — every block is EITHER its data shape OR `{ note: string }`
+// (degraded), same convention as `Report['sections']` below; kept loose here
+// since the server shape is the single source of truth.
+export interface SessionDetail extends SessionSummary {
+  blocks: {
+    apps?: any;
+    errors?: any;
+    tests?: any;
+    compiles?: any;
+    crashes?: any;
+    env?: any;
+  };
+}
+
 // `daimon report` digest (M83) — mirrors src/report.ts's Report. Every
 // section is EITHER its data shape OR `{ note: string }` (degraded); never
 // an error. Kept as `any` per-section here since the sections are read-only
@@ -179,6 +210,19 @@ export interface AppWhy {
     changed: boolean;
   } | null;
   suspectCommit: string | null;
+  // The failure situated in its derived session (M138, v1.8 — experimental,
+  // additive): errors in other apps / env changes / compile regressions that
+  // happened earlier in the same session. `sessionId: null` + `note` when the
+  // failure predates any derivable session. `null` outright on a pre-v1.8
+  // daemon (field simply absent).
+  sessionContext?: {
+    sessionId: string | null;
+    start?: number;
+    otherAppErrors?: { app: string; message: string; count: number }[];
+    envChanges?: { app: string; from: number; to: number; [k: string]: any }[];
+    regressions?: { app: string; ts: number; [k: string]: any }[];
+    note?: string;
+  } | null;
   doctor: { name: string; ok: boolean; detail?: string }[];
   // Resource awareness (M105-M109, v1.3 — experimental). `resources` is the
   // structured snapshot (baseline/leak/cpuStorm/budget/lastSample); the
@@ -513,6 +557,29 @@ export class DaimonApi {
       if (opts.workspace) qs.set('workspace', opts.workspace);
       return await firstValueFrom(this.http.get<Report>('/api/report?' + qs.toString()));
     } catch { return null; }
+  }
+
+  // Derived sessions (M134/M137, v1.8 — experimental). `since` accepts a
+  // duration string ("24h") or a raw epoch-ms timestamp, same convention as
+  // getReport/getTimeline. Never throws into a caller's Promise chain — a
+  // pre-v1.8 daemon (404) or any other failure degrades to an empty list.
+  async getSessions(since?: string): Promise<{ sessions: SessionSummary[]; total: number }> {
+    try {
+      const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+      const r = await firstValueFrom(this.http.get<{ sessions: SessionSummary[]; total: number }>('/api/sessions' + qs));
+      return {
+        sessions: Array.isArray(r?.sessions) ? r.sessions : [],
+        total: typeof r?.total === 'number' ? r.total : 0,
+      };
+    } catch { return { sessions: [], total: 0 }; }
+  }
+
+  // GET /api/sessions/<id> — 404s (unknown id) and any other failure both
+  // degrade to null; the Timeline page treats that the same as "no session
+  // deep-link data" rather than surfacing an error.
+  async getSession(id: string): Promise<SessionDetail | null> {
+    try { return await firstValueFrom(this.http.get<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`)); }
+    catch { return null; }
   }
 
   // Test run history (M74/M75). Omitting `app` returns the most recent runs

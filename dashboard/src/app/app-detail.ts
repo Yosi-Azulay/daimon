@@ -448,6 +448,39 @@ interface EnvInfo {
                   </section>
                 </div>
 
+                <!-- Session context (M138, v1.8 — experimental): the failure
+                     situated in the derived session it happened in — other-app
+                     errors, env changes, regressions earlier in the same
+                     slice — with a hop onward to the M137 timeline. -->
+                @if (w.sessionContext; as sc) {
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Session context</h3>
+                    @if (sc.sessionId) {
+                      @if (sc.otherAppErrors?.length || sc.envChanges?.length || sc.regressions?.length) {
+                        <ul class="dm-why-keys">
+                          @for (e of sc.otherAppErrors ?? []; track e.app + e.message) {
+                            <li><dm-mono>{{ e.app }}</dm-mono><span class="dm-dim">{{ e.message }} ×{{ e.count }}</span></li>
+                          }
+                          @for (ec of sc.envChanges ?? []; track ec.app + ec.from) {
+                            <li><dm-mono>{{ ec.app }}</dm-mono><span class="dm-dim">env changed</span></li>
+                          }
+                          @for (rg of sc.regressions ?? []; track rg.app + rg.ts) {
+                            <li><dm-mono>{{ rg.app }}</dm-mono><span class="dm-dim">regression</span></li>
+                          }
+                        </ul>
+                      } @else {
+                        <div class="dm-dim">Nothing else notable happened in this session before the failure.</div>
+                      }
+                      <a class="dm-why-session-link" [routerLink]="['/timeline']" [queryParams]="{ session: sc.sessionId }">
+                        View session in timeline
+                        <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+                      </a>
+                    } @else {
+                      <div class="dm-dim">{{ sc.note || 'No derivable session for this failure.' }}</div>
+                    }
+                  </section>
+                }
+
                 @if (showResourceNote(w.resourceNote)) {
                   <section class="dm-panel">
                     <h3 class="dm-panel-title">
@@ -755,6 +788,9 @@ interface EnvInfo {
 
     .dm-why-row { grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr)); }
     .dm-why-hint { color: var(--mat-sys-on-surface-variant); font-size: .8125rem; margin-bottom: .5rem; }
+    .dm-why-session-link { display: inline-flex; align-items: center; gap: .25rem; margin-top: .5rem; color: var(--mat-sys-primary); font: 500 .8125rem/1.25rem Roboto; text-decoration: none; }
+    .dm-why-session-link:hover { text-decoration: underline; }
+    .dm-why-session-link .material-symbols-outlined { font-size: 16px; }
     .dm-why-keys { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
     .dm-why-keys li { display: flex; align-items: center; gap: .5rem; padding: .25rem .5rem; border-radius: 8px; background: var(--mat-sys-surface-container); font-size: .8125rem; }
     .dm-why-keys .material-symbols-outlined { font-size: 16px; }
