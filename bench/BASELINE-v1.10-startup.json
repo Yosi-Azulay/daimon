@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "release": "v1.10.0",
+  "machineQuiet": true,
+  "machine": {
+    "before": {
+      "cpuRefMedianMs": 17.1,
+      "cpuRefMadRatio": 0.0119,
+      "systemBusyFraction": 0.0957,
+      "quiet": true,
+      "cores": 20,
+      "platform": "win32",
+      "nodeVersion": "v22.14.0"
+    },
+    "after": {
+      "cpuRefMedianMs": 14.6,
+      "cpuRefMadRatio": 0.0118,
+      "systemBusyFraction": 0.1501,
+      "quiet": true,
+      "cores": 20,
+      "platform": "win32",
+      "nodeVersion": "v22.14.0"
+    }
+  },
+  "metrics": {
+    "cli-help": {
+      "p50": 120.9,
+      "p95": 178.7,
+      "samples": 25,
+      "cpuRefMedianMs": 15.4,
+      "method": "spawn(dist/cli.js --help) -> exit, N=25, no daemon involved",
+      "repeats": 3,
+      "allP95": [
+        206.8,
+        193.5,
+        178.7
+      ]
+    },
+    "cli-version": {
+      "p50": 120.9,
+      "p95": 158.7,
+      "samples": 25,
+      "cpuRefMedianMs": 15.4,
+      "method": "spawn(dist/cli.js --version) -> exit, N=25, no daemon involved",
+      "repeats": 3,
+      "allP95": [
+        196.4,
+        215.2,
+        158.7
+      ]
+    },
+    "cli-no-daemon": {
+      "p50": 184.6,
+      "p95": 209.5,
+      "samples": 25,
+      "cpuRefMedianMs": 15.4,
+      "method": "spawn(dist/cli.js list --json) -> exit, N=25, no daemon involved",
+      "repeats": 3,
+      "allP95": [
+        209.5,
+        266.7,
+        259.1
+      ]
+    }
+  },
+  "modules": [
+    {
+      "module": "main.js",
+      "ms": 606.4
+    },
+    {
+      "module": "mcp.js",
+      "ms": 260.1
+    },
+    {
+      "module": "autoFix.js",
+      "ms": 152.2
+    },
+    {
+      "module": "configManager.js",
+      "ms": 96.6
+    },
+    {
+      "module": "server.js",
+      "ms": 96.6
+    },
+    {
+      "module": "registry.js",
+      "ms": 96.1
+    },
+    {
+      "module": "discovery.js",
+      "ms": 92.2
+    },
+    {
+      "module": "doctor.js",
+      "ms": 85.5
+    },
+    {
+      "module": "stateHandoff.js",
+      "ms": 80.9
+    },
+    {
+      "module": "portDiag.js",
+      "ms": 76.2
+    },
+    {
+      "module": "health.js",
+      "ms": 74.2
+    },
+    {
+      "module": "requestLog.js",
+      "ms": 69.2
+    },
+    {
+      "module": "webhooks.js",
+      "ms": 64.1
+    },
+    {
+      "module": "export.js",
+      "ms": 48.6
+    },
+    {
+      "module": "report.js",
+      "ms": 48.2
+    },
+    {
+      "module": "testRunners.js",
+      "ms": 47.6
+    },
+    {
+      "module": "appProcess.js",
+      "ms": 42.6
+    },
+    {
+      "module": "cliHelp.js",
+      "ms": 41.3
+    },
+    {
+      "module": "sessions.js",
+      "ms": 41.2
+    },
+    {
+      "module": "taskRunner.js",
+      "ms": 39.4
+    },
+    {
+      "module": "envFiles.js",
+      "ms": 34
+    },
+    {
+      "module": "auditQuery.js",
+      "ms": 33.7
+    },
+    {
+      "module": "audit.js",
+      "ms": 32.5
+    },
+    {
+      "module": "init.js",
+      "ms": 32
+    },
+    {
+      "module": "usage.js",
+      "ms": 32
+    }
+  ]
+}

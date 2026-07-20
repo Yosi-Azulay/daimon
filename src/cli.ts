@@ -2,9 +2,6 @@
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from './config.js';
-import { discoverApps } from './discovery.js';
-import { runDoctor } from './doctor.js';
-import { findPortHolder, killHolder } from './portDiag.js';
 import { readSession } from './session.js';
 import { daimonDir, readLock, spawnDetached, waitForExit, removeLock } from './daemon.js';
 import { DAIMON_VERSION } from './version.js';
@@ -27,15 +24,11 @@ import {
   formatHumanError,
   emitCompletion,
 } from './cliHelp.js';
-import {
-  checkVersionDriftAndNudge,
-  COMMAND_NAMES as CLAUDE_COMMAND_NAMES,
-  defaultClaudeDir,
-  install as claudeInstall,
-  readManifest as readClaudeManifest,
-  status as claudeStatus,
-  uninstall as claudeUninstall,
-} from './claude.js';
+// discovery / doctor / portDiag / claude are imported LAZILY at their use
+// sites (M148, v1.10). Measured: `daimon --help` cost 307ms against a 49ms
+// bare-node floor, i.e. ~258ms of module graph, almost none of which any
+// instant path touches. They are heavy because they pull the framework
+// registry, the port tooling and the Claude manifest layer respectively.
 
 const nodeMajor = Number((process.versions.node || '0').split('.')[0]);
 if (nodeMajor && nodeMajor < 20) {
@@ -478,7 +471,7 @@ function printSubHelp(name: string): boolean {
   return true;
 }
 
-function printAbout(): void {
+async function printAbout(): Promise<void> {
   const lock = readLock();
   let configPath: string | null = null;
   try {
@@ -488,6 +481,7 @@ function printAbout(): void {
   const lockPath = path.join(daimonDir(), 'lock.json');
   const claudeArtifacts: string[] = [];
   try {
+    const { defaultClaudeDir, readManifest: readClaudeManifest } = await import('./claude.js');
     const m = readClaudeManifest(defaultClaudeDir());
     if (m) {
       if (m.skill) claudeArtifacts.push('skill');
@@ -528,6 +522,11 @@ async function handleClaude(rest: string[]): Promise<void> {
   const sub = rest[0];
   if (!sub) fail(JSON.stringify({ error: 'usage: daimon claude <install|update|uninstall|status> [--skill] [--commands] [--agent] [--all] [--dir <path>] [--yes]' }));
   const { flags } = parseClaudeFlags(rest.slice(1));
+  const {
+    COMMAND_NAMES: CLAUDE_COMMAND_NAMES, defaultClaudeDir,
+    install: claudeInstall, readManifest: readClaudeManifest,
+    status: claudeStatus, uninstall: claudeUninstall,
+  } = await import('./claude.js');
   const dir = flags.dir ?? defaultClaudeDir();
   const apiPort = readApiPort();
 
@@ -680,13 +679,16 @@ async function main() {
 
   let [cmd, ...rest] = argv;
 
-  try { checkVersionDriftAndNudge(); } catch {}
-
+  // INSTANT PATHS FIRST (M148, v1.10). Help, version and about answer from
+  // strings daimon already has; they must not pay for a single module beyond
+  // what argv parsing needed. The Claude version-drift nudge below used to run
+  // before this block, which dragged claude.js (and its transitive graph) into
+  // every `daimon --help`.
   if (!cmd && helpRequested) { printHelp(); return; }
   if (!cmd) { printHelp(); return; }
   if (cmd === 'help') { const sub = rest[0]; if (sub && printSubHelp(sub)) return; printHelp(); return; }
   if (cmd === '--version' || cmd === '-v') { process.stdout.write(DAIMON_VERSION + '\n'); return; }
-  if (cmd === '--about') { printAbout(); return; }
+  if (cmd === '--about') { await printAbout(); return; }
 
   if (CLI_ALIASES[cmd]) cmd = CLI_ALIASES[cmd];
 
@@ -695,6 +697,13 @@ async function main() {
     printHelp();
     return;
   }
+
+  // Past the instant paths: a real verb is running, so the nudge is affordable.
+  // Still lazy and still best-effort — it is advisory, never load-bearing.
+  try {
+    const { checkVersionDriftAndNudge } = await import('./claude.js');
+    checkVersionDriftAndNudge();
+  } catch {}
 
   if (cmd === 'completion') {
     const shell = rest[0];
@@ -861,6 +870,7 @@ async function main() {
       const { validateGroups } = await import('./groups.js');
       let knownNames: string[] | null = null;
       try {
+        const { discoverApps } = await import('./discovery.js');
         const apps = discoverApps(validated);
         knownNames = [...new Set(apps.flatMap(a => [a.name, ...(a.baseName ? [a.baseName] : [])]))];
       } catch { knownNames = null; }
@@ -911,6 +921,7 @@ async function main() {
       out({ path: r.path, installClaude: r.installClaude, auto: r.auto });
       if (r.installClaude) {
         const apiPort = readApiPort();
+        const { install: claudeInstall, defaultClaudeDir } = await import('./claude.js');
         const inst = claudeInstall({
           skill: true, commands: false, agent: true, dir: defaultClaudeDir(), apiPort,
           onMigrationEvent: ev => {
@@ -1516,6 +1527,8 @@ async function main() {
         return;
       }
       const warnings: string[] = [];
+      const { discoverApps } = await import('./discovery.js');
+      const { runDoctor } = await import('./doctor.js');
       const apps = discoverApps(cfgR.config, { warnings });
       const result = await runDoctor(cfgR.config, apps);
       for (const w of warnings) {
@@ -1581,6 +1594,7 @@ async function main() {
     case 'free-port': {
       const port = Number(f.positional[0]);
       if (!Number.isFinite(port) || port <= 0) fail(JSON.stringify({ error: 'usage: daimon free-port <port> [--force]' }));
+      const { findPortHolder, killHolder } = await import('./portDiag.js');
       const holder = findPortHolder(port);
       if (!holder) { out({ port, free: true }); return; }
       if (!f.force) { out({ port, free: false, holder }); return; }

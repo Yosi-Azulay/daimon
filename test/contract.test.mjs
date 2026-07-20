@@ -137,7 +137,17 @@ const config = {
   healthProbe: { enabled: false, intervalMs: 0, timeoutMs: 0, path: '/' },
   logs: { enabled: false, dir: '', maxFiles: 0, maxBytesPerFile: 0 },
   depends: {}, cascadeRestart: false,
-  history: { enabled: false, path: path.join(fakeHome, 'history.db'), retentionDays: 7 },
+  // History is off by default: frozen SHAPES are what this suite pins, and a
+  // synthetic registry pins them deterministically.
+  //
+  // DAIMON_CONTRACT_HISTORY_DB points the same suite at a real corpus instead
+  // (M146, v1.10). That is the scale tripwire: the frozen shapes must be
+  // IDENTICAL at 0, 100k and 1M events — no field appearing only when there is
+  // data, no silent truncation semantics, no pagination drift. retentionDays is
+  // set high so pointing at the corpus cannot prune it.
+  history: process.env.DAIMON_CONTRACT_HISTORY_DB
+    ? { enabled: true, path: process.env.DAIMON_CONTRACT_HISTORY_DB, retentionDays: 3650 }
+    : { enabled: false, path: path.join(fakeHome, 'history.db'), retentionDays: 7 },
   notifications: { enabled: false, onError: false, onUnhealthy: false, tray: false },
   staleDetect: { enabled: false, silentMs: 0 }, headless: true, envFiles: {},
   requestLog: { enabled: false, portOffset: 0 }, metrics: { enabled: false },
