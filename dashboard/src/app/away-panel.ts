@@ -42,20 +42,20 @@ import { AwaySummary, awayDismissKey, buildAwaySummary, findAwayBaseline, should
     .dm-away {
       display: flex; flex-direction: column; gap: .5rem;
       padding: 12px 16px; margin-bottom: 1rem;
-      background: color-mix(in oklch, var(--mat-sys-primary) 8%, var(--mat-sys-surface-container));
-      border: 1px solid color-mix(in oklch, var(--mat-sys-primary) 28%, transparent);
+      background: color-mix(in oklch, var(--dm-color-primary) 8%, var(--dm-color-surface-2));
+      border: 1px solid color-mix(in oklch, var(--dm-color-primary) 28%, transparent);
       border-radius: 12px;
     }
     .dm-away-head { display: flex; align-items: center; gap: .5rem; }
-    .dm-away-head .material-symbols-outlined:first-child { color: var(--mat-sys-primary); }
-    .dm-away-head h2 { flex: 1; margin: 0; font: 500 .9375rem/1.25rem Roboto; color: var(--mat-sys-on-surface); }
+    .dm-away-head .material-symbols-outlined:first-child { color: var(--dm-color-primary); }
+    .dm-away-head h2 { flex: 1; margin: 0; font: 500 .9375rem/1.25rem Roboto; color: var(--dm-color-fg); }
     .dm-away-dismiss {
       width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
-      background: transparent; border: 0; border-radius: 999px; color: var(--mat-sys-on-surface-variant); cursor: pointer;
+      background: transparent; border: 0; border-radius: 999px; color: var(--dm-color-fg-muted); cursor: pointer;
     }
-    .dm-away-dismiss:hover { background: var(--mat-sys-surface-container-highest); }
-    .dm-away-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; font: 500 .8125rem/1.25rem Roboto; color: var(--mat-sys-on-surface); }
-    .dm-away-link { align-self: flex-start; display: inline-flex; align-items: center; gap: .25rem; color: var(--mat-sys-primary); font: 500 .8125rem/1.25rem Roboto; text-decoration: none; }
+    .dm-away-dismiss:hover { background: var(--dm-color-surface-4); }
+    .dm-away-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; font: 500 .8125rem/1.25rem Roboto; color: var(--dm-color-fg); }
+    .dm-away-link { align-self: flex-start; display: inline-flex; align-items: center; gap: .25rem; color: var(--dm-color-primary); font: 500 .8125rem/1.25rem Roboto; text-decoration: none; }
     .dm-away-link:hover { text-decoration: underline; }
     .dm-away-link .material-symbols-outlined { font-size: 16px; }
   `],

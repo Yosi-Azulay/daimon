@@ -371,6 +371,12 @@ daimon completion powershell | Out-String | Invoke-Expression   # PowerShell (ad
 
 `node scripts/demo/run-demo.mjs` replays a deterministic session (start → error surfaced → report → export) against a throwaway state dir — the source of the README screencast, and provably unable to touch your real `~/.daimon`.
 
+<!-- MAINTAINER: the dashboard was redesigned in v1.11 ("Fresh Coat"). Any
+     dashboard screencast/screenshots recorded before v1.11 are stale — retake:
+     apps-list, an app-detail page, the errors panel, Trends (light AND dark),
+     and the Report page. See RELEASE-v1.11.0.md § Screenshots. -->
+
+
 ## Plugin API v1 (v1.5)
 
 Drop a file into `~/.daimon/plugins`, restart the daemon, and daimon calls your code:

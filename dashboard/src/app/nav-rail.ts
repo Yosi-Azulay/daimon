@@ -64,8 +64,8 @@ const KEY = 'daimon.nav.expanded';
     .dm-rail {
       grid-area: rail;
       display: flex; flex-direction: column;
-      background: var(--mat-sys-surface-container);
-      border-right: 1px solid var(--mat-sys-outline-variant);
+      background: var(--dm-color-surface-2);
+      border-right: 1px solid var(--dm-color-border);
       width: 64px;
       transition: width var(--dm-motion-medium) var(--dm-motion-easing-emphasized);
       overflow: hidden;
@@ -73,30 +73,30 @@ const KEY = 'daimon.nav.expanded';
     }
     .dm-rail.expanded { width: 240px; }
     .dm-rail-toggle {
-      border: none; background: transparent; color: var(--mat-sys-on-surface-variant);
+      border: none; background: transparent; color: var(--dm-color-fg-muted);
       padding: 12px; cursor: pointer; align-self: flex-end;
       display: flex; align-items: center; justify-content: center;
     }
-    .dm-rail-toggle:hover { color: var(--mat-sys-on-surface); }
+    .dm-rail-toggle:hover { color: var(--dm-color-fg); }
     .dm-rail-brand {
       display: flex; align-items: center; gap: .5rem;
-      padding: 0 16px 12px 20px; color: var(--mat-sys-primary);
+      padding: 0 16px 12px 20px; color: var(--dm-color-primary);
       font: 500 1rem/1.5rem Roboto; letter-spacing: .009rem;
     }
     .dm-rail-items { display: flex; flex-direction: column; gap: 2px; padding: 8px; }
     .dm-rail-item {
       display: flex; align-items: center; gap: .75rem;
       padding: 10px 12px; border-radius: 12px;
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--dm-color-fg-muted);
       text-decoration: none;
       font: 500 .875rem/1.25rem Roboto;
       transition: background var(--dm-motion-short) var(--dm-motion-easing), color var(--dm-motion-short) var(--dm-motion-easing);
       white-space: nowrap;
     }
-    .dm-rail-item:hover { background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface); }
+    .dm-rail-item:hover { background: var(--dm-color-surface-3); color: var(--dm-color-fg); }
     .dm-rail-item.active {
-      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
-      color: var(--mat-sys-primary);
+      background: color-mix(in oklch, var(--dm-color-primary) var(--dm-badge-tint), transparent);
+      color: var(--dm-color-primary);
     }
     .dm-rail-label { flex: 1; }
     /* Bottom bar under 768px (M71): horizontal, icon-only, scrollable. */

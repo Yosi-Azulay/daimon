@@ -91,21 +91,21 @@ const SEARCH_DEBOUNCE_MS = 250;
   styles: [`
     :host { position: fixed; inset: 0; z-index: 1000; pointer-events: none; }
     :host:has(.dm-palette) { pointer-events: auto; }
-    .dm-palette-backdrop { position: absolute; inset: 0; background: color-mix(in oklch, var(--mat-sys-scrim) 50%, transparent); }
+    .dm-palette-backdrop { position: absolute; inset: 0; background: color-mix(in oklch, var(--dm-color-scrim) 50%, transparent); }
     .dm-palette {
       position: absolute; top: 12vh; left: 50%; transform: translateX(-50%);
       width: min(640px, 92vw);
-      background: var(--mat-sys-surface-container-high);
-      color: var(--mat-sys-on-surface);
+      background: var(--dm-color-surface-3);
+      color: var(--dm-color-fg);
       border-radius: 16px;
-      box-shadow: var(--mat-sys-level4);
+      box-shadow: var(--dm-elev-3);
       overflow: hidden;
-      border: 1px solid var(--mat-sys-outline-variant);
+      border: 1px solid var(--dm-color-border);
     }
     .dm-palette-search {
       display: flex; align-items: center; gap: .75rem;
       padding: .875rem 1rem;
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
+      border-bottom: 1px solid var(--dm-color-border);
     }
     .dm-palette-search input {
       flex: 1; background: transparent; border: 0; outline: 0;
@@ -114,9 +114,9 @@ const SEARCH_DEBOUNCE_MS = 250;
     .dm-palette-search kbd {
       font-family: 'Roboto Mono', ui-monospace, monospace;
       font-size: .6875rem; padding: 2px 6px; border-radius: 4px;
-      background: var(--mat-sys-surface-container-low);
-      border: 1px solid var(--mat-sys-outline-variant);
-      color: var(--mat-sys-on-surface-variant);
+      background: var(--dm-color-surface);
+      border: 1px solid var(--dm-color-border);
+      color: var(--dm-color-fg-muted);
     }
     .dm-palette-list { list-style: none; margin: 0; padding: 6px; max-height: 60vh; overflow-y: auto; }
     .dm-palette-item {
@@ -124,40 +124,40 @@ const SEARCH_DEBOUNCE_MS = 250;
       padding: 10px 12px; border-radius: 10px; cursor: pointer;
       font: 500 .875rem/1.25rem Roboto;
     }
-    .dm-palette-item.active { background: color-mix(in oklch, var(--mat-sys-primary) 14%, transparent); }
+    .dm-palette-item.active { background: color-mix(in oklch, var(--dm-color-primary) 14%, transparent); }
     .dm-palette-label { flex: 1; }
-    .dm-palette-hint { color: var(--mat-sys-on-surface-variant); font-family: 'Roboto Mono', monospace; font-size: .75rem; }
+    .dm-palette-hint { color: var(--dm-color-fg-muted); font-family: 'Roboto Mono', monospace; font-size: .75rem; }
     .dm-palette-kind {
       font-size: .6875rem; padding: 2px 8px; border-radius: 999px;
-      background: var(--mat-sys-surface-container-low);
-      color: var(--mat-sys-on-surface-variant);
+      background: var(--dm-color-surface);
+      color: var(--dm-color-fg-muted);
       text-transform: uppercase; letter-spacing: .05em;
     }
-    .dm-palette-empty { padding: 1.5rem; color: var(--mat-sys-on-surface-variant); text-align: center; }
+    .dm-palette-empty { padding: 1.5rem; color: var(--dm-color-fg-muted); text-align: center; }
     .dm-palette-note {
       display: flex; align-items: center; gap: .5rem;
       padding: 6px 16px; font: 500 .75rem/1.25rem Roboto;
-      color: var(--mat-sys-on-surface-variant);
-      background: color-mix(in oklch, var(--mat-sys-tertiary) 10%, transparent);
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
+      color: var(--dm-color-fg-muted);
+      background: color-mix(in oklch, var(--dm-color-accent) 10%, transparent);
+      border-bottom: 1px solid var(--dm-color-border);
     }
-    .dm-palette-note mat-icon { font-size: 16px; width: 16px; height: 16px; color: var(--mat-sys-tertiary); }
+    .dm-palette-note mat-icon { font-size: 16px; width: 16px; height: 16px; color: var(--dm-color-accent); }
     .dm-palette-group-label {
       padding: 8px 12px 4px; font: 600 .6875rem/1rem Roboto;
       text-transform: uppercase; letter-spacing: .05em;
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--dm-color-fg-muted);
     }
     .dm-palette-hit-app {
       flex-shrink: 0; padding: 1px 8px; border-radius: 999px;
-      background: var(--mat-sys-surface-container-low);
-      color: var(--mat-sys-on-surface-variant);
+      background: var(--dm-color-surface);
+      color: var(--dm-color-fg-muted);
       font: 600 .75rem/1.125rem 'Roboto Mono', ui-monospace, monospace;
     }
     .dm-palette-hit-snippet {
       flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      color: var(--mat-sys-on-surface); font-weight: 400;
+      color: var(--dm-color-fg); font-weight: 400;
     }
-    .dm-palette-hit-ago { flex-shrink: 0; color: var(--mat-sys-on-surface-variant); font-size: .75rem; }
+    .dm-palette-hit-ago { flex-shrink: 0; color: var(--dm-color-fg-muted); font-size: .75rem; }
     @media (max-width: 480px) {
       .dm-palette-hit-app { display: none; }
     }

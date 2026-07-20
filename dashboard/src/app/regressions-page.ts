@@ -169,30 +169,30 @@ function fmtMetric(kind: Kind, v: number): string {
   styles: [`
     :host { display: block; padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
     .dm-page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-    .dm-page-header h1 { font: 500 1.5rem/2rem Roboto; margin: 0; color: var(--mat-sys-on-surface); }
-    .dm-count { color: var(--mat-sys-on-surface-variant); font-weight: 400; }
-    .dm-page-sub { color: var(--mat-sys-on-surface-variant); font-size: .875rem; margin-top: .25rem; }
-    .dm-conn-on { color: var(--mat-sys-primary); }
-    .dm-conn-off { color: var(--mat-sys-error); }
+    .dm-page-header h1 { font: 500 1.5rem/2rem Roboto; margin: 0; color: var(--dm-color-fg); }
+    .dm-count { color: var(--dm-color-fg-muted); font-weight: 400; }
+    .dm-page-sub { color: var(--dm-color-fg-muted); font-size: .875rem; margin-top: .25rem; }
+    .dm-conn-on { color: var(--dm-color-primary); }
+    .dm-conn-off { color: var(--dm-color-error); }
     .dm-sep { margin: 0 .5rem; opacity: .5; }
-    .dm-loading { color: var(--mat-sys-on-surface-variant); padding: 2rem; text-align: center; }
+    .dm-loading { color: var(--dm-color-fg-muted); padding: 2rem; text-align: center; }
     .dm-regr-list { display: flex; flex-direction: column; gap: .75rem; }
-    .dm-regr-card { border-left: 4px solid var(--mat-sys-tertiary); }
-    .dm-regr-card[data-kind="compile"] { border-left-color: var(--mat-sys-tertiary); }
-    .dm-regr-card[data-kind="bundle"] { border-left-color: var(--mat-sys-secondary); }
-    .dm-regr-card[data-kind="error-flap"] { border-left-color: var(--mat-sys-error); }
-    .dm-regr-icon { font-size: 28px; width: 28px; height: 28px; color: var(--mat-sys-on-surface-variant); }
-    .dm-app-link { color: var(--mat-sys-primary); text-decoration: underline; text-underline-offset: 2px; font-weight: 500; }
+    .dm-regr-card { border-left: 4px solid var(--dm-color-accent); }
+    .dm-regr-card[data-kind="compile"] { border-left-color: var(--dm-color-accent); }
+    .dm-regr-card[data-kind="bundle"] { border-left-color: var(--dm-color-secondary); }
+    .dm-regr-card[data-kind="error-flap"] { border-left-color: var(--dm-color-error); }
+    .dm-regr-icon { font-size: 28px; width: 28px; height: 28px; color: var(--dm-color-fg-muted); }
+    .dm-app-link { color: var(--dm-color-primary); text-decoration: underline; text-underline-offset: 2px; font-weight: 500; }
     .dm-app-link:hover { text-decoration: underline; }
-    .dm-fp { font-size: .75rem; color: var(--mat-sys-on-surface-variant); }
+    .dm-fp { font-size: .75rem; color: var(--dm-color-fg-muted); }
     .dm-regr-metrics { display: flex; align-items: center; gap: 1rem; margin-top: .5rem; }
-    .dm-metric { display: flex; flex-direction: column; padding: .5rem .875rem; border-radius: 8px; background: var(--mat-sys-surface-container); }
-    .dm-metric-bad { background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), var(--mat-sys-surface-container)); }
-    .dm-metric-label { font: 500 .6875rem/1rem Roboto; text-transform: uppercase; letter-spacing: .05rem; color: var(--mat-sys-on-surface-variant); }
-    .dm-metric-value { font-size: 1rem; font-weight: 500; color: var(--mat-sys-on-surface); }
-    .dm-metric-bad .dm-metric-value { color: var(--mat-sys-error); }
-    .dm-arrow { color: var(--mat-sys-on-surface-variant); }
-    .dm-suspect { display: flex; align-items: center; gap: .5rem; margin-top: .75rem; padding-top: .5rem; border-top: 1px dashed var(--mat-sys-outline-variant); font-size: .8125rem; color: var(--mat-sys-on-surface-variant); }
+    .dm-metric { display: flex; flex-direction: column; padding: .5rem .875rem; border-radius: 8px; background: var(--dm-color-surface-2); }
+    .dm-metric-bad { background: color-mix(in oklch, var(--dm-color-error) var(--dm-badge-tint), var(--dm-color-surface-2)); }
+    .dm-metric-label { font: 500 .6875rem/1rem Roboto; text-transform: uppercase; letter-spacing: .05rem; color: var(--dm-color-fg-muted); }
+    .dm-metric-value { font-size: 1rem; font-weight: 500; color: var(--dm-color-fg); }
+    .dm-metric-bad .dm-metric-value { color: var(--dm-color-error); }
+    .dm-arrow { color: var(--dm-color-fg-muted); }
+    .dm-suspect { display: flex; align-items: center; gap: .5rem; margin-top: .75rem; padding-top: .5rem; border-top: 1px dashed var(--dm-color-border); font-size: .8125rem; color: var(--dm-color-fg-muted); }
     .dm-suspect mat-icon { font-size: 16px; width: 16px; height: 16px; }
   `],
 })

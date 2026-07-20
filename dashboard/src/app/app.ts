@@ -92,22 +92,22 @@ const WS_KEY = 'daimon.workspace';
       display: flex; align-items: center; gap: .75rem;
       padding: 10px 14px;
       margin-bottom: 1rem;
-      background: var(--mat-sys-surface-container);
-      border: 1px solid var(--mat-sys-outline-variant);
+      background: var(--dm-color-surface-2);
+      border: 1px solid var(--dm-color-border);
       border-radius: 10px;
-      color: var(--mat-sys-on-surface);
+      color: var(--dm-color-fg);
       font: 500 .8125rem/1.25rem Roboto;
     }
     .dm-cwd-banner code { font-family: 'Roboto Mono', ui-monospace, monospace; }
     .dm-cwd-banner button {
       padding: 4px 12px;
-      background: var(--mat-sys-primary); color: var(--mat-sys-on-primary);
+      background: var(--dm-color-primary); color: var(--dm-color-on-primary);
       border: 0; border-radius: 8px; cursor: pointer;
       font: 500 .8125rem/1.25rem Roboto;
     }
     .dm-cwd-banner button[disabled] { opacity: .6; cursor: progress; }
     .dm-cwd-banner button.dm-cwd-dismiss {
-      background: transparent; color: var(--mat-sys-on-surface-variant);
+      background: transparent; color: var(--dm-color-fg-muted);
       padding: 4px 10px; font-size: 1.125rem; line-height: 1;
     }
   `],

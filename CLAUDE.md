@@ -218,6 +218,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 
 ## Conventions
 
+- **The dashboard has a designed visual language, and it lives in tokens (M150, v1.11).** `DESIGN.md` (repo root) is the contract — principles + the full `--dm-*` token scale (color/spacing/type/radius/elevation/motion) for both themes and both densities, with the token-level AA table. Everything themable is a `--dm-*` custom property in `dashboard/src/styles/tokens.css`; a component that hard-codes a color is a **defect**, not a style choice. Contrast fixes land at the token layer, never in a component (the M89 discipline). Color roles are the language's own OKLCH values (authored as `light-dark()`), and tokens.css **re-points** the consumed `--mat-sys-*` Material roles onto them — so Material widgets track the language too; do not re-introduce raw `--mat-sys-*` reads in components. The one exception: `--dm-chart-*` ship as theme-split sRGB **hex** (not `light-dark()`/`oklch()`), because Chart.js reads them via `getComputedStyle` and its parser accepts only hex/rgb — see the tokens.css header. `DESIGN.md` is inherited by v1.12 (IA) and v1.13 (TUI); AA is a floor verified at the token level AND by the axe gate on every route at both viewports.
 - TS strict mode (3 tsconfig projects: root, dashboard/app, vscode-extension).
 - Tests run against compiled `dist/*.js`, not `src/*.ts` — always `npm run build` before `npm test`.
 - New HTTP endpoints belong in `server.ts` and follow the `parts[]` switch pattern.
@@ -423,7 +424,34 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
   `MCP_PROMPT_STABILITY`).
 
-## v1.10 highlights (what landed this release)
+## v1.11 highlights (what landed this release)
+
+- **Fresh Coat (M150–M155)**: part 1 of the UI redesign trilogy — a **visual
+  language** designed as a whole, implemented entirely at the token layer.
+  Visual only: zero route/daemon/CLI/HTTP/MCP change, no config key, no history
+  migration, no frozen shape moved; every `data-testid`/ARIA/landmark preserved.
+  **Design language (M150)**: `DESIGN.md` (repo root) states principles + the
+  full `--dm-*` scale (color/space/type/radius/elevation/motion) for both themes
+  and both densities; `tokens.css` implements it as the language's own **OKLCH**
+  values (cool-neutral iris-undertone surfaces, iris primary, green/cyan/amber/red
+  status set, rational `4·6·8·12·16` radii, soft cool elevation) and **re-points**
+  the consumed `--mat-sys-*` roles onto them so Material widgets track it too. AA
+  verified at the token level (OKLCH→sRGB→WCAG; all pairings pass 4.5:1 text /
+  3:1 non-text in both themes with margin). **Component + page restyle
+  (M151–M153)**: shared layer + all pages migrated from ~590 raw `--mat-sys-*`
+  reads to their `--dm-*` roles (a decoupling, visually identical via the
+  re-point); status dots now match their pill hue. **Chart fix (M153)**: the four
+  `--dm-chart-*` tokens ship as theme-split sRGB **hex** — Chart.js reads them via
+  `getComputedStyle` and its parser accepts neither `light-dark()` nor `oklch()`,
+  so series had been silently defaulting; they now render the designed hues and
+  adapt to theme. **Density/theme/print (M154)** re-verified against the new
+  scale. `DESIGN.md` is the contract v1.12 (IA) and v1.13 (TUI) inherit. Additive
+  tokens only: `--dm-color-secondary`, `--dm-color-scrim`,
+  `--dm-color-inverse-surface`/`-on-surface`, `--dm-chart-grid`. Suite **1007
+  tests**, 0 fail; bundle 149.3KB gz / 132.6KB br. No new test files (visual-only
+  — the axe/keyboard/print Playwright drive needs no selector changes).
+
+## v1.10 highlights
 
 - **Featherweight (M145–M149)**: performance & scale certification — no new
   feature surface, no config key, no history migration, no frozen shape moved.

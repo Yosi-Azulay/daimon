@@ -58,11 +58,13 @@ router-outlet + * {
   }
 }
 
-// Material defaults take more room than we want for a dev tool.
-.mat-mdc-card { border-radius: 14px !important; box-shadow: var(--mat-sys-level1) !important; }
-.mat-mdc-card:hover { box-shadow: var(--mat-sys-level2) !important; }
-.mat-mdc-button-base { border-radius: 10px !important; }
-.mat-mdc-snack-bar-container .mdc-snackbar__surface { border-radius: 10px !important; }
+// Material defaults take more room than we want for a dev tool. Radii/elevation
+// come from the design tokens (DESIGN.md §5–6): cards use the panel radius (lg)
+// and resting elevation; buttons/snackbars the control radius (md).
+.mat-mdc-card { border-radius: var(--dm-radius-lg) !important; box-shadow: var(--dm-elev-1) !important; }
+.mat-mdc-card:hover { box-shadow: var(--dm-elev-2) !important; }
+.mat-mdc-button-base { border-radius: var(--dm-radius-md) !important; }
+.mat-mdc-snack-bar-container .mdc-snackbar__surface { border-radius: var(--dm-radius-md) !important; }
 
 // Icons should size with surrounding text rather than the 24px default.
 .mat-mdc-icon-button .mat-icon,
@@ -78,11 +80,11 @@ router-outlet + * {
 
 // Slide-toggle: shrink the thumb track footprint and surrounding label.
 .mat-mdc-slide-toggle { transform: scale(0.85); transform-origin: left center; }
-.mat-mdc-slide-toggle .mdc-form-field { font: 500 .75rem/1.25rem Roboto; }
+.mat-mdc-slide-toggle .mdc-form-field { font: 500 var(--dm-text-sm)/var(--dm-line-normal) var(--dm-font); }
 
 // Button-toggle group: tighter heights for inline picker rows.
-.mat-button-toggle-group { border-radius: 999px !important; min-height: 32px; }
-.mat-button-toggle { font: 500 .8125rem/1.25rem Roboto !important; }
+.mat-button-toggle-group { border-radius: var(--dm-radius-full) !important; min-height: 32px; }
+.mat-button-toggle { font: 500 var(--dm-text-sm)/var(--dm-line-normal) var(--dm-font) !important; }
 .mat-button-toggle-button { padding: 0 12px !important; }
 
 // Expansion panel headers — Material's default is too tall for a settings list.
@@ -102,19 +104,19 @@ mat-panel-description { justify-content: flex-end; flex: 1 0 0; padding-right: .
 }
 .dm-page-header h1 {
   margin: 0;
-  font: 400 1.5rem/2rem Roboto;
+  font: 400 var(--dm-text-xl)/2rem var(--dm-font);
   letter-spacing: 0;
 }
 .dm-page-header .dm-page-sub {
-  font: 400 .875rem/1.25rem Roboto;
-  color: var(--mat-sys-on-surface-variant);
+  font: 400 var(--dm-text-md)/var(--dm-line-normal) var(--dm-font);
+  color: var(--dm-color-fg-muted);
   margin-top: .25rem;
 }
 
 // Mono helper used inline.
 .dm-mono {
   font-family: var(--dm-mono);
-  font-size: .875rem;
+  font-size: var(--dm-text-md);
 }
 
 // Focus outlines from tokens (M71): a single, consistent focus treatment.

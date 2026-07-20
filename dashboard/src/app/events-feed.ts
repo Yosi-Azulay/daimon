@@ -152,15 +152,15 @@ function relTime(ms: number, now: number): string {
   `,
   styles: [`
     :host { display: block; }
-    .dm-count { color: var(--mat-sys-on-surface-variant); font-weight: 400; }
+    .dm-count { color: var(--dm-color-fg-muted); font-weight: 400; }
     .dm-conn { display: inline-flex; align-items: center; gap: .35rem; }
-    .dm-conn-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--mat-sys-outline); }
+    .dm-conn-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--dm-color-border-strong); }
     .dm-conn-on .dm-conn-dot {
-      background: var(--mat-sys-primary);
-      box-shadow: 0 0 0 3px color-mix(in oklch, var(--mat-sys-primary) 24%, transparent);
+      background: var(--dm-color-primary);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--dm-color-primary) 24%, transparent);
     }
-    .dm-sep { color: var(--mat-sys-outline); margin: 0 .15rem; }
-    .dm-paused-tag { color: var(--mat-sys-tertiary); font-weight: 500; }
+    .dm-sep { color: var(--dm-color-border-strong); margin: 0 .15rem; }
+    .dm-paused-tag { color: var(--dm-color-accent); font-weight: 500; }
     .dm-toolbar {
       display: flex; flex-wrap: wrap; gap: .75rem;
       align-items: center; margin-bottom: .5rem;
@@ -169,23 +169,23 @@ function relTime(ms: number, now: number): string {
     .dm-text-filter { flex: 1; min-width: 14rem; max-width: 28rem; }
     .dm-type-chips { display: flex; gap: .35rem; flex-wrap: wrap; }
     .dm-chip {
-      border: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container);
-      color: var(--mat-sys-on-surface-variant);
+      border: 1px solid var(--dm-color-border);
+      background: var(--dm-color-surface-2);
+      color: var(--dm-color-fg-muted);
       border-radius: 999px; padding: 4px 12px;
       font: 500 .75rem/1rem Roboto;
       cursor: pointer; letter-spacing: .025rem;
     }
-    .dm-chip:hover { background: var(--mat-sys-surface-container-high); }
-    .dm-chip-active { color: var(--mat-sys-on-surface); }
+    .dm-chip:hover { background: var(--dm-color-surface-3); }
+    .dm-chip-active { color: var(--dm-color-fg); }
     .dm-chip-clear { display: inline-flex; align-items: center; padding: 2px 8px; }
     .dm-chip-clear mat-icon { font-size: 16px; width: 16px; height: 16px; }
 
     .dm-list {
       list-style: none; margin: 0; padding: 0;
-      border: 1px solid var(--mat-sys-outline-variant);
+      border: 1px solid var(--dm-color-border);
       border-radius: 10px;
-      background: var(--mat-sys-surface-container-lowest);
+      background: var(--dm-color-surface);
       overflow: hidden;
     }
     .dm-event {
@@ -193,9 +193,9 @@ function relTime(ms: number, now: number): string {
       grid-template-columns: 7.5rem max-content 10rem 1fr;
       gap: .75rem; align-items: center;
       height: 28px; padding: 0 .75rem;
-      border-top: 1px solid var(--mat-sys-outline-variant);
+      border-top: 1px solid var(--dm-color-border);
       font-size: .8125rem;
-      color: var(--mat-sys-on-surface);
+      color: var(--dm-color-fg);
     }
     @media (max-width: 640px) {
       .dm-event { grid-template-columns: max-content 1fr; height: auto; padding: 4px .75rem; }
@@ -203,65 +203,65 @@ function relTime(ms: number, now: number): string {
       .dm-event > *:last-child { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
     }
     .dm-event:first-child { border-top: 0; }
-    .dm-time { color: var(--mat-sys-on-surface-variant); }
+    .dm-time { color: var(--dm-color-fg-muted); }
     .dm-type {
       display: inline-flex; align-items: center; justify-content: center;
       padding: 1px 8px; border-radius: 999px;
       font: 500 .6875rem/1rem Roboto; letter-spacing: .03rem;
-      border: 1px solid var(--mat-sys-outline-variant);
+      border: 1px solid var(--dm-color-border);
       text-transform: lowercase;
       white-space: nowrap;
     }
     .dm-type[data-kind="status"], .dm-chip[data-kind="status"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-primary) 30%, transparent);
-      color: var(--mat-sys-primary);
+      background: color-mix(in oklch, var(--dm-color-primary) var(--dm-badge-tint), transparent);
+      border-color: color-mix(in oklch, var(--dm-color-primary) 30%, transparent);
+      color: var(--dm-color-primary);
     }
     .dm-type[data-kind="health"], .dm-chip[data-kind="health"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-secondary) var(--dm-badge-tint), transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-secondary) 30%, transparent);
-      color: var(--mat-sys-secondary);
+      background: color-mix(in oklch, var(--dm-color-secondary) var(--dm-badge-tint), transparent);
+      border-color: color-mix(in oklch, var(--dm-color-secondary) 30%, transparent);
+      color: var(--dm-color-secondary);
     }
     .dm-type[data-kind="error"], .dm-chip[data-kind="error"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-error) 32%, transparent);
-      color: var(--mat-sys-error);
+      background: color-mix(in oklch, var(--dm-color-error) var(--dm-badge-tint), transparent);
+      border-color: color-mix(in oklch, var(--dm-color-error) 32%, transparent);
+      color: var(--dm-color-error);
     }
     .dm-type[data-kind="compile"], .dm-chip[data-kind="compile"].dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-tertiary) var(--dm-badge-tint), transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-tertiary) 30%, transparent);
-      color: var(--mat-sys-tertiary);
+      background: color-mix(in oklch, var(--dm-color-accent) var(--dm-badge-tint), transparent);
+      border-color: color-mix(in oklch, var(--dm-color-accent) 30%, transparent);
+      color: var(--dm-color-accent);
     }
     .dm-type[data-kind="log"], .dm-chip[data-kind="log"].dm-chip-active {
-      background: var(--mat-sys-surface-container);
-      color: var(--mat-sys-on-surface-variant);
+      background: var(--dm-color-surface-2);
+      color: var(--dm-color-fg-muted);
     }
     .dm-app {
-      text-decoration: none; color: var(--mat-sys-primary);
+      text-decoration: none; color: var(--dm-color-primary);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .dm-app:hover { text-decoration: underline; }
-    .dm-app-empty { color: var(--mat-sys-outline); }
+    .dm-app-empty { color: var(--dm-color-border-strong); }
     .dm-msg {
-      color: var(--mat-sys-on-surface);
+      color: var(--dm-color-fg);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       display: flex; align-items: center; gap: .35rem;
     }
-    .dm-arrow { color: var(--mat-sys-on-surface-variant); }
+    .dm-arrow { color: var(--dm-color-fg-muted); }
     .dm-divider {
       height: 18px;
       display: flex; align-items: center; justify-content: center;
-      border-top: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container);
+      border-top: 1px solid var(--dm-color-border);
+      background: var(--dm-color-surface-2);
     }
     .dm-divider-label {
       font: 400 .6875rem/1rem Roboto;
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--dm-color-fg-muted);
       letter-spacing: .04rem;
     }
     .dm-flash { animation: dm-event-pulse 600ms var(--dm-motion-easing); }
     @keyframes dm-event-pulse {
-      0%   { background: color-mix(in oklch, var(--mat-sys-primary) 24%, transparent); }
+      0%   { background: color-mix(in oklch, var(--dm-color-primary) 24%, transparent); }
       100% { background: transparent; }
     }
     @media (prefers-reduced-motion: reduce) {

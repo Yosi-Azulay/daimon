@@ -1,68 +1,102 @@
-/* daimon design tokens (M70).
+/* daimon design tokens — "Fresh Coat" visual language (v1.11, M150).
  *
- * Single source of truth for themed values: color (light+dark via
- * light-dark(), tracking the html color-scheme the theme toggle sets),
- * spacing scale, type scale, radii, elevation and motion.
+ * Single source of truth for every themable value: color, spacing, type,
+ * radius, elevation, motion — light + dark (via light-dark(), tracking the
+ * `color-scheme` the theme toggle sets on <html>) and both densities.
  *
- * Color tokens alias the Angular Material system palette so the whole app
- * re-themes from one place; components consume --dm-* only — no raw hex/px
- * for themed values outside this file.
+ * DESIGN.md (repo root) is the contract this file implements — principles +
+ * the full scale + the AA verification table. The v1.12 (IA) and v1.13 (TUI)
+ * releases inherit this language. Read DESIGN.md before changing a value here.
+ *
+ * The language is authored in OKLCH for perceptual evenness and predictable
+ * contrast. Two implementation notes:
+ *
+ *  1. Color roles are defined here as the design language's own values —
+ *     NOT one-to-one aliases of Angular Material's --mat-sys-* palette (the
+ *     pre-v1.11 arrangement). Instead this file RE-POINTS the consumed
+ *     --mat-sys-* roles onto these tokens (bottom of the color block), so
+ *     Material widgets AND any component still reading a raw --mat-sys-* role
+ *     track the new language identically. `:root` (specificity 0,1,0) wins
+ *     over the `html { @include mat.theme() }` output (a type selector,
+ *     0,0,1) in styles.scss — the same mechanism the print override relies on.
+ *     Components migrate their reads --mat-sys-* -> --dm-* over M151–M153; the
+ *     re-point keeps the surface coherent during that burn-down.
+ *
+ *  2. Chart-series tokens (--dm-chart-*) are the ONE exception to light-dark():
+ *     they ship as pre-resolved sRGB HEX, theme-split by media query +
+ *     attribute selector. Chart.js reads them via getComputedStyle on :root,
+ *     and (verified) getComputedStyle returns a custom property's value
+ *     UNRESOLVED — a `light-dark(...)` or `oklch(...)` string reaches Chart.js
+ *     verbatim, and its parser (@kurkle/color) rejects both, silently falling
+ *     back to default colors. A directly-defined theme-split token resolves to
+ *     a plain per-theme hex that the parser accepts. (This also fixes a latent
+ *     bug: the old `--dm-chart-*: var(--mat-sys-primary)` fed Chart.js an
+ *     unparseable `light-dark(#..,#..)` string.)
  */
 
 :root {
-  /* ---- color ------------------------------------------------------------ */
-  --dm-color-bg: var(--mat-sys-surface);
-  --dm-color-fg: var(--mat-sys-on-surface);
-  --dm-color-fg-muted: var(--mat-sys-on-surface-variant);
-  --dm-color-surface: var(--mat-sys-surface-container-low);
-  --dm-color-surface-2: var(--mat-sys-surface-container);
-  --dm-color-surface-3: var(--mat-sys-surface-container-high);
-  --dm-color-surface-4: var(--mat-sys-surface-container-highest);
-  --dm-color-border: var(--mat-sys-outline-variant);
-  --dm-color-border-strong: var(--mat-sys-outline);
-  --dm-color-primary: var(--mat-sys-primary);
-  --dm-color-on-primary: var(--mat-sys-on-primary);
-  --dm-color-accent: var(--mat-sys-tertiary);
-  --dm-color-danger: var(--mat-sys-error);
-  --dm-color-on-danger: var(--mat-sys-on-error);
-  /* status hues (used by pills, ribbons, sparklines) */
-  --dm-color-serving: var(--mat-sys-primary);
-  --dm-color-compiling: var(--mat-sys-tertiary);
-  --dm-color-starting: var(--mat-sys-secondary);
-  --dm-color-error: var(--mat-sys-error);
-  --dm-color-stopped: var(--mat-sys-outline-variant);
-  /* workspace/framework tone building blocks: components combine these with
-     a per-entity hue, e.g. oklch(var(--dm-tone-l) var(--dm-tone-c) <hue>) */
+  /* ---- color: roles (light-dark oklch) ---------------------------------- */
+  /* Neutrals carry a faint iris undertone (hue 275, very low chroma). In
+     light, `surface` (cards) sits ABOVE `bg`; surface-2..4 recede below it. */
+  --dm-color-bg:            light-dark(oklch(0.978 0.004 275), oklch(0.190 0.008 275));
+  --dm-color-fg:            light-dark(oklch(0.285 0.017 275), oklch(0.945 0.006 275));  /* fg/bg 13.49 : 15.72 */
+  --dm-color-fg-muted:      light-dark(oklch(0.505 0.016 275), oklch(0.735 0.012 275));  /* /bg 5.52 : 7.86 */
+  --dm-color-surface:       light-dark(oklch(0.995 0.002 275), oklch(0.225 0.010 275));
+  --dm-color-surface-2:     light-dark(oklch(0.966 0.005 275), oklch(0.258 0.012 275));
+  --dm-color-surface-3:     light-dark(oklch(0.945 0.007 275), oklch(0.298 0.013 275));
+  --dm-color-surface-4:     light-dark(oklch(0.924 0.009 275), oklch(0.338 0.014 275));
+  --dm-color-border:        light-dark(oklch(0.902 0.007 275), oklch(0.370 0.014 275));
+  --dm-color-border-strong: light-dark(oklch(0.600 0.013 275), oklch(0.525 0.016 275));  /* /surface 3.90 : 3.17 (>=3 non-text) */
+  --dm-color-primary:       light-dark(oklch(0.505 0.175 275), oklch(0.780 0.108 275));  /* text/surface 6.11 : 8.42 */
+  --dm-color-on-primary:    light-dark(oklch(0.995 0.002 275), oklch(0.210 0.030 275));  /* on primary fill 6.11 : 8.74 */
+  --dm-color-accent:        light-dark(oklch(0.510 0.096 232), oklch(0.795 0.110 232));  /* cyan, secondary emphasis */
+  --dm-color-secondary:     light-dark(oklch(0.500 0.045 275), oklch(0.760 0.045 275));  /* muted-iris accent (lint / tool chips) — text/surface 5.95 : 7.93 */
+  --dm-color-danger:        light-dark(oklch(0.545 0.205 27),  oklch(0.730 0.158 27));
+  --dm-color-on-danger:     light-dark(oklch(0.995 0.002 27),  oklch(0.210 0.030 27));
+
+  /* status hues (pills, ribbons, sparklines) — each carries a text-legible
+     tone in both themes; on a 6% same-hue tint the text clears 4.5:1
+     (worst case 4.61 light / 5.61 dark). See DESIGN.md §2. */
+  --dm-color-serving:       light-dark(oklch(0.500 0.128 152), oklch(0.800 0.145 152));
+  --dm-color-compiling:     light-dark(oklch(0.510 0.096 232), oklch(0.795 0.110 232));
+  --dm-color-starting:      light-dark(oklch(0.525 0.108 70),  oklch(0.820 0.120 70));
+  --dm-color-error:         light-dark(oklch(0.545 0.205 27),  oklch(0.730 0.158 27));
+  --dm-color-stopped:       light-dark(oklch(0.640 0.010 275), oklch(0.560 0.012 275));
+  /* scrim: modal/palette backdrop — dark in BOTH themes (a light scrim would
+     brighten a dark UI), used at low opacity via color-mix. */
+  --dm-color-scrim:         #000000;
+  /* inverse pair: the high-contrast toast bubble (dark-on-light in the light
+     theme, light-on-dark in dark) — the one deliberately theme-flipped role. */
+  --dm-color-inverse-surface:    light-dark(oklch(0.300 0.020 275), oklch(0.920 0.010 275));
+  --dm-color-inverse-on-surface: light-dark(oklch(0.965 0.004 275), oklch(0.240 0.012 275));
+
+  /* workspace/framework tone building blocks: components combine these with a
+     per-entity hue, e.g. oklch(var(--dm-tone-l) var(--dm-tone-c) <hue>). */
   --dm-tone-l: 0.94;
   --dm-tone-c: 0.05;
   --dm-tone-badge-l: 0.62;
   --dm-tone-badge-c: 0.14;
-  /* chart series (M89): Chart.js reads these via getComputedStyle (canvas
-     can't consume custom properties directly). Aliased to the Material
-     system roles rather than fixed hex, so every series clears the 3:1
-     non-text contrast minimum against --dm-color-bg in BOTH themes — the
-     fixed hex literals these replaced (#60A5FA/#84CC16/#FB923C) were tuned
-     for dark backgrounds only and measured 1.9–2.4:1 (fail) against the
-     light surface. Verified via the M3 palette's resolved hex:
-     primary 6.17:1 (light) / 10.92:1 (dark), tertiary 6.15:1 / 10.92:1,
-     secondary 6.19:1 / 10.88:1, error 6.16:1 / 10.94:1. */
-  --dm-chart-1: var(--mat-sys-primary);
-  --dm-chart-2: var(--mat-sys-tertiary);
-  --dm-chart-3: var(--mat-sys-secondary);
-  --dm-chart-4: var(--mat-sys-error);
-  /* badge tint (M89): the "colored text on a faint tint of the SAME color"
-     pattern used by status pills / tags / chips / active nav items across
-     the app. Measured with a canvas-rendered probe (getComputedStyle
-     echoes oklch(...) rather than resolved rgb on this Chromium, so
-     getComputedStyle alone can't be trusted for this check): the previous
-     per-component literals (10–18%) ranged 4.39–4.85:1 against
-     --dm-color-surface-2 — under the 4.5:1 text minimum for at least the
-     error/tertiary hues. 6% clears it with margin for all four hues (worst
-     case measured 5.29:1 light / 8.98:1 dark). Never hardcode a percentage
-     in a component when pairing a hue's tint with that same hue as text. */
+
+  /* badge tint ratio (M89 pattern): "same-hue text on a faint tint of that
+     same hue" for status pills / tags / chips / active nav. 6% clears the
+     4.5:1 text minimum for all four status hues in both themes. Never
+     hard-code a percentage in a component. */
   --dm-badge-tint: 6%;
 
-  /* ---- spacing (4px base) ------------------------------------------------ */
+  /* chart series — theme-split sRGB HEX (see file header note 2). Four widely
+     separated hues (iris / cyan / amber / red); each clears 3:1 vs bg AND
+     surface in both themes (min 5.12 light / 6.69 dark). Light values here;
+     the dark split is in the two blocks near the bottom of this file. */
+  --dm-chart-1: #4c54c6;  /* iris  — /bg 5.81 */
+  --dm-chart-2: #186f93;  /* cyan  — /bg 5.28 */
+  --dm-chart-3: #915e10;  /* amber — /bg 5.18 */
+  --dm-chart-4: #c72e2b;  /* red   — /bg 5.12 */
+  /* chart gridlines/axes: a subtle cool neutral. rgba (not hex) so it carries
+     opacity AND is parseable by Chart.js via getComputedStyle. Theme-split
+     below. */
+  --dm-chart-grid: rgba(60, 55, 90, 0.14);
+
+  /* ---- spacing (4px base) ----------------------------------------------- */
   --dm-space-1: 0.25rem;
   --dm-space-2: 0.5rem;
   --dm-space-3: 0.75rem;
@@ -72,41 +106,96 @@
   --dm-space-8: 2rem;
   --dm-space-12: 3rem;
 
-  /* ---- type -------------------------------------------------------------- */
+  /* ---- type ------------------------------------------------------------- */
   --dm-font: Roboto, system-ui, -apple-system, sans-serif;
   --dm-mono: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --dm-text-xs: 0.6875rem;   /* 11px — chips, table headers */
+  --dm-text-xs: 0.6875rem;   /* 11px — chips, table headers, micro-labels */
   --dm-text-sm: 0.8125rem;   /* 13px — secondary text */
-  --dm-text-md: 0.875rem;    /* 14px — body */
-  --dm-text-lg: 1.05rem;     /* card titles */
-  --dm-text-xl: 1.5rem;      /* page h1 */
+  --dm-text-md: 0.875rem;    /* 14px — body (the base) */
+  --dm-text-lg: 1rem;        /* 16px — card titles */
+  --dm-text-xl: 1.375rem;    /* 22px — page h1 */
   --dm-line-tight: 1rem;
   --dm-line-normal: 1.25rem;
   --dm-line-loose: 1.5rem;
 
-  /* ---- radii ------------------------------------------------------------- */
+  /* ---- radius (4 · 6 · 8 · 12 · 16) ------------------------------------- */
   --dm-radius-xs: 4px;
   --dm-radius-sm: 6px;
   --dm-radius-md: 8px;
-  --dm-radius-lg: 10px;
-  --dm-radius-xl: 14px;
+  --dm-radius-lg: 12px;
+  --dm-radius-xl: 16px;
   --dm-radius-full: 999px;
 
-  /* ---- elevation ----------------------------------------------------------- */
-  --dm-elev-1: var(--mat-sys-level1);
-  --dm-elev-2: var(--mat-sys-level2);
-  --dm-elev-3: var(--mat-sys-level3);
+  /* ---- elevation (soft, cool; deeper in dark) --------------------------- *
+   * A multi-layer box-shadow list contains commas, which are light-dark()'s
+   * own argument separator — so elevation is theme-SPLIT (plain value here,
+   * dark override in the two dark blocks below) rather than light-dark(). Not
+   * JS-read, so a plain per-theme value is exactly right. Light values: */
+  --dm-elev-1: 0 1px 2px rgba(28, 27, 46, 0.06), 0 1px 3px rgba(28, 27, 46, 0.05);
+  --dm-elev-2: 0 2px 6px rgba(28, 27, 46, 0.08), 0 6px 14px rgba(28, 27, 46, 0.06);
+  --dm-elev-3: 0 6px 16px rgba(28, 27, 46, 0.12), 0 12px 28px rgba(28, 27, 46, 0.10);
 
-  /* ---- motion -------------------------------------------------------------- */
+  /* ---- motion ----------------------------------------------------------- */
   --dm-motion-easing: cubic-bezier(0.2, 0, 0, 1);
   --dm-motion-easing-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
-  --dm-motion-short: 200ms;
-  --dm-motion-medium: 300ms;
+  --dm-motion-easing-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dm-motion-instant: 120ms;
+  --dm-motion-short: 180ms;
+  --dm-motion-medium: 260ms;
+
+  /* ---- Angular Material system-role re-point ---------------------------- *
+   * These override mat.theme()'s azure/blue output so Material widgets AND
+   * any component still reading a raw --mat-sys-* role render in the new
+   * language (see file header note 1). Roles that map to a --dm-* token
+   * reference it; the tonal-container / inverse / misc roles Material needs
+   * that have no --dm-* equivalent are defined directly (all AA-verified:
+   * every on-container/container pair clears 4.5:1 in both themes).           */
+  --mat-sys-surface: var(--dm-color-bg);
+  --mat-sys-background: var(--dm-color-bg);
+  --mat-sys-on-surface: var(--dm-color-fg);
+  --mat-sys-on-background: var(--dm-color-fg);
+  --mat-sys-on-surface-variant: var(--dm-color-fg-muted);
+  --mat-sys-surface-dim: var(--dm-color-bg);
+  --mat-sys-surface-bright: var(--dm-color-surface);
+  --mat-sys-surface-container-lowest: var(--dm-color-surface);
+  --mat-sys-surface-container-low: var(--dm-color-surface);
+  --mat-sys-surface-container: var(--dm-color-surface-2);
+  --mat-sys-surface-container-high: var(--dm-color-surface-3);
+  --mat-sys-surface-container-highest: var(--dm-color-surface-4);
+  --mat-sys-surface-variant: var(--dm-color-surface-3);
+  --mat-sys-outline: var(--dm-color-border-strong);
+  --mat-sys-outline-variant: var(--dm-color-border);
+  --mat-sys-primary: var(--dm-color-primary);
+  --mat-sys-on-primary: var(--dm-color-on-primary);
+  --mat-sys-surface-tint: var(--dm-color-primary);
+  --mat-sys-inverse-primary: light-dark(oklch(0.780 0.108 275), oklch(0.505 0.175 275));
+  --mat-sys-primary-container: light-dark(oklch(0.905 0.045 275), oklch(0.330 0.070 275));
+  --mat-sys-on-primary-container: light-dark(oklch(0.320 0.140 275), oklch(0.900 0.045 275));
+  --mat-sys-secondary: var(--dm-color-secondary);
+  --mat-sys-on-secondary: light-dark(oklch(0.995 0.002 275), oklch(0.210 0.020 275));
+  --mat-sys-secondary-container: light-dark(oklch(0.905 0.020 275), oklch(0.330 0.030 275));
+  --mat-sys-on-secondary-container: light-dark(oklch(0.330 0.040 275), oklch(0.900 0.020 275));
+  --mat-sys-tertiary: var(--dm-color-accent);
+  --mat-sys-on-tertiary: light-dark(oklch(0.995 0.002 232), oklch(0.200 0.030 232));
+  --mat-sys-tertiary-container: light-dark(oklch(0.900 0.045 232), oklch(0.320 0.060 232));
+  --mat-sys-on-tertiary-container: light-dark(oklch(0.335 0.068 232), oklch(0.900 0.050 232));
+  --mat-sys-error: var(--dm-color-danger);
+  --mat-sys-on-error: var(--dm-color-on-danger);
+  --mat-sys-error-container: light-dark(oklch(0.900 0.045 27), oklch(0.330 0.090 27));
+  --mat-sys-on-error-container: light-dark(oklch(0.360 0.140 27), oklch(0.900 0.045 27));
+  --mat-sys-inverse-surface: light-dark(oklch(0.300 0.020 275), oklch(0.920 0.010 275));
+  --mat-sys-inverse-on-surface: light-dark(oklch(0.965 0.004 275), oklch(0.240 0.012 275));
+  --mat-sys-scrim: #000000;
+  --mat-sys-shadow: #000000;
+  --mat-sys-level1: var(--dm-elev-1);
+  --mat-sys-level2: var(--dm-elev-2);
+  --mat-sys-level3: var(--dm-elev-3);
+  --mat-sys-level4: var(--dm-elev-3);
 }
 
 /* Density mode (M71): `comfortable` is the default scale above; `compact`
-   tightens spacing (~25%) and trims the large type steps. Components that
-   consume the spacing tokens tighten automatically. */
+   tightens spacing (~25%) and the two large type steps. Components that consume
+   the spacing/type tokens tighten automatically — no per-component logic. */
 :root[data-density='compact'] {
   --dm-space-1: 0.1875rem;
   --dm-space-2: 0.375rem;
@@ -116,20 +205,32 @@
   --dm-space-6: 1.125rem;
   --dm-space-8: 1.5rem;
   --dm-space-12: 2.25rem;
-  --dm-text-lg: 0.95rem;
-  --dm-text-xl: 1.25rem;
+  --dm-text-lg: 0.9375rem;   /* 15px */
+  --dm-text-xl: 1.25rem;     /* 20px */
   --dm-line-loose: 1.375rem;
 }
 
-/* Dark scheme: tone swatches need a darker lightness so workspace accents
-   and framework badges keep contrast against dark surfaces. Everything that
-   aliases --mat-sys-* re-themes automatically via color-scheme. */
+/* Dark scheme: the tone swatches (workspace accents / framework badges) need a
+   darker lightness to keep contrast against dark surfaces, and the chart-series
+   hex swaps to its lighter dark-theme value (see file header note 2). Two
+   selectors cover the two ways dark is active: OS preference under `auto` (the
+   media query, excluded when the toggle pinned light) and the toggle's explicit
+   inline `color-scheme: dark`. Everything defined with light-dark() above
+   re-themes on its own — only these plain-value tokens need the split. */
 @media (prefers-color-scheme: dark) {
   :root:not([style*='color-scheme: light']) {
     --dm-tone-l: 0.30;
     --dm-tone-c: 0.06;
     --dm-tone-badge-l: 0.72;
     --dm-tone-badge-c: 0.13;
+    --dm-chart-1: #a3b2fd;
+    --dm-chart-2: #6cc9f7;
+    --dm-chart-3: #f6b669;
+    --dm-chart-4: #fb7c70;
+    --dm-chart-grid: rgba(190, 195, 220, 0.16);
+    --dm-elev-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.28);
+    --dm-elev-2: 0 2px 6px rgba(0, 0, 0, 0.42), 0 6px 14px rgba(0, 0, 0, 0.34);
+    --dm-elev-3: 0 6px 16px rgba(0, 0, 0, 0.5), 0 12px 28px rgba(0, 0, 0, 0.42);
   }
 }
 :root[style*='color-scheme: dark'] {
@@ -137,18 +238,24 @@
   --dm-tone-c: 0.06;
   --dm-tone-badge-l: 0.72;
   --dm-tone-badge-c: 0.13;
+  --dm-chart-1: #a3b2fd;
+  --dm-chart-2: #6cc9f7;
+  --dm-chart-3: #f6b669;
+  --dm-chart-4: #fb7c70;
+  --dm-chart-grid: rgba(190, 195, 220, 0.16);
+  --dm-elev-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.28);
+  --dm-elev-2: 0 2px 6px rgba(0, 0, 0, 0.42), 0 6px 14px rgba(0, 0, 0, 0.34);
+  --dm-elev-3: 0 6px 16px rgba(0, 0, 0, 0.5), 0 12px 28px rgba(0, 0, 0, 0.42);
 }
 
 /* Print (M112): one token-layer override, clean black-on-white regardless of
-   the active theme's `color-scheme`. `:root` (a pseudo-class, specificity
-   0,1,0) beats the `html { @include mat.theme() }` mixin output in
-   styles.scss (a type selector, specificity 0,0,1) — so this wins over both
-   the light and dark --mat-sys-* values without needing !important, in
-   either build order. Every --dm-color-* alias below flows through to
-   whatever already consumes it (body background/fg, borders, pill/tag
-   color-mix tints, link color via `a { color: var(--dm-color-primary) }`) —
-   no component touched. Structural hides (nav/chrome/controls) and the one
-   inline-styled exception (the status dot) live in styles.scss. */
+   the active theme's `color-scheme`. `:root` (specificity 0,1,0) beats the
+   `html { @include mat.theme() }` type selector (0,0,1) in styles.scss, so this
+   wins over both light and dark --mat-sys-* values without !important. Every
+   --dm-color-* alias below flows through to whatever consumes it; the
+   re-pointed --mat-sys-* roles are neutralized here too so a component still
+   reading a raw role also prints clean. Structural hides (nav/chrome/controls)
+   and the inline-styled status dot live in styles.scss. */
 @media print {
   :root {
     --dm-color-bg: #fff;
@@ -163,6 +270,7 @@
     --dm-color-primary: #000;
     --dm-color-on-primary: #fff;
     --dm-color-accent: #000;
+    --dm-color-secondary: #000;
     --dm-color-danger: #000;
     --dm-color-on-danger: #fff;
     --dm-color-serving: #000;
@@ -170,17 +278,40 @@
     --dm-color-starting: #000;
     --dm-color-error: #000;
     --dm-color-stopped: #999;
+    --dm-color-scrim: #000;
+    --dm-color-inverse-surface: #000;
+    --dm-color-inverse-on-surface: #fff;
     --dm-chart-1: #000;
     --dm-chart-2: #000;
     --dm-chart-3: #000;
     --dm-chart-4: #000;
+    --dm-chart-grid: #999;
     --dm-elev-1: none;
     --dm-elev-2: none;
     --dm-elev-3: none;
-    /* the one raw --mat-sys-* read outside the --dm-* alias layer that's
-       reachable on a printed page (.dm-page-sub in styles.scss) — there is
-       no --dm-* row for it to alias, so print overrides it directly rather
-       than inventing one for a single consumer. */
+    /* re-pointed Material roles reachable on a printed page → black/white */
+    --mat-sys-surface: #fff;
+    --mat-sys-background: #fff;
+    --mat-sys-surface-container: #fff;
+    --mat-sys-surface-container-low: #fff;
+    --mat-sys-surface-container-lowest: #fff;
+    --mat-sys-surface-container-high: #fff;
+    --mat-sys-surface-container-highest: #fff;
+    --mat-sys-on-surface: #000;
     --mat-sys-on-surface-variant: #333;
+    --mat-sys-outline: #000;
+    --mat-sys-outline-variant: #999;
+    --mat-sys-primary: #000;
+    --mat-sys-error: #000;
+    --mat-sys-tertiary: #000;
+    --mat-sys-secondary: #000;
+    --mat-sys-level1: none;
+    --mat-sys-level2: none;
+    --mat-sys-level3: none;
+  }
+  /* keep the dark-attr chart split from out-specificity-ing the print black
+     when a page is printed while the dark theme is pinned (0,2,0 vs 0,1,0). */
+  :root[style*='color-scheme: dark'] {
+    --dm-chart-1: #000; --dm-chart-2: #000; --dm-chart-3: #000; --dm-chart-4: #000;
   }
 }

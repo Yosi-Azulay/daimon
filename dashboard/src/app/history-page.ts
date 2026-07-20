@@ -101,7 +101,9 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
 
   ngAfterViewInit(): void {
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const primary = readToken('--mat-sys-primary') || 'var(--mat-sys-primary)';
+    // Theme-split HEX chart token — Chart.js can't parse light-dark()/oklch()
+    // read off :root (DESIGN.md §2), so the series colour is the resolved hex.
+    const primary = readToken('--dm-chart-1') || '#4c54c6';
     const cfg: ChartConfiguration<'line'> = {
       type: 'line',
       data: {
@@ -330,11 +332,11 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
   styles: [`
     :host { display: block; }
     .dm-page-header h1 { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-    .dm-sep { color: var(--mat-sys-outline); margin: 0 .15rem; }
-    .dm-app { color: var(--mat-sys-primary); font-weight: 500; }
+    .dm-sep { color: var(--dm-color-border-strong); margin: 0 .15rem; }
+    .dm-app { color: var(--dm-color-primary); font-weight: 500; }
     .dm-back {
       display: inline-flex; align-items: center; gap: .25rem;
-      color: var(--mat-sys-primary); text-decoration: none;
+      color: var(--dm-color-primary); text-decoration: none;
     }
     .dm-back:hover { text-decoration: underline; }
 
@@ -345,26 +347,26 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
       display: flex; flex-direction: column; gap: .75rem;
       padding: 1rem;
       border-radius: 14px;
-      border: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container-lowest);
+      border: 1px solid var(--dm-color-border);
+      background: var(--dm-color-surface);
       color: inherit; text-decoration: none;
       transition: box-shadow .15s ease, border-color .15s ease, transform .15s ease;
     }
     .dm-card:hover {
-      border-color: color-mix(in oklch, var(--mat-sys-primary) 40%, var(--mat-sys-outline-variant));
-      box-shadow: var(--mat-sys-level1);
+      border-color: color-mix(in oklch, var(--dm-color-primary) 40%, var(--dm-color-border));
+      box-shadow: var(--dm-elev-1);
     }
     .dm-card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-    .dm-card-name { color: var(--mat-sys-on-surface); font-weight: 500; }
+    .dm-card-name { color: var(--dm-color-fg); font-weight: 500; }
     .dm-card-foot { display: flex; gap: 1rem; }
     .dm-foot-cell { display: flex; flex-direction: column; }
     .dm-foot-label, .dm-tile-label, .dm-table th {
       font: 500 .6875rem/1rem Roboto;
       text-transform: uppercase; letter-spacing: .04rem;
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--dm-color-fg-muted);
     }
-    .dm-foot-value { color: var(--mat-sys-on-surface); }
-    .dm-card-empty { color: var(--mat-sys-on-surface-variant); font-size: .875rem; padding: 1rem 0; }
+    .dm-foot-value { color: var(--dm-color-fg); }
+    .dm-card-empty { color: var(--dm-color-fg-muted); font-size: .875rem; padding: 1rem 0; }
 
     .dm-stats {
       display: grid; gap: .75rem;
@@ -373,12 +375,12 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
     }
     .dm-tile {
       padding: .85rem 1rem; border-radius: 12px;
-      border: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container-lowest);
+      border: 1px solid var(--dm-color-border);
+      background: var(--dm-color-surface);
     }
     .dm-tile-value {
       font: 400 1.5rem/2rem Roboto;
-      color: var(--mat-sys-on-surface);
+      color: var(--dm-color-fg);
       margin-top: .25rem;
     }
 
@@ -389,37 +391,37 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
     .dm-table { width: 100%; border-collapse: collapse; }
     .dm-table th, .dm-table td {
       text-align: left; padding: .55rem .75rem;
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
+      border-bottom: 1px solid var(--dm-color-border);
       font-size: .875rem;
     }
     .dm-table tbody tr:hover {
-      background: color-mix(in oklch, var(--mat-sys-primary) 6%, transparent);
+      background: color-mix(in oklch, var(--dm-color-primary) 6%, transparent);
     }
     .dm-num { text-align: right; }
 
-    .dm-why-empty { color: var(--mat-sys-on-surface-variant); font-size: .875rem; }
+    .dm-why-empty { color: var(--dm-color-fg-muted); font-size: .875rem; }
     .dm-transition {
       display: flex; flex-direction: column; gap: .35rem;
       padding: .75rem 1rem;
       border-radius: 10px;
-      background: var(--mat-sys-surface-container);
+      background: var(--dm-color-surface-2);
       margin-bottom: 1rem;
     }
     .dm-transition-arrow {
       display: flex; align-items: center; gap: .5rem;
       font: 500 1rem/1.5rem Roboto;
     }
-    .dm-transition-from { color: var(--mat-sys-on-surface-variant); }
-    .dm-transition-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-outline); }
-    .dm-transition-to { color: var(--mat-sys-primary); }
-    .dm-transition-to[data-to=error] { color: var(--mat-sys-error); }
-    .dm-transition-to[data-to=stopped] { color: var(--mat-sys-on-surface-variant); }
-    .dm-transition-meta { color: var(--mat-sys-on-surface-variant); font-size: .8125rem; }
-    .dm-transition-msg { color: var(--mat-sys-on-surface); }
+    .dm-transition-from { color: var(--dm-color-fg-muted); }
+    .dm-transition-icon { font-size: 18px; height: 18px; width: 18px; color: var(--dm-color-border-strong); }
+    .dm-transition-to { color: var(--dm-color-primary); }
+    .dm-transition-to[data-to=error] { color: var(--dm-color-error); }
+    .dm-transition-to[data-to=stopped] { color: var(--dm-color-fg-muted); }
+    .dm-transition-meta { color: var(--dm-color-fg-muted); font-size: .8125rem; }
+    .dm-transition-msg { color: var(--dm-color-fg); }
 
     .dm-timeline {
       list-style: none; margin: 0; padding: 0 0 0 1rem;
-      border-left: 2px solid var(--mat-sys-outline-variant);
+      border-left: 2px solid var(--dm-color-border);
     }
     .dm-timeline li {
       position: relative;
@@ -429,14 +431,14 @@ export class HistorySparkComponent implements AfterViewInit, OnChanges, OnDestro
       position: absolute;
       left: -1.42rem; top: .9rem;
       width: 10px; height: 10px; border-radius: 999px;
-      background: var(--mat-sys-outline);
-      box-shadow: 0 0 0 3px var(--mat-sys-surface);
+      background: var(--dm-color-border-strong);
+      box-shadow: 0 0 0 3px var(--dm-color-bg);
     }
-    .dm-timeline-dot[data-kind=status] { background: var(--mat-sys-primary); }
-    .dm-timeline-dot[data-kind=error] { background: var(--mat-sys-error); }
-    .dm-timeline-dot[data-kind=health] { background: var(--mat-sys-tertiary); }
-    .dm-timeline-head { font-size: .875rem; color: var(--mat-sys-on-surface); }
-    .dm-timeline-meta { font-size: .75rem; color: var(--mat-sys-on-surface-variant); margin-top: .15rem; }
+    .dm-timeline-dot[data-kind=status] { background: var(--dm-color-primary); }
+    .dm-timeline-dot[data-kind=error] { background: var(--dm-color-error); }
+    .dm-timeline-dot[data-kind=health] { background: var(--dm-color-accent); }
+    .dm-timeline-head { font-size: .875rem; color: var(--dm-color-fg); }
+    .dm-timeline-meta { font-size: .75rem; color: var(--dm-color-fg-muted); margin-top: .15rem; }
   `],
 })
 export class HistoryPageComponent implements OnInit, OnChanges, OnDestroy {
@@ -541,10 +543,10 @@ export class HistoryPageComponent implements OnInit, OnChanges, OnDestroy {
     if (samples.length === 0) { this.destroyChart(); return; }
 
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const primary = readToken('--mat-sys-primary') || 'var(--mat-sys-primary)';
-    const tertiary = readToken('--mat-sys-tertiary') || 'var(--mat-sys-tertiary)';
-    const error = readToken('--mat-sys-error') || 'var(--mat-sys-error)';
-    const outline = readToken('--mat-sys-outline-variant') || 'rgba(120,120,120,0.3)';
+    const primary = readToken('--dm-chart-1') || '#4c54c6';
+    const tertiary = readToken('--dm-chart-2') || '#186f93';
+    const error = readToken('--dm-chart-4') || '#c72e2b';
+    const outline = readToken('--dm-chart-grid') || 'rgba(120,120,120,0.3)';
 
     const labels = samples.map(s => new Date(s.ts).toLocaleTimeString());
     const data = samples.map(s => s.ms);

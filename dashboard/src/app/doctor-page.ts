@@ -288,7 +288,7 @@ const ROUTINES: RoutineDef[] = [
     .dm-section-title {
       margin: 0 0 .5rem;
       font: 500 .6875rem/1rem Roboto;
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--dm-color-fg-muted);
       letter-spacing: .06em;
       text-transform: uppercase;
     }
@@ -302,18 +302,18 @@ const ROUTINES: RoutineDef[] = [
       .dm-grid-2 { grid-template-columns: 1fr; }
     }
 
-    .dm-card { background: var(--mat-sys-surface-container-low); }
+    .dm-card { background: var(--dm-color-surface); }
 
     .dm-stack { display: flex; flex-direction: column; gap: .5rem; }
 
     .dm-kv {
       display: flex; align-items: baseline; justify-content: space-between;
       padding: .35rem 0;
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
+      border-bottom: 1px solid var(--dm-color-border);
     }
     .dm-kv:last-child { border-bottom: 0; }
-    .dm-k { color: var(--mat-sys-on-surface-variant); font-size: .8125rem; }
-    .dm-v { color: var(--mat-sys-on-surface); }
+    .dm-k { color: var(--dm-color-fg-muted); font-size: .8125rem; }
+    .dm-v { color: var(--dm-color-fg); }
 
     .dm-block { margin-top: .75rem; }
     .dm-block .dm-k { display: block; margin-bottom: .35rem; }
@@ -321,68 +321,68 @@ const ROUTINES: RoutineDef[] = [
     .dm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
     .dm-list li {
       padding: .25rem .5rem;
-      background: var(--mat-sys-surface-container);
+      background: var(--dm-color-surface-2);
       border-radius: 6px;
       overflow-wrap: anywhere;
     }
-    .dm-warn li { color: var(--mat-sys-error); }
+    .dm-warn li { color: var(--dm-color-error); }
 
     .dm-table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
-    .dm-table td { padding: .25rem .5rem; border-bottom: 1px solid var(--mat-sys-outline-variant); }
+    .dm-table td { padding: .25rem .5rem; border-bottom: 1px solid var(--dm-color-border); }
     .dm-table tr:last-child td { border-bottom: 0; }
-    .dm-num { text-align: right; color: var(--mat-sys-on-surface-variant); }
+    .dm-num { text-align: right; color: var(--dm-color-fg-muted); }
 
     .dm-callout {
       margin-top: .75rem;
       padding: .65rem .85rem;
       border-radius: 10px;
-      background: color-mix(in oklch, var(--mat-sys-tertiary) 12%, transparent);
-      border: 1px solid color-mix(in oklch, var(--mat-sys-tertiary) 28%, transparent);
-      color: var(--mat-sys-on-surface);
+      background: color-mix(in oklch, var(--dm-color-accent) 12%, transparent);
+      border: 1px solid color-mix(in oklch, var(--dm-color-accent) 28%, transparent);
+      color: var(--dm-color-fg);
       font-size: .875rem;
     }
 
-    .dm-muted { color: var(--mat-sys-on-surface-variant); font-size: .875rem; }
+    .dm-muted { color: var(--dm-color-fg-muted); font-size: .875rem; }
 
     .dm-pill {
       display: inline-flex; align-items: center; gap: .4rem;
       padding: 2px 10px; border-radius: 999px;
-      border: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container);
-      color: var(--mat-sys-on-surface);
+      border: 1px solid var(--dm-color-border);
+      background: var(--dm-color-surface-2);
+      color: var(--dm-color-fg);
       font: 500 .75rem/1rem Roboto;
       letter-spacing: .025rem;
     }
-    .dm-pill .dm-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--mat-sys-outline); }
+    .dm-pill .dm-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--dm-color-border-strong); }
     .dm-pill[data-kind="ok"], .dm-pill[data-kind="clean"], .dm-pill[data-kind="fixed"] {
-      background: color-mix(in oklch, var(--mat-sys-primary) 12%, transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-primary) 28%, transparent);
+      background: color-mix(in oklch, var(--dm-color-primary) 12%, transparent);
+      border-color: color-mix(in oklch, var(--dm-color-primary) 28%, transparent);
     }
     .dm-pill[data-kind="ok"] .dm-dot, .dm-pill[data-kind="clean"] .dm-dot, .dm-pill[data-kind="fixed"] .dm-dot {
-      background: var(--mat-sys-primary);
+      background: var(--dm-color-primary);
     }
     .dm-pill[data-kind="detected"] {
-      background: color-mix(in oklch, var(--mat-sys-tertiary) 14%, transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-tertiary) 28%, transparent);
+      background: color-mix(in oklch, var(--dm-color-accent) 14%, transparent);
+      border-color: color-mix(in oklch, var(--dm-color-accent) 28%, transparent);
     }
-    .dm-pill[data-kind="detected"] .dm-dot { background: var(--mat-sys-tertiary); }
+    .dm-pill[data-kind="detected"] .dm-dot { background: var(--dm-color-accent); }
     .dm-pill[data-kind="err"], .dm-pill[data-kind="error"] {
-      background: color-mix(in oklch, var(--mat-sys-error) var(--dm-badge-tint), transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-error) 30%, transparent);
-      color: var(--mat-sys-error);
+      background: color-mix(in oklch, var(--dm-color-error) var(--dm-badge-tint), transparent);
+      border-color: color-mix(in oklch, var(--dm-color-error) 30%, transparent);
+      color: var(--dm-color-error);
     }
-    .dm-pill[data-kind="err"] .dm-dot, .dm-pill[data-kind="error"] .dm-dot { background: var(--mat-sys-error); }
+    .dm-pill[data-kind="err"] .dm-dot, .dm-pill[data-kind="error"] .dm-dot { background: var(--dm-color-error); }
 
     .dm-banner {
       display: flex; align-items: center; justify-content: space-between;
       gap: 1rem;
       padding: .5rem .85rem;
       margin-bottom: .75rem;
-      background: var(--mat-sys-surface-container);
-      border: 1px solid var(--mat-sys-outline-variant);
+      background: var(--dm-color-surface-2);
+      border: 1px solid var(--dm-color-border);
       border-radius: 10px;
     }
-    .dm-banner-text { font-size: .875rem; color: var(--mat-sys-on-surface-variant); }
+    .dm-banner-text { font-size: .875rem; color: var(--dm-color-fg-muted); }
     .dm-banner-actions { display: flex; gap: .5rem; }
     @media (max-width: 700px) {
       .dm-banner { flex-direction: column; align-items: stretch; }
@@ -390,12 +390,12 @@ const ROUTINES: RoutineDef[] = [
     }
 
     .dm-row-between { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
-    .dm-routine-desc { font-size: .875rem; color: var(--mat-sys-on-surface-variant); flex: 1; }
+    .dm-routine-desc { font-size: .875rem; color: var(--dm-color-fg-muted); flex: 1; }
 
     .dm-detail {
       margin-top: .75rem;
       padding: .5rem .65rem;
-      background: var(--mat-sys-surface-container);
+      background: var(--dm-color-surface-2);
       border-radius: 8px;
       font-size: .8125rem;
       overflow-wrap: anywhere;
@@ -411,20 +411,20 @@ const ROUTINES: RoutineDef[] = [
     .dm-stat {
       display: flex; align-items: center; gap: .625rem;
       padding: .5rem .75rem;
-      border: 1px solid var(--mat-sys-outline-variant);
+      border: 1px solid var(--dm-color-border);
       border-radius: 10px;
-      background: var(--mat-sys-surface-container-low);
+      background: var(--dm-color-surface);
     }
     .dm-stat-icon {
       width: 28px; height: 28px;
       display: flex; align-items: center; justify-content: center;
       border-radius: 8px;
-      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
-      color: var(--mat-sys-primary);
+      background: color-mix(in oklch, var(--dm-color-primary) var(--dm-badge-tint), transparent);
+      color: var(--dm-color-primary);
     }
     .dm-stat-icon mat-icon { font-size: 16px; width: 16px; height: 16px; }
-    .dm-stat-label { font-size: .75rem; color: var(--mat-sys-on-surface-variant); text-transform: uppercase; letter-spacing: .025rem; }
-    .dm-stat-value { font-size: .875rem; color: var(--mat-sys-on-surface); }
+    .dm-stat-label { font-size: .75rem; color: var(--dm-color-fg-muted); text-transform: uppercase; letter-spacing: .025rem; }
+    .dm-stat-value { font-size: .875rem; color: var(--dm-color-fg); }
 
     mat-spinner { display: inline-block; margin-right: .35rem; }
   `],

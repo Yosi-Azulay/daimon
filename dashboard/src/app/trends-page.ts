@@ -81,7 +81,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
     this.empty.set(isEmpty);
     if (isEmpty) { this.destroy(); return; }
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const outline = readToken('--mat-sys-outline-variant') || 'rgba(120,120,120,0.3)';
+    const outline = readToken('--dm-color-border') || 'rgba(120,120,120,0.3)';
     const cfg: ChartConfiguration = {
       type: opts.chartType,
       data: { labels: opts.labels, datasets: opts.datasets },
@@ -184,7 +184,7 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
   styles: [`
     :host { display: block; }
     .dm-page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .dm-page-sub { color: var(--mat-sys-on-surface-variant); font-size: .875rem; }
+    .dm-page-sub { color: var(--dm-color-fg-muted); font-size: .875rem; }
     .dm-controls { display: flex; gap: .75rem; flex-wrap: wrap; }
     .dm-grid {
       display: grid; gap: 1rem;
@@ -242,10 +242,14 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
       this.cpuChart?.setLoading();
     }
 
-    const primary = readToken('--mat-sys-primary') || '#6750a4';
-    const tertiary = readToken('--mat-sys-tertiary') || '#7d5260';
-    const error = readToken('--mat-sys-error') || '#b3261e';
-    const secondary = readToken('--mat-sys-secondary') || '#625b71';
+    // Chart-series colours come from the theme-split HEX --dm-chart-* tokens
+    // (DESIGN.md §2): Chart.js reads these via getComputedStyle, and its parser
+    // accepts neither light-dark() nor oklch(), so the series tokens ship as
+    // pre-resolved per-theme hex. Fallbacks mirror the light-theme values.
+    const primary = readToken('--dm-chart-1') || '#4c54c6';
+    const tertiary = readToken('--dm-chart-2') || '#186f93';
+    const error = readToken('--dm-chart-4') || '#c72e2b';
+    const secondary = readToken('--dm-chart-3') || '#915e10';
     const palette = [primary, tertiary, secondary, error,
                      'color-mix(in oklch, ' + primary + ' 60%, transparent)',
                      'color-mix(in oklch, ' + tertiary + ' 60%, transparent)'];

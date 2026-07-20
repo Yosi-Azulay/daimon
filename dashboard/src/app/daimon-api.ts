@@ -794,10 +794,10 @@ export class DaimonApi {
 
 export function statusBadge(s: { status: StatusKind; health?: HealthKind }): { color: string; label: string; kind: string } {
   switch (s.status) {
-    case 'serving': return { color: 'var(--mat-sys-primary)', label: s.health === 'healthy' ? 'healthy' : 'serving', kind: 'serving' };
-    case 'compiling': return { color: 'var(--mat-sys-tertiary)', label: 'compiling', kind: 'compiling' };
-    case 'starting': return { color: 'var(--mat-sys-secondary)', label: 'starting', kind: 'starting' };
-    case 'error': return { color: 'var(--mat-sys-error)', label: 'error', kind: 'error' };
-    default: return { color: 'var(--mat-sys-outline)', label: 'stopped', kind: 'stopped' };
+    case 'serving': return { color: 'var(--dm-color-serving)', label: s.health === 'healthy' ? 'healthy' : 'serving', kind: 'serving' };
+    case 'compiling': return { color: 'var(--dm-color-compiling)', label: 'compiling', kind: 'compiling' };
+    case 'starting': return { color: 'var(--dm-color-starting)', label: 'starting', kind: 'starting' };
+    case 'error': return { color: 'var(--dm-color-error)', label: 'error', kind: 'error' };
+    default: return { color: 'var(--dm-color-stopped)', label: 'stopped', kind: 'stopped' };
   }
 }

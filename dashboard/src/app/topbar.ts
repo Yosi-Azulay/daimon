@@ -92,22 +92,22 @@ type MenuKey = 'ws' | 'profile' | null;
       grid-area: topbar;
       display: flex; align-items: center; gap: .5rem;
       padding: 10px 16px;
-      background: var(--mat-sys-surface);
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
+      background: var(--dm-color-bg);
+      border-bottom: 1px solid var(--dm-color-border);
       min-height: 56px;
     }
     .dm-topbar-spacer { flex: 1; }
     .dm-chip {
       display: inline-flex; align-items: center; gap: .5rem;
       padding: 6px 10px; border-radius: 999px;
-      background: var(--mat-sys-surface-container);
-      border: 1px solid var(--mat-sys-outline-variant);
-      color: var(--mat-sys-on-surface);
+      background: var(--dm-color-surface-2);
+      border: 1px solid var(--dm-color-border);
+      color: var(--dm-color-fg);
       font: 500 .8125rem/1.25rem Roboto;
       cursor: pointer;
       transition: background var(--dm-motion-short) var(--dm-motion-easing);
     }
-    .dm-chip:hover { background: var(--mat-sys-surface-container-high); }
+    .dm-chip:hover { background: var(--dm-color-surface-3); }
     .dm-chip mat-icon { font-size: 18px; width: 18px; height: 18px; }
     .dm-chip-caret { opacity: .7; }
     .dm-cmdk {
@@ -120,61 +120,61 @@ type MenuKey = 'ws' | 'profile' | null;
       font-size: .6875rem;
       padding: 2px 6px;
       border-radius: 4px;
-      background: var(--mat-sys-surface-container);
-      border: 1px solid var(--mat-sys-outline-variant);
-      color: var(--mat-sys-on-surface-variant);
+      background: var(--dm-color-surface-2);
+      border: 1px solid var(--dm-color-border);
+      color: var(--dm-color-fg-muted);
     }
     .dm-conn {
       display: inline-flex; align-items: center; gap: .375rem;
       padding: 4px 10px; border-radius: 999px;
       font: 500 .75rem/1rem Roboto;
-      color: var(--mat-sys-on-surface-variant);
-      background: var(--mat-sys-surface-container);
+      color: var(--dm-color-fg-muted);
+      background: var(--dm-color-surface-2);
     }
-    .dm-conn-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--mat-sys-outline); }
-    .dm-conn.up .dm-conn-dot { background: var(--mat-sys-primary); box-shadow: 0 0 0 4px color-mix(in oklch, var(--mat-sys-primary) 25%, transparent); }
-    .dm-conn.up .dm-conn-text { color: var(--mat-sys-primary); }
+    .dm-conn-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--dm-color-border-strong); }
+    .dm-conn.up .dm-conn-dot { background: var(--dm-color-primary); box-shadow: 0 0 0 4px color-mix(in oklch, var(--dm-color-primary) 25%, transparent); }
+    .dm-conn.up .dm-conn-text { color: var(--dm-color-primary); }
     .dm-popwrap { position: relative; display: inline-block; }
     .dm-pop { position: absolute; left: 0; top: calc(100% + 4px); min-width: 200px; max-height: 60vh; overflow-y: auto;
-      background: var(--mat-sys-surface-container-high); border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 10px; padding: 4px; box-shadow: var(--mat-sys-level2); z-index: 50; display: flex; flex-direction: column; gap: 1px; }
+      background: var(--dm-color-surface-3); border: 1px solid var(--dm-color-border);
+      border-radius: 10px; padding: 4px; box-shadow: var(--dm-elev-2); z-index: 50; display: flex; flex-direction: column; gap: 1px; }
     .dm-pop button { display: flex; align-items: center; padding: 8px 12px; background: transparent; border: 0; border-radius: 6px;
-      text-align: left; color: var(--mat-sys-on-surface); font: 500 .8125rem/1.25rem Roboto; cursor: pointer; }
-    .dm-pop button:hover { background: var(--mat-sys-surface-container-highest); }
-    .dm-pop-empty { padding: .5rem 1rem; color: var(--mat-sys-on-surface-variant); }
+      text-align: left; color: var(--dm-color-fg); font: 500 .8125rem/1.25rem Roboto; cursor: pointer; }
+    .dm-pop button:hover { background: var(--dm-color-surface-4); }
+    .dm-pop-empty { padding: .5rem 1rem; color: var(--dm-color-fg-muted); }
     .dm-pop-row { display: flex; align-items: center; gap: .5rem; padding: 4px 8px; }
-    .dm-pop-label { flex: 1; font: 500 .8125rem/1.25rem Roboto; color: var(--mat-sys-on-surface); }
+    .dm-pop-label { flex: 1; font: 500 .8125rem/1.25rem Roboto; color: var(--dm-color-fg); }
     .dm-pop-go { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
-      background: transparent; border: 0; border-radius: 999px; color: var(--mat-sys-primary); cursor: pointer; }
-    .dm-pop-go:hover { background: var(--mat-sys-surface-container-highest); }
+      background: transparent; border: 0; border-radius: 999px; color: var(--dm-color-primary); cursor: pointer; }
+    .dm-pop-go:hover { background: var(--dm-color-surface-4); }
     .dm-pop-go .material-symbols-outlined { font-size: 18px; }
     .dm-cmdk { display: inline-flex; align-items: center; gap: .25rem; padding: 8px 14px; border-radius: 12px;
-      background: transparent; border: 1px solid var(--mat-sys-outline); color: var(--mat-sys-on-surface); cursor: pointer; }
-    .dm-cmdk:hover { background: var(--mat-sys-surface-container); }
+      background: transparent; border: 1px solid var(--dm-color-border-strong); color: var(--dm-color-fg); cursor: pointer; }
+    .dm-cmdk:hover { background: var(--dm-color-surface-2); }
     .dm-cmdk .material-symbols-outlined { font-size: 18px; }
     .dm-scope {
       display: inline-flex; align-items: center; gap: .375rem;
       padding: 4px 4px 4px 10px; border-radius: 999px;
-      background: color-mix(in oklch, var(--mat-sys-primary) 14%, var(--mat-sys-surface-container));
-      border: 1px solid color-mix(in oklch, var(--mat-sys-primary) 40%, transparent);
-      color: var(--mat-sys-on-surface);
+      background: color-mix(in oklch, var(--dm-color-primary) 14%, var(--dm-color-surface-2));
+      border: 1px solid color-mix(in oklch, var(--dm-color-primary) 40%, transparent);
+      color: var(--dm-color-fg);
       font: 500 .75rem/1rem Roboto;
     }
-    .dm-scope .material-symbols-outlined { font-size: 16px; color: var(--mat-sys-primary); }
+    .dm-scope .material-symbols-outlined { font-size: 16px; color: var(--dm-color-primary); }
     .dm-scope strong { font-weight: 600; }
     .dm-scope-x {
       width: 22px; height: 22px;
       background: transparent; border: 0; border-radius: 999px;
-      color: var(--mat-sys-on-surface-variant); cursor: pointer;
+      color: var(--dm-color-fg-muted); cursor: pointer;
       font-size: 1.125rem; line-height: 1; padding: 0;
     }
-    .dm-scope-x:hover { background: var(--mat-sys-surface-container-highest); }
+    .dm-scope-x:hover { background: var(--dm-color-surface-4); }
     .dm-density {
       display: inline-flex; align-items: center; justify-content: center;
       width: 40px; height: 40px; border: 0; background: transparent;
-      border-radius: var(--dm-radius-full); color: var(--mat-sys-on-surface-variant); cursor: pointer;
+      border-radius: var(--dm-radius-full); color: var(--dm-color-fg-muted); cursor: pointer;
     }
-    .dm-density:hover { background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface); }
+    .dm-density:hover { background: var(--dm-color-surface-3); color: var(--dm-color-fg); }
     .dm-density .material-symbols-outlined { font-size: 20px; }
     /* Condensed topbar under 768px (M71). */
     @media (max-width: 768px) {
@@ -278,7 +278,7 @@ export class TopbarComponent implements OnInit, OnDestroy {
     }
     const el = document.createElement('div');
     el.textContent = msg;
-    el.style.cssText = 'pointer-events:auto;padding:10px 16px;background:var(--mat-sys-inverse-surface,#322f35);color:var(--mat-sys-inverse-on-surface,#f5eff4);border-radius:8px;font:500 .8125rem/1.25rem Roboto;box-shadow:var(--mat-sys-level3,0 4px 12px rgba(0,0,0,.25))';
+    el.style.cssText = 'pointer-events:auto;padding:10px 16px;background:var(--dm-color-inverse-surface,#322f35);color:var(--dm-color-inverse-on-surface,#f5eff4);border-radius:var(--dm-radius-md,8px);font:500 var(--dm-text-sm,.8125rem)/1.25rem var(--dm-font,Roboto);box-shadow:var(--dm-elev-3,0 4px 12px rgba(0,0,0,.25))';
     host.appendChild(el);
     setTimeout(() => { try { el.remove(); } catch {} }, duration);
   }

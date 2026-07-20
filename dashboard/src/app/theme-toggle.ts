@@ -21,12 +21,12 @@ const KEY = 'daimon.theme';
   `,
   styles: [`
     :host{position:relative;display:inline-block}
-    .tt-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:0;background:transparent;border-radius:999px;color:var(--mat-sys-on-surface-variant);cursor:pointer}
-    .tt-btn:hover{background:var(--mat-sys-surface-container-high);color:var(--mat-sys-on-surface)}
+    .tt-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:0;background:transparent;border-radius:999px;color:var(--dm-color-fg-muted);cursor:pointer}
+    .tt-btn:hover{background:var(--dm-color-surface-3);color:var(--dm-color-fg)}
     .tt-btn .material-symbols-outlined{font-size:20px}
-    .tt-pop{position:absolute;right:0;top:calc(100% + 4px);min-width:140px;background:var(--mat-sys-surface-container-high);border:1px solid var(--mat-sys-outline-variant);border-radius:10px;padding:4px;box-shadow:var(--mat-sys-level2);z-index:50;display:flex;flex-direction:column;gap:1px}
-    .tt-pop button{display:flex;align-items:center;padding:8px 12px;background:transparent;border:0;border-radius:6px;text-align:left;color:var(--mat-sys-on-surface);font:500 .8125rem/1.25rem Roboto;cursor:pointer}
-    .tt-pop button:hover{background:var(--mat-sys-surface-container-highest)}
+    .tt-pop{position:absolute;right:0;top:calc(100% + 4px);min-width:140px;background:var(--dm-color-surface-3);border:1px solid var(--dm-color-border);border-radius:10px;padding:4px;box-shadow:var(--dm-elev-2);z-index:50;display:flex;flex-direction:column;gap:1px}
+    .tt-pop button{display:flex;align-items:center;padding:8px 12px;background:transparent;border:0;border-radius:6px;text-align:left;color:var(--dm-color-fg);font:500 .8125rem/1.25rem Roboto;cursor:pointer}
+    .tt-pop button:hover{background:var(--dm-color-surface-4)}
   `],
 })
 export class ThemeToggleComponent implements OnInit {

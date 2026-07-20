@@ -229,17 +229,17 @@ function statusBucketOf(s: number): StatusBucket | null {
     :host { display: block; }
     .dm-page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
     .dm-page-header h1 { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 0; }
-    .dm-sep { color: var(--mat-sys-outline); }
-    .dm-app { color: var(--mat-sys-primary); font-weight: 500; }
+    .dm-sep { color: var(--dm-color-border-strong); }
+    .dm-app { color: var(--dm-color-primary); font-weight: 500; }
     .dm-back {
       display: inline-flex; align-items: center; justify-content: center;
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--dm-color-fg-muted);
       text-decoration: none;
       padding: 4px; border-radius: 8px;
     }
-    .dm-back:hover { background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface); }
-    .dm-page-sub { color: var(--mat-sys-on-surface-variant); margin-top: .25rem; font-size: .875rem; }
-    .dm-paused { color: var(--mat-sys-tertiary); }
+    .dm-back:hover { background: var(--dm-color-surface-2); color: var(--dm-color-fg); }
+    .dm-page-sub { color: var(--dm-color-fg-muted); margin-top: .25rem; font-size: .875rem; }
+    .dm-paused { color: var(--dm-color-accent); }
     .dm-header-actions { display: flex; gap: .5rem; }
 
     .dm-toolbar {
@@ -253,7 +253,7 @@ function statusBucketOf(s: number): StatusBucket | null {
     .dm-chip-label {
       font: 500 .6875rem/1rem Roboto;
       text-transform: uppercase; letter-spacing: .04rem;
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--dm-color-fg-muted);
       margin-right: .25rem;
     }
     .dm-chip {
@@ -261,26 +261,26 @@ function statusBucketOf(s: number): StatusBucket | null {
       font-size: .75rem;
       padding: 4px 10px;
       border-radius: 999px;
-      border: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container);
-      color: var(--mat-sys-on-surface-variant);
+      border: 1px solid var(--dm-color-border);
+      background: var(--dm-color-surface-2);
+      color: var(--dm-color-fg-muted);
       cursor: pointer;
       letter-spacing: .04rem;
     }
-    .dm-chip:hover { color: var(--mat-sys-on-surface); }
+    .dm-chip:hover { color: var(--dm-color-fg); }
     .dm-chip-active {
-      background: color-mix(in oklch, var(--mat-sys-primary) var(--dm-badge-tint), transparent);
-      border-color: color-mix(in oklch, var(--mat-sys-primary) 35%, transparent);
-      color: var(--mat-sys-primary);
+      background: color-mix(in oklch, var(--dm-color-primary) var(--dm-badge-tint), transparent);
+      border-color: color-mix(in oklch, var(--dm-color-primary) 35%, transparent);
+      color: var(--dm-color-primary);
     }
 
     .dm-skel-rows { display: flex; flex-direction: column; gap: .35rem; }
 
     .dm-table-wrap {
-      border: 1px solid var(--mat-sys-outline-variant);
+      border: 1px solid var(--dm-color-border);
       border-radius: 12px;
       overflow: hidden;
-      background: var(--mat-sys-surface-container-lowest);
+      background: var(--dm-color-surface);
     }
     .dm-req-table {
       width: 100%;
@@ -292,13 +292,13 @@ function statusBucketOf(s: number): StatusBucket | null {
       padding: 8px 12px;
       font: 500 .6875rem/1rem Roboto;
       text-transform: uppercase; letter-spacing: .04rem;
-      color: var(--mat-sys-on-surface-variant);
-      background: var(--mat-sys-surface-container);
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
+      color: var(--dm-color-fg-muted);
+      background: var(--dm-color-surface-2);
+      border-bottom: 1px solid var(--dm-color-border);
     }
     .dm-req-table td {
       padding: 6px 12px;
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
+      border-bottom: 1px solid var(--dm-color-border);
       font-size: .8125rem;
       height: 32px;
       line-height: 20px;
@@ -309,7 +309,7 @@ function statusBucketOf(s: number): StatusBucket | null {
     }
     .dm-req-table tbody tr:last-child td { border-bottom: none; }
     .dm-req-table tbody tr:hover {
-      background: color-mix(in oklch, var(--mat-sys-primary) 6%, transparent);
+      background: color-mix(in oklch, var(--dm-color-primary) 6%, transparent);
     }
     .dm-col-time { width: 7rem; }
     .dm-col-method { width: 5rem; }
@@ -317,18 +317,18 @@ function statusBucketOf(s: number): StatusBucket | null {
     .dm-col-path { width: auto; }
     .dm-col-dur { width: 5rem; text-align: right; }
 
-    .dm-method[data-method="GET"]    { color: var(--mat-sys-primary); }
-    .dm-method[data-method="POST"]   { color: var(--mat-sys-tertiary); }
-    .dm-method[data-method="DELETE"] { color: var(--mat-sys-error); }
+    .dm-method[data-method="GET"]    { color: var(--dm-color-primary); }
+    .dm-method[data-method="POST"]   { color: var(--dm-color-accent); }
+    .dm-method[data-method="DELETE"] { color: var(--dm-color-error); }
     .dm-method[data-method="PUT"],
-    .dm-method[data-method="PATCH"]  { color: var(--mat-sys-secondary); }
-    .dm-method                       { color: var(--mat-sys-on-surface-variant); }
+    .dm-method[data-method="PATCH"]  { color: var(--dm-color-secondary); }
+    .dm-method                       { color: var(--dm-color-fg-muted); }
 
-    .dm-status[data-bucket="2xx"] { color: var(--mat-sys-primary); }
-    .dm-status[data-bucket="3xx"] { color: var(--mat-sys-secondary); }
-    .dm-status[data-bucket="4xx"] { color: var(--mat-sys-tertiary); }
-    .dm-status[data-bucket="5xx"] { color: var(--mat-sys-error); }
-    .dm-status                    { color: var(--mat-sys-on-surface-variant); }
+    .dm-status[data-bucket="2xx"] { color: var(--dm-color-primary); }
+    .dm-status[data-bucket="3xx"] { color: var(--dm-color-secondary); }
+    .dm-status[data-bucket="4xx"] { color: var(--dm-color-accent); }
+    .dm-status[data-bucket="5xx"] { color: var(--dm-color-error); }
+    .dm-status                    { color: var(--dm-color-fg-muted); }
 
     .dm-path {
       display: inline-block;
@@ -336,11 +336,11 @@ function statusBucketOf(s: number): StatusBucket | null {
       overflow: hidden;
       text-overflow: ellipsis;
       vertical-align: bottom;
-      color: var(--mat-sys-on-surface);
+      color: var(--dm-color-fg);
     }
 
     .dm-empty-link {
-      color: var(--mat-sys-primary);
+      color: var(--dm-color-primary);
       text-decoration: none;
       margin-top: .5rem;
     }
