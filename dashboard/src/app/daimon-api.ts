@@ -422,6 +422,25 @@ export class DaimonApi {
     await this.refresh();
   }
 
+  // Mute / unmute OS notifications for an app (M84 endpoints). `forMs`
+  // omitted = mute indefinitely. Recomposes the existing endpoints — no new
+  // route (v1.12 palette + app-detail header actions).
+  async muteApp(name: string, forMs?: number): Promise<void> {
+    await firstValueFrom(this.http.post(`/api/apps/${encodeURIComponent(name)}/mute`, forMs ? { forMs } : {}));
+    await this.refresh();
+  }
+
+  async unmuteApp(name: string): Promise<void> {
+    await firstValueFrom(this.http.post(`/api/apps/${encodeURIComponent(name)}/unmute`, {}));
+    await this.refresh();
+  }
+
+  // Run the app's own test suite once (M74 endpoint). Returns the raw run
+  // result; callers surface a toast/snackbar.
+  async runAppTest(name: string, timeoutMs = 180_000): Promise<any> {
+    return firstValueFrom(this.http.post<any>(`/api/apps/${encodeURIComponent(name)}/test?timeoutMs=${timeoutMs}`, {}));
+  }
+
   async ensureApp(name: string, until: 'serving' | 'healthy' = 'healthy', timeoutMs = 180_000): Promise<any> {
     return firstValueFrom(this.http.post<any>(`/api/apps/${encodeURIComponent(name)}/ensure?until=${until}&timeoutMs=${timeoutMs}`, {}));
   }

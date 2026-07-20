@@ -1,7 +1,15 @@
 import type { Routes } from '@angular/router';
 
+// Route table (M156, v1.12). Deep-link back-compat is a HARD RULE: every URL
+// shape that ever shipped keeps resolving — redirects are fine, a 404 never
+// is. `/apps` is the canonical apps list since v1.12; `/` is the overview
+// home (M158). The apps list was reachable at `/` before v1.12, and `/` still
+// resolves, so no old URL 404s. The catch-all `**` lands home.
+// dashboard/e2e/route-audit.ts enumerates every shape and the redirect spec
+// drives it.
 export const ROUTES: Routes = [
-  { path: '', loadComponent: () => import('./apps-list').then(m => m.AppsListComponent) },
+  { path: '', loadComponent: () => import('./home-page').then(m => m.HomePageComponent) },
+  { path: 'apps', loadComponent: () => import('./apps-list').then(m => m.AppsListComponent) },
   { path: 'apps/:name', loadComponent: () => import('./app-detail').then(m => m.AppDetailComponent) },
   { path: 'events', loadComponent: () => import('./events-feed').then(m => m.EventsFeedComponent) },
   { path: 'logs', loadComponent: () => import('./logs-page').then(m => m.LogsPageComponent) },

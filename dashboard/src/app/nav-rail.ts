@@ -2,25 +2,7 @@ import { ChangeDetectionStrategy, Component, OnInit, signal } from '@angular/cor
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
-
-interface NavEntry { path: string; icon: string; label: string; shortcut: string; }
-
-const ENTRIES: NavEntry[] = [
-  { path: '/',         icon: 'apps',                 label: 'Apps',     shortcut: 'g a' },
-  { path: '/errors',   icon: 'error',                label: 'Errors',   shortcut: 'g e' },
-  { path: '/logs',     icon: 'terminal',             label: 'Logs',     shortcut: 'g l' },
-  { path: '/config',   icon: 'tune',                 label: 'Settings', shortcut: 'g s' },
-  { path: '/doctor',   icon: 'medical_services',     label: 'Doctor',   shortcut: 'g d' },
-  { path: '/events',   icon: 'timeline',             label: 'Events',   shortcut: 'g v' },
-  { path: '/history',  icon: 'query_stats',          label: 'History',  shortcut: 'g h' },
-  { path: '/timeline', icon: 'view_timeline',        label: 'Timeline', shortcut: 'g i' },
-  { path: '/trends',   icon: 'show_chart',           label: 'Trends',   shortcut: 'g t' },
-  { path: '/tests',    icon: 'science',              label: 'Tests',    shortcut: 'g x' },
-  { path: '/sessions', icon: 'radio_button_checked', label: 'Sessions', shortcut: 'g n' },
-  { path: '/agents',   icon: 'badge',                label: 'Agents',   shortcut: 'g g' },
-  { path: '/regressions', icon: 'trending_down',     label: 'Regressions', shortcut: 'g r' },
-  { path: '/report',   icon: 'summarize',            label: 'Report',   shortcut: 'g p' },
-];
+import { NAV_GROUPS } from './nav-model';
 
 const KEY = 'daimon.nav.expanded';
 
@@ -34,27 +16,33 @@ const KEY = 'daimon.nav.expanded';
       <button class="dm-rail-toggle" (click)="toggle()" [attr.aria-label]="expanded() ? 'Collapse navigation' : 'Expand navigation'">
         <mat-icon fontSet="material-symbols-outlined">{{ expanded() ? 'menu_open' : 'menu' }}</mat-icon>
       </button>
-      <div class="dm-rail-brand">
+      <a class="dm-rail-brand" routerLink="/" aria-label="daimon overview" matTooltip="Overview" matTooltipPosition="right" [matTooltipDisabled]="expanded()">
         <mat-icon fontSet="material-symbols-outlined">developer_board</mat-icon>
         @if (expanded()) { <span>daimon</span> }
-      </div>
+      </a>
       <div class="dm-rail-items">
-        @for (e of entries; track e.path) {
-          <a class="dm-rail-item"
-             [routerLink]="e.path"
-             [routerLinkActiveOptions]="{ exact: e.path === '/' }"
-             routerLinkActive="active"
-             [attr.aria-label]="e.label + ' · ' + e.shortcut"
-             [matTooltip]="expanded() ? e.shortcut : (e.label + ' · ' + e.shortcut)"
-             matTooltipPosition="right"
-             [matTooltipShowDelay]="300"
-             [matTooltipHideDelay]="0"
-             (click)="dismissTooltip($event)">
-            <mat-icon fontSet="material-symbols-outlined">{{ e.icon }}</mat-icon>
+        @for (group of groups; track group.label) {
+          <div class="dm-rail-group" role="group" [attr.aria-label]="group.label">
             @if (expanded()) {
-              <span class="dm-rail-label">{{ e.label }}</span>
+              <div class="dm-rail-group-label" aria-hidden="true">{{ group.label }}</div>
             }
-          </a>
+            @for (e of group.entries; track e.path) {
+              <a class="dm-rail-item"
+                 [routerLink]="e.path"
+                 routerLinkActive="active"
+                 [attr.aria-label]="e.label + ' · ' + e.shortcut"
+                 [matTooltip]="expanded() ? e.shortcut : (e.label + ' · ' + e.shortcut)"
+                 matTooltipPosition="right"
+                 [matTooltipShowDelay]="300"
+                 [matTooltipHideDelay]="0"
+                 (click)="dismissTooltip($event)">
+                <mat-icon fontSet="material-symbols-outlined">{{ e.icon }}</mat-icon>
+                @if (expanded()) {
+                  <span class="dm-rail-label">{{ e.label }}</span>
+                }
+              </a>
+            }
+          </div>
         }
       </div>
     </nav>
@@ -82,8 +70,17 @@ const KEY = 'daimon.nav.expanded';
       display: flex; align-items: center; gap: .5rem;
       padding: 0 16px 12px 20px; color: var(--dm-color-primary);
       font: 500 1rem/1.5rem Roboto; letter-spacing: .009rem;
+      text-decoration: none;
     }
-    .dm-rail-items { display: flex; flex-direction: column; gap: 2px; padding: 8px; }
+    .dm-rail-brand:hover { color: var(--dm-color-primary); }
+    .dm-rail-items { display: flex; flex-direction: column; gap: 2px; padding: 8px; overflow-y: auto; }
+    .dm-rail-group { display: flex; flex-direction: column; gap: 2px; }
+    .dm-rail-group + .dm-rail-group { margin-top: 10px; }
+    .dm-rail-group-label {
+      padding: 8px 12px 4px; font: 600 var(--dm-text-xs, .6875rem)/1rem Roboto;
+      text-transform: uppercase; letter-spacing: .06em;
+      color: var(--dm-color-fg-muted);
+    }
     .dm-rail-item {
       display: flex; align-items: center; gap: .75rem;
       padding: 10px 12px; border-radius: 12px;
@@ -99,7 +96,9 @@ const KEY = 'daimon.nav.expanded';
       color: var(--dm-color-primary);
     }
     .dm-rail-label { flex: 1; }
-    /* Bottom bar under 768px (M71): horizontal, icon-only, scrollable. */
+    /* Bottom bar under 768px (M71): horizontal, icon-only, scrollable. Group
+       headers and dividers collapse away — the rail is one flat icon strip,
+       group boundaries marked by a thin divider so grouping is still legible. */
     @media (max-width: 768px) {
       .dm-rail, .dm-rail.expanded {
         width: 100%;
@@ -112,14 +111,16 @@ const KEY = 'daimon.nav.expanded';
         scrollbar-width: none;
       }
       .dm-rail::-webkit-scrollbar { display: none; }
-      .dm-rail-toggle, .dm-rail-brand, .dm-rail-label { display: none; }
-      .dm-rail-items { flex-direction: row; gap: 2px; padding: 4px 6px; }
+      .dm-rail-toggle, .dm-rail-brand, .dm-rail-label, .dm-rail-group-label { display: none; }
+      .dm-rail-items { flex-direction: row; gap: 2px; padding: 4px 6px; overflow: visible; }
+      .dm-rail-group { flex-direction: row; gap: 2px; }
+      .dm-rail-group + .dm-rail-group { margin-top: 0; margin-left: 6px; padding-left: 6px; border-left: 1px solid var(--dm-color-border); }
       .dm-rail-item { padding: 8px 10px; border-radius: var(--dm-radius-lg); }
     }
   `],
 })
 export class NavRailComponent implements OnInit {
-  protected readonly entries = ENTRIES;
+  protected readonly groups = NAV_GROUPS;
   protected readonly expanded = signal(true);
 
   ngOnInit(): void {

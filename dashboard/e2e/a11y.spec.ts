@@ -78,15 +78,15 @@ test.describe('axe: named app groups states', () => {
     expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
   };
 
-  test('axe: / with grouped sections (no chip filter) has no serious/critical violations', async ({ page }) => {
+  test('axe: /apps with grouped sections (no chip filter) has no serious/critical violations', async ({ page }) => {
     test.skip(!seededApp, 'no registry apps in the driven workspace, or daemon predates /api/groups');
-    await page.goto('/');
+    await page.goto('/apps');
     await axeCheck(page);
   });
 
-  test('axe: /?group=web (chip-filtered list) has no serious/critical violations', async ({ page }) => {
+  test('axe: /apps?group=web (chip-filtered list) has no serious/critical violations', async ({ page }) => {
     test.skip(!seededApp, 'no registry apps in the driven workspace, or daemon predates /api/groups');
-    await page.goto('/?group=web');
+    await page.goto('/apps?group=web');
     await axeCheck(page);
   });
 

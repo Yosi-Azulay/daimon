@@ -6,6 +6,11 @@ import {
   flattenGroups,
   routeForHit,
   fmtHitAgo,
+  fuzzyScore,
+  rankItems,
+  rememberRecent,
+  parseRecents,
+  type RecentEntry,
   type SearchHit,
 } from './command-palette-helpers';
 
@@ -67,5 +72,90 @@ describe('command-palette search helpers', () => {
     expect(fmtHitAgo(now - 120_000, now)).toBe('2m ago');
     expect(fmtHitAgo(now - 3 * 3_600_000, now)).toBe('3h ago');
     expect(fmtHitAgo(now - 2 * 86_400_000, now)).toBe('2d ago');
+  });
+});
+
+describe('fuzzyScore ranking (M157)', () => {
+  it('returns null when the query is not a subsequence', () => {
+    expect(fuzzyScore('xyz', 'Errors')).toBeNull();
+    expect(fuzzyScore('errz', 'Errors')).toBeNull();
+  });
+
+  it('matches a scattered subsequence', () => {
+    expect(fuzzyScore('rgs', 'Regressions')).not.toBeNull();
+  });
+
+  it('scores an empty query as neutral (everything matches)', () => {
+    expect(fuzzyScore('', 'anything')).toBe(0);
+  });
+
+  it('tiers exact-prefix above word-start above scattered', () => {
+    const prefix = fuzzyScore('log', 'Logs')!;          // exact prefix
+    const wordStart = fuzzyScore('log', 'Go to Logs')!;  // matches at a word start
+    const scattered = fuzzyScore('log', 'Catalog')!;     // mid-word contiguous, no boundary
+    expect(prefix).toBeGreaterThan(wordStart);
+    expect(wordStart).toBeGreaterThan(scattered);
+  });
+
+  it('is case-insensitive', () => {
+    expect(fuzzyScore('ERR', 'errors')).not.toBeNull();
+    expect(fuzzyScore('err', 'ERRORS')).not.toBeNull();
+  });
+});
+
+describe('rankItems (M157)', () => {
+  const items = [
+    { label: 'Go to Errors', keywords: 'Errors' },
+    { label: 'Go to Events', keywords: 'Events' },
+    { label: 'Go to Trends', keywords: 'Trends' },
+    { label: 'web', keywords: 'open app' },
+  ];
+
+  it('returns the full list unchanged for an empty query', () => {
+    expect(rankItems('', items)).toEqual(items);
+  });
+
+  it('drops non-matches and orders best first', () => {
+    const r = rankItems('err', items);
+    expect(r.map(i => i.label)).toEqual(['Go to Errors']);
+  });
+
+  it('ranks a prefix hit above a keyword-only hit', () => {
+    const r = rankItems('ev', items);
+    // "Go to Events" — 'ev' hits at the "Events" word start; ordering is
+    // deterministic and events should surface.
+    expect(r[0].label).toBe('Go to Events');
+  });
+
+  it('keeps input order on ties (stable)', () => {
+    const tie = [{ label: 'aa' }, { label: 'ab' }];
+    // both match 'a'; original order preserved when scores are equal-ish
+    const r = rankItems('a', tie);
+    expect(r.map(i => i.label)).toEqual(['aa', 'ab']);
+  });
+});
+
+describe('recents (M157)', () => {
+  const nav = (route: string): RecentEntry => ({ label: 'Go ' + route, route, icon: 'x' });
+
+  it('adds to the front and caps at max', () => {
+    let list: RecentEntry[] = [];
+    for (const r of ['/a', '/b', '/c', '/d', '/e', '/f', '/g']) list = rememberRecent(list, nav(r), 6);
+    expect(list.map(r => r.route)).toEqual(['/g', '/f', '/e', '/d', '/c', '/b']);
+  });
+
+  it('de-duplicates by route, moving a re-selection to the top', () => {
+    let list = [nav('/a'), nav('/b'), nav('/c')];
+    list = rememberRecent(list, nav('/c'), 6);
+    expect(list.map(r => r.route)).toEqual(['/c', '/a', '/b']);
+  });
+
+  it('parseRecents tolerates junk and non-arrays', () => {
+    expect(parseRecents(null)).toEqual([]);
+    expect(parseRecents('not json')).toEqual([]);
+    expect(parseRecents('{"a":1}')).toEqual([]);
+    expect(parseRecents(JSON.stringify([{ label: 'x', route: '/x', icon: 'i' }, { bad: true }]))).toEqual([
+      { label: 'x', route: '/x', icon: 'i' },
+    ]);
   });
 });

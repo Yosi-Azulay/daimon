@@ -58,7 +58,8 @@ test.describe('keyboard round trips (tour pre-dismissed)', () => {
     const apps: { name: string }[] = await (await page.request.get('/api/apps')).json();
     test.skip(!apps.length, 'no registry apps in the driven workspace');
 
-    await page.goto('/');
+    // The apps list lives at /apps since v1.12 (/ is the overview home).
+    await page.goto('/apps');
     await expect(page.locator('main h1, main h2').first()).toBeVisible({ timeout: 10_000 });
 
     // Tab from the top of the document into the app card grid/list. The skip

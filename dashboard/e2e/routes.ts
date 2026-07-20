@@ -6,6 +6,7 @@
 // line. dashboard.spec.ts re-exports ROUTE_PATHS from here for back-compat.
 export const ROUTE_PATHS: string[] = [
   '/',
+  '/apps',
   '/errors',
   '/logs',
   '/config',

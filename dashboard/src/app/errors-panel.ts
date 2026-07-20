@@ -147,10 +147,11 @@ const TS_CODE_DESCRIPTIONS: Record<string, string> = {
           }
         </div>
       } @else if (api.apps().length === 0) {
-        <dm-empty icon="error" title="No apps to scan" hint="Discover some apps first">
+        <dm-empty icon="error" title="No apps yet"
+                  hint="Compile and runtime errors show up here the moment daimon sees one. Attach a workspace and start an app first.">
           <div class="dm-empty-actions">
-            <a routerLink="/" class="dm-link-btn">
-              <span class="material-symbols-outlined">home</span>Go home
+            <a routerLink="/apps" class="dm-link-btn">
+              <span class="material-symbols-outlined">apps</span>View apps
             </a>
           </div>
         </dm-empty>

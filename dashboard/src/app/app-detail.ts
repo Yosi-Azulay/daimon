@@ -14,16 +14,16 @@ import {
   signal,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
-import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Chart, registerables, type ChartConfiguration } from 'chart.js';
 import { AppWhy, DaimonApi, LockSnapshot } from './daimon-api';
+import type { TestRun } from './tests-page-helpers';
 import { MetricsChartComponent } from './metrics-chart';
 import { StatusPillComponent, EmptyStateComponent, MonoComponent, SkeletonComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
@@ -69,7 +69,6 @@ interface EnvInfo {
     RouterLink,
     MatButtonModule,
     MatIconModule,
-    MatTabsModule,
     MatTooltipModule,
     MatProgressSpinnerModule,
     MatSnackBarModule,
@@ -82,7 +81,7 @@ interface EnvInfo {
   template: `
     <div class="dm-detail">
       <header class="dm-detail-header">
-        <a routerLink="/" class="dm-back" matTooltip="Back to apps">
+        <a routerLink="/apps" class="dm-back" matTooltip="Back to apps">
           <span class="material-symbols-outlined">arrow_back</span>
           <span>Apps</span>
         </a>
@@ -104,7 +103,7 @@ interface EnvInfo {
             }
             @if (appGroups().length) {
               @for (g of appGroups(); track g) {
-                <a class="dm-group-chip" [routerLink]="['/']" [queryParams]="{ group: g }" [matTooltip]="'filter apps by ' + g">
+                <a class="dm-group-chip" [routerLink]="['/apps']" [queryParams]="{ group: g }" [matTooltip]="'filter apps by ' + g">
                   <span class="material-symbols-outlined">workspaces</span>
                   <span>{{ g }}</span>
                 </a>
@@ -147,6 +146,36 @@ interface EnvInfo {
               @else { <span class="material-symbols-outlined">restart_alt</span> }
               <span>Restart</span>
             </button>
+            @if (s.muted) {
+              <button
+                class="dm-action-btn"
+                [disabled]="busy('mute')"
+                (click)="onUnmute()"
+                matTooltip="Lift notification mute">
+                @if (busy('mute')) { <mat-spinner diameter="14"></mat-spinner> }
+                @else { <span class="material-symbols-outlined">notifications_active</span> }
+                <span>Unmute</span>
+              </button>
+            } @else {
+              <button
+                class="dm-action-btn"
+                [disabled]="busy('mute')"
+                (click)="onMute()"
+                matTooltip="Mute OS notifications for this app">
+                @if (busy('mute')) { <mat-spinner diameter="14"></mat-spinner> }
+                @else { <span class="material-symbols-outlined">notifications_off</span> }
+                <span>Mute</span>
+              </button>
+            }
+            <button
+              class="dm-action-btn"
+              [disabled]="busy('test')"
+              (click)="onTest()"
+              matTooltip="Run this app's test suite once">
+              @if (busy('test')) { <mat-spinner diameter="14"></mat-spinner> }
+              @else { <span class="material-symbols-outlined">science</span> }
+              <span>Test</span>
+            </button>
             <button
               class="dm-action-btn"
               [disabled]="busy('clean')"
@@ -180,13 +209,26 @@ interface EnvInfo {
       </header>
 
       @if (summary(); as s) {
-        <mat-tab-group [animationDuration]="'200ms'" class="dm-tabs" [selectedIndex]="initialTabIndex">
-          <mat-tab>
-            <ng-template mat-tab-label>
-              <span class="material-symbols-outlined dm-tab-icon">info</span>
-              Overview
-            </ng-template>
-            <div class="dm-tab-body">
+        <!-- In-page section nav (M159): sticky, scroll-spy-highlighted, with
+             stable #anchors that are a deep-link CONTRACT. -->
+        <nav class="dm-section-nav" aria-label="Sections">
+          @for (sec of sections; track sec.id) {
+            <a [href]="'#' + sec.id"
+               class="dm-section-link"
+               [class.active]="activeSection() === sec.id"
+               [attr.aria-current]="activeSection() === sec.id ? 'true' : null"
+               (click)="onSectionNav($event, sec.id)">
+              <span class="material-symbols-outlined">{{ sec.icon }}</span>
+              <span>{{ sec.label }}</span>
+              @if (sec.id === 'errors' && errors().length) { <span class="dm-sec-count">{{ errors().length }}</span> }
+            </a>
+          }
+        </nav>
+
+        <div class="dm-sections">
+          <section id="overview" class="dm-section" aria-labelledby="sec-overview">
+            <h2 id="sec-overview" class="dm-section-title">Overview</h2>
+            <div class="dm-section-body">
               <div class="dm-cards-row">
                 <section class="dm-panel">
                   <h3 class="dm-panel-title">Runtime</h3>
@@ -252,16 +294,41 @@ interface EnvInfo {
                   }
                 </section>
               </div>
-            </div>
-          </mat-tab>
 
-          <mat-tab>
-            <ng-template mat-tab-label>
-              <span class="material-symbols-outlined dm-tab-icon">error</span>
+              <div class="dm-cards-row">
+                <section class="dm-panel">
+                  <h3 class="dm-panel-title">Environment file</h3>
+                  @if (envFiles().length) {
+                    <div class="dm-radios">
+                      @for (f of envFiles(); track f) {
+                        <label class="dm-radio">
+                          <input
+                            type="radio"
+                            name="env-file"
+                            [value]="f"
+                            [checked]="envActive() === f"
+                            [disabled]="busy('env')"
+                            (change)="onEnvSwitch(f)" />
+                          <span class="dm-radio-mark"></span>
+                          <dm-mono>{{ f }}</dm-mono>
+                          @if (envActive() === f) { <span class="dm-env-active">active</span> }
+                        </label>
+                      }
+                    </div>
+                  } @else {
+                    <div class="dm-dim">No env files available.</div>
+                  }
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <section id="errors" class="dm-section" aria-labelledby="sec-errors">
+            <h2 id="sec-errors" class="dm-section-title">
               Errors
               @if (errors().length) { <span class="dm-tab-count">{{ errors().length }}</span> }
-            </ng-template>
-            <div class="dm-tab-body">
+            </h2>
+            <div class="dm-section-body">
               @if (errorsByFile().length) {
                 @for (group of errorsByFile(); track group.file) {
                   <section class="dm-panel dm-err-group">
@@ -293,14 +360,11 @@ interface EnvInfo {
                 <dm-empty icon="check_circle" title="No errors" hint="Nothing to fix right now."></dm-empty>
               }
             </div>
-          </mat-tab>
+          </section>
 
-          <mat-tab>
-            <ng-template mat-tab-label>
-              <span class="material-symbols-outlined dm-tab-icon">terminal</span>
-              Logs
-            </ng-template>
-            <div class="dm-tab-body dm-tab-logs">
+          <section id="logs" class="dm-section" aria-labelledby="sec-logs">
+            <h2 id="sec-logs" class="dm-section-title">Logs</h2>
+            <div class="dm-section-body dm-tab-logs">
               <div class="dm-logs-toolbar">
                 <span class="dm-dim">Live tail — last {{ logLines().length }} lines</span>
                 <span class="dm-spacer"></span>
@@ -325,14 +389,56 @@ interface EnvInfo {
                 }
               </div>
             </div>
-          </mat-tab>
+          </section>
 
-          <mat-tab>
-            <ng-template mat-tab-label>
-              <span class="material-symbols-outlined dm-tab-icon">timeline</span>
-              History
-            </ng-template>
-            <div class="dm-tab-body">
+          <section id="tests" class="dm-section" aria-labelledby="sec-tests">
+            <h2 id="sec-tests" class="dm-section-title">Tests</h2>
+            <div class="dm-section-body">
+              @if (testRuns() === null) {
+                <dm-skeleton height="6rem"></dm-skeleton>
+              } @else if (latestRun(); as lr) {
+                <section class="dm-panel">
+                  <h3 class="dm-panel-title">Latest run</h3>
+                  <div class="dm-history-stats">
+                    <div class="dm-stat"><span class="dm-stat-label">passed</span><span class="dm-stat-num">{{ lr.passed ?? '—' }}</span></div>
+                    <div class="dm-stat"><span class="dm-stat-label">failed</span><span class="dm-stat-num">{{ lr.failed ?? '—' }}</span></div>
+                    <div class="dm-stat"><span class="dm-stat-label">total</span><span class="dm-stat-num">{{ lr.total ?? '—' }}</span></div>
+                    @if (lr.coverage?.linesPct != null) {
+                      <div class="dm-stat"><span class="dm-stat-label">coverage</span><span class="dm-stat-num">{{ lr.coverage?.linesPct }}%</span></div>
+                    }
+                  </div>
+                  <div class="dm-dim">{{ lr.runner || 'runner ?' }} · {{ fmtWhyAgo(lr.ts) }}@if (lr.durationMs != null) { · {{ lr.durationMs }} ms }</div>
+                  <a class="dm-why-session-link" routerLink="/tests">
+                    View all test runs
+                    <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+                  </a>
+                </section>
+                @if (testRuns()!.length > 1) {
+                  <section class="dm-panel">
+                    <h3 class="dm-panel-title">Recent runs</h3>
+                    <table class="dm-bundle">
+                      <thead><tr><th scope="col">when</th><th scope="col">runner</th><th class="dm-right" scope="col">pass / total</th></tr></thead>
+                      <tbody>
+                        @for (r of testRuns()!.slice(0, 8); track r.id) {
+                          <tr>
+                            <td>{{ fmtWhyAgo(r.ts) }}</td>
+                            <td><dm-mono>{{ r.runner || '—' }}</dm-mono></td>
+                            <td class="dm-right"><dm-mono>{{ r.passed ?? '—' }} / {{ r.total ?? '—' }}</dm-mono></td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  </section>
+                }
+              } @else {
+                <dm-empty icon="science" title="No test runs" [hint]="'Run daimon test ' + name + ' — results appear here.'"></dm-empty>
+              }
+            </div>
+          </section>
+
+          <section id="timeline" class="dm-section" aria-labelledby="sec-timeline">
+            <h2 id="sec-timeline" class="dm-section-title">Timeline</h2>
+            <div class="dm-section-body">
               <section class="dm-panel">
                 <h3 class="dm-panel-title">Compile times</h3>
                 @if (compileTimes().length) {
@@ -349,47 +455,16 @@ interface EnvInfo {
                   <div class="dm-dim">No compile history yet.</div>
                 }
               </section>
+              <a class="dm-why-session-link" routerLink="/timeline" [queryParams]="{ app: name }">
+                View full timeline
+                <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+              </a>
             </div>
-          </mat-tab>
+          </section>
 
-          <mat-tab>
-            <ng-template mat-tab-label>
-              <span class="material-symbols-outlined dm-tab-icon">tune</span>
-              Env
-            </ng-template>
-            <div class="dm-tab-body">
-              <section class="dm-panel">
-                <h3 class="dm-panel-title">Environment file</h3>
-                @if (envFiles().length) {
-                  <div class="dm-radios">
-                    @for (f of envFiles(); track f) {
-                      <label class="dm-radio">
-                        <input
-                          type="radio"
-                          name="env-file"
-                          [value]="f"
-                          [checked]="envActive() === f"
-                          [disabled]="busy('env')"
-                          (change)="onEnvSwitch(f)" />
-                        <span class="dm-radio-mark"></span>
-                        <dm-mono>{{ f }}</dm-mono>
-                        @if (envActive() === f) { <span class="dm-env-active">active</span> }
-                      </label>
-                    }
-                  </div>
-                } @else {
-                  <div class="dm-dim">No env files available.</div>
-                }
-              </section>
-            </div>
-          </mat-tab>
-
-          <mat-tab>
-            <ng-template mat-tab-label>
-              <span class="material-symbols-outlined dm-tab-icon">help</span>
-              Why
-            </ng-template>
-            <div class="dm-tab-body">
+          <section id="why" class="dm-section" aria-labelledby="sec-why">
+            <h2 id="sec-why" class="dm-section-title">Why</h2>
+            <div class="dm-section-body">
               @if (whyLoading()) {
                 <dm-skeleton height="10rem"></dm-skeleton>
               } @else if (why(); as w) {
@@ -520,8 +595,8 @@ interface EnvInfo {
                 <dm-empty icon="help" title="No why data" hint="Nothing recorded yet for this app."></dm-empty>
               }
             </div>
-          </mat-tab>
-        </mat-tab-group>
+          </section>
+        </div>
       } @else {
         <div class="dm-loading">
           <dm-skeleton width="100%" height="200px"></dm-skeleton>
@@ -623,8 +698,6 @@ interface EnvInfo {
     }
     .dm-action-primary:hover:not(:disabled) { background: color-mix(in oklch, var(--dm-color-primary) 88%, black); }
 
-    .dm-tabs { background: transparent; }
-    .dm-tab-icon { font-size: 18px; margin-right: .375rem; vertical-align: middle; }
     .dm-tab-count {
       display: inline-flex; align-items: center; justify-content: center;
       min-width: 18px; padding: 0 6px; margin-left: .375rem;
@@ -633,7 +706,47 @@ interface EnvInfo {
       color: var(--dm-color-fg-muted);
       font: 600 .6875rem/1rem 'Roboto Mono', ui-monospace, monospace;
     }
-    .dm-tab-body { padding-top: 1rem; display: flex; flex-direction: column; gap: 1rem; }
+
+    /* In-page section nav (M159): sticky sub-nav under the header, scroll-spy
+       highlighted. Horizontally scrollable on narrow viewports. */
+    .dm-section-nav {
+      position: sticky; top: 0; z-index: 5;
+      display: flex; gap: 2px; flex-wrap: wrap;
+      padding: 8px 0; margin-bottom: 4px;
+      background: var(--dm-color-bg);
+      border-bottom: 1px solid var(--dm-color-border);
+    }
+    .dm-section-link {
+      display: inline-flex; align-items: center; gap: .375rem;
+      padding: 6px 12px; border-radius: var(--dm-radius-full, 999px);
+      color: var(--dm-color-fg-muted); text-decoration: none;
+      font: 500 .8125rem/1.25rem Roboto; white-space: nowrap;
+    }
+    .dm-section-link:hover { background: var(--dm-color-surface-2); color: var(--dm-color-fg); }
+    .dm-section-link.active {
+      background: color-mix(in oklch, var(--dm-color-primary) var(--dm-badge-tint), transparent);
+      color: var(--dm-color-primary);
+    }
+    .dm-section-link .material-symbols-outlined { font-size: 18px; }
+    .dm-sec-count {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 16px; padding: 0 5px; border-radius: 999px;
+      background: color-mix(in oklch, var(--dm-color-error) var(--dm-badge-tint), transparent);
+      color: var(--dm-color-error); font: 600 .625rem/1rem 'Roboto Mono', ui-monospace, monospace;
+    }
+
+    .dm-sections { display: flex; flex-direction: column; gap: 1.5rem; }
+    .dm-section { scroll-margin-top: 64px; }
+    .dm-section-title {
+      margin: 0 0 .75rem; font: 600 1.125rem/1.5rem Roboto; color: var(--dm-color-fg);
+      display: flex; align-items: center; gap: .5rem;
+    }
+    .dm-section-body { display: flex; flex-direction: column; gap: 1rem; }
+
+    @media (max-width: 768px) {
+      .dm-section-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+      .dm-section-nav::-webkit-scrollbar { display: none; }
+    }
 
     .dm-cards-row {
       display: grid; gap: 1rem;
@@ -817,17 +930,35 @@ interface EnvInfo {
 })
 export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   @Input() name = '';
-  // `?tab=errors|logs|history|env|why` deep-link (M85), bound automatically
-  // by withComponentInputBinding() — picks the initial mat-tab-group tab.
+  // `?tab=errors|logs|history|env|why` deep-link (M85) — a permanent
+  // back-compat input (v1.12 turned tabs into anchored sections). On init it
+  // is mapped to the corresponding section anchor and scrolled to, so every
+  // old `?tab=` URL still lands on the right content. Bound by
+  // withComponentInputBinding().
   @Input() tab?: string;
 
   readonly api = inject(DaimonApi);
   private readonly http = inject(HttpClient);
   private readonly snack = inject(MatSnackBar);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly route = inject(ActivatedRoute);
+  private readonly hostEl = inject(ElementRef);
 
   @ViewChild('logBox') logBox?: ElementRef<HTMLDivElement>;
   @ViewChild('spark') sparkRef?: ElementRef<HTMLCanvasElement>;
+
+  // Sectioned layout (M159). The ids are a DEEP-LINK CONTRACT — once shipped
+  // they never rename (the URL-back-compat rule applies to fragments too).
+  protected readonly sections = [
+    { id: 'overview', label: 'Overview', icon: 'info' },
+    { id: 'errors',   label: 'Errors',   icon: 'error' },
+    { id: 'logs',     label: 'Logs',     icon: 'terminal' },
+    { id: 'tests',    label: 'Tests',    icon: 'science' },
+    { id: 'timeline', label: 'Timeline', icon: 'timeline' },
+    { id: 'why',      label: 'Why',      icon: 'help' },
+  ];
+  readonly activeSection = signal<string>('overview');
+  private sectionObserver?: IntersectionObserver;
 
   private readonly state = signal<any>(null);
   private readonly errs = signal<DetailError[]>([]);
@@ -837,8 +968,9 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   readonly envInfo = signal<EnvInfo | null>(null);
   readonly why = signal<AppWhy | null>(null);
   readonly whyLoading = signal<boolean>(true);
+  readonly testRuns = signal<TestRun[] | null>(null);
+  readonly latestRun = computed<TestRun | null>(() => this.testRuns()?.[0] ?? null);
   private readonly busyMap = signal<Record<string, boolean>>({});
-  initialTabIndex = 0;
 
   private logStop?: () => void;
   private pollTimer?: ReturnType<typeof setInterval>;
@@ -935,7 +1067,6 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   async ngOnInit(): Promise<void> {
-    this.initialTabIndex = this.tabIndexFor(this.tab);
     await this.refresh();
     this.pollTimer = setInterval(() => void this.refresh(), 4000);
     this.tickTimer = setInterval(() => this.now.set(Date.now()), 1000);
@@ -950,39 +1081,114 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     void this.loadCompile();
     void this.loadEnv();
     void this.loadWhy();
+    void this.loadTests();
   }
 
-  private tabIndexFor(tab: string | undefined): number {
-    switch (tab) {
-      case 'errors': return 1;
-      case 'logs': return 2;
-      case 'history': return 3;
-      case 'env': return 4;
-      case 'why': return 5;
-      default: return 0;
+  // Map an old `?tab=` value (M85) or a `#fragment` to a section anchor. The
+  // env tab folded into overview; history became the timeline section. Unknown
+  // → overview.
+  private initialSection(): string {
+    const frag = this.route.snapshot.fragment;
+    if (frag && this.sections.some(s => s.id === frag)) return frag;
+    switch (this.tab) {
+      case 'errors': return 'errors';
+      case 'logs': return 'logs';
+      case 'history': return 'timeline';
+      case 'env': return 'overview';
+      case 'why': return 'why';
+      case 'tests': return 'tests';
+      default: return 'overview';
     }
   }
 
+  private viewInitDone = false;
+
   ngAfterViewInit(): void {
-    if (!this.sparkRef) return;
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const config: ChartConfiguration<'line'> = {
-      type: 'line',
-      data: { labels: [], datasets: [] },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: reduced ? false : { duration: 200 },
-        plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
-        scales: {
-          x: { ticks: { maxTicksLimit: 6, autoSkip: true } },
-          y: { beginAtZero: true, title: { display: true, text: 'ms' } },
-        },
+    // The sections + spark canvas live behind `@if (summary())`, which is only
+    // truthy after the first refresh() resolves — so at this point the DOM may
+    // still be the loading skeleton. tryInitView() runs the one-time view wiring
+    // (chart, scroll-spy, deep-link scroll) and is also called from refresh(),
+    // so it fires whenever the sections actually land, cold-load or not.
+    this.tryInitView();
+  }
+
+  // Runs the one-time section wiring once the sections are in the DOM. Idempotent.
+  private tryInitView(): void {
+    if (this.viewInitDone || !this.state()) return;
+    // Defer a macrotask so Angular has rendered the sections after state.set.
+    setTimeout(() => {
+      if (this.viewInitDone) return;
+      const host = this.hostEl.nativeElement as HTMLElement;
+      if (!host.querySelector('#overview')) return; // not rendered yet; a later refresh retries
+      this.viewInitDone = true;
+
+      this.setupSectionSpy();
+
+      // Scroll to the deep-linked section (from `#fragment` or a legacy
+      // `?tab=`). Overview is the no-op default so a bare /apps/:name stays put.
+      const target = this.initialSection();
+      if (target !== 'overview') this.scrollToSection(target, false);
+
+      if (this.sparkRef) {
+        const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const config: ChartConfiguration<'line'> = {
+          type: 'line',
+          data: { labels: [], datasets: [] },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: reduced ? false : { duration: 200 },
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
+            scales: {
+              x: { ticks: { maxTicksLimit: 6, autoSkip: true } },
+              y: { beginAtZero: true, title: { display: true, text: 'ms' } },
+            },
+          },
+        };
+        this.spark = new Chart(this.sparkRef.nativeElement, config);
+        const data = this.compileTimes();
+        if (data.length) this.updateSpark(data);
+      }
+    }, 0);
+  }
+
+  // Scroll-spy: highlight the section-nav link for whichever section is
+  // currently in view. Uses a top-biased rootMargin so a section registers as
+  // active once its heading nears the top, matching how the nav reads.
+  private setupSectionSpy(): void {
+    const host = this.hostEl.nativeElement as HTMLElement;
+    const els = this.sections
+      .map(s => host.querySelector<HTMLElement>('#' + s.id))
+      .filter((e): e is HTMLElement => !!e);
+    if (!els.length || typeof IntersectionObserver === 'undefined') return;
+    this.sectionObserver = new IntersectionObserver(
+      entries => {
+        const visible = entries.filter(e => e.isIntersecting);
+        if (visible.length) {
+          // Topmost intersecting section wins.
+          visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+          this.activeSection.set(visible[0].target.id);
+        }
       },
-    };
-    this.spark = new Chart(this.sparkRef.nativeElement, config);
-    const data = this.compileTimes();
-    if (data.length) this.updateSpark(data);
+      { rootMargin: '-72px 0px -55% 0px', threshold: 0 },
+    );
+    for (const el of els) this.sectionObserver.observe(el);
+  }
+
+  onSectionNav(ev: Event, id: string): void {
+    ev.preventDefault();
+    this.scrollToSection(id, true);
+  }
+
+  private scrollToSection(id: string, smooth: boolean): void {
+    const host = this.hostEl.nativeElement as HTMLElement;
+    const el = host.querySelector<HTMLElement>('#' + id);
+    if (!el) return;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: smooth && !reduced ? 'smooth' : 'auto', block: 'start' });
+    this.activeSection.set(id);
+    // Keep the deep-link honest without adding a history entry per click.
+    try { history.replaceState(history.state, '', '#' + id); } catch {}
   }
 
   ngOnDestroy(): void {
@@ -990,12 +1196,15 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     if (this.tickTimer) clearInterval(this.tickTimer);
     this.logStop?.();
     this.spark?.destroy();
+    this.sectionObserver?.disconnect();
   }
 
   private async refresh(): Promise<void> {
     const [s, e] = await Promise.all([this.api.appDetail(this.name), this.api.appErrors(this.name)]);
     if (s) this.state.set(s);
     this.errs.set(Array.isArray(e) ? (e as DetailError[]) : []);
+    // First time state lands, wire up the sections (spark, scroll-spy, deep-link).
+    this.tryInitView();
   }
 
   private async loadCompile(): Promise<void> {
@@ -1023,6 +1232,17 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
       this.why.set(await this.api.getAppWhy(this.name));
     } finally {
       this.whyLoading.set(false);
+    }
+  }
+
+  // Recent test runs for the Tests section (M159) — recomposes GET /api/tests.
+  // Degrades to [] (a note) on failure, never throws.
+  private async loadTests(): Promise<void> {
+    try {
+      const runs = await this.api.getTestRuns({ app: this.name, limit: 10 });
+      this.testRuns.set(Array.isArray(runs) ? runs : []);
+    } catch {
+      this.testRuns.set([]);
     }
   }
 
@@ -1077,6 +1297,53 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
       this.snack.open(`${kind} failed: ${e?.message ?? 'error'}`, 'Dismiss', { duration: 4000 });
     } finally {
       this.setBusy(kind, false);
+    }
+  }
+
+  // Mute / unmute / test — the consistent header action row (M159), same
+  // endpoints the palette and apps list use. `mute` busy-key covers both.
+  async onMute(): Promise<void> {
+    if (this.busy('mute')) return;
+    this.setBusy('mute', true);
+    try {
+      await this.api.muteApp(this.name);
+      this.snack.open(`Muted ${this.name}`, '', { duration: 1500 });
+      await this.refresh();
+    } catch (e: any) {
+      this.snack.open(`Mute failed: ${e?.message ?? 'error'}`, 'Dismiss', { duration: 4000 });
+    } finally {
+      this.setBusy('mute', false);
+    }
+  }
+
+  async onUnmute(): Promise<void> {
+    if (this.busy('mute')) return;
+    this.setBusy('mute', true);
+    try {
+      await this.api.unmuteApp(this.name);
+      this.snack.open(`Unmuted ${this.name}`, '', { duration: 1500 });
+      await this.refresh();
+    } catch (e: any) {
+      this.snack.open(`Unmute failed: ${e?.message ?? 'error'}`, 'Dismiss', { duration: 4000 });
+    } finally {
+      this.setBusy('mute', false);
+    }
+  }
+
+  async onTest(): Promise<void> {
+    if (this.busy('test')) return;
+    this.setBusy('test', true);
+    this.snack.open(`Running tests for ${this.name}…`, '', { duration: 2000 });
+    try {
+      await this.api.runAppTest(this.name);
+      await this.loadTests();
+      const lr = this.latestRun();
+      const summary = lr ? `${lr.passed ?? '?'} / ${lr.total ?? '?'} passed` : 'done';
+      this.snack.open(`Tests: ${summary}`, '', { duration: 3000 });
+    } catch (e: any) {
+      this.snack.open(`Test run failed: ${e?.message ?? 'error'}`, 'Dismiss', { duration: 4000 });
+    } finally {
+      this.setBusy('test', false);
     }
   }
 

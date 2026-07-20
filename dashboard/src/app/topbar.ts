@@ -1,6 +1,10 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
+import { NavigationEnd, Router } from '@angular/router';
+import { filter } from 'rxjs/operators';
+import { Subscription } from 'rxjs';
 import { DaimonApi } from './daimon-api';
 import { ThemeToggleComponent } from './theme-toggle';
+import { contextForUrl, type NavContext } from './nav-model';
 
 const WS_KEY = 'daimon.workspace';
 const PROFILE_KEY = 'daimon.profile';
@@ -15,6 +19,23 @@ type MenuKey = 'ws' | 'profile' | null;
   imports: [ThemeToggleComponent],
   template: `
     <header class="dm-topbar">
+      <!-- Active-context breadcrumb (M156): group › page › app. The single
+           place the app states where you are, replacing per-page ad-hoc
+           titles. Derived from the URL via the shared nav model. -->
+      @if (context(); as c) {
+        <nav class="dm-context" aria-label="Breadcrumb">
+          @if (c.group) {
+            <span class="dm-context-group">{{ c.group }}</span>
+            <span class="dm-context-sep" aria-hidden="true">›</span>
+          }
+          <span class="dm-context-page" [class.dm-context-leaf]="!c.detail">{{ c.page }}</span>
+          @if (c.detail) {
+            <span class="dm-context-sep" aria-hidden="true">›</span>
+            <span class="dm-context-detail">{{ c.detail }}</span>
+          }
+        </nav>
+      }
+
       <div class="dm-popwrap">
         <button class="dm-chip" type="button" (click)="toggle('ws')" [title]="'Filter by workspace'"
                 aria-haspopup="true" [attr.aria-expanded]="openMenu() === 'ws'">
@@ -97,6 +118,20 @@ type MenuKey = 'ws' | 'profile' | null;
       min-height: 56px;
     }
     .dm-topbar-spacer { flex: 1; }
+    .dm-context {
+      display: inline-flex; align-items: center; gap: .375rem;
+      padding: 0 .5rem 0 0; margin-right: .25rem;
+      font: 500 .8125rem/1.25rem Roboto; color: var(--dm-color-fg-muted);
+      white-space: nowrap; min-width: 0;
+    }
+    .dm-context-group { color: var(--dm-color-fg-muted); }
+    .dm-context-sep { color: var(--dm-color-border-strong); }
+    .dm-context-page { color: var(--dm-color-fg); font-weight: 600; }
+    .dm-context-detail {
+      color: var(--dm-color-primary); font-weight: 600;
+      font-family: 'Roboto Mono', ui-monospace, monospace; font-size: .75rem;
+      overflow: hidden; text-overflow: ellipsis; min-width: 0;
+    }
     .dm-chip {
       display: inline-flex; align-items: center; gap: .5rem;
       padding: 6px 10px; border-radius: 999px;
@@ -180,6 +215,12 @@ type MenuKey = 'ws' | 'profile' | null;
     @media (max-width: 768px) {
       .dm-topbar { padding: 6px 8px; gap: .375rem; overflow-x: auto; scrollbar-width: none; }
       .dm-topbar::-webkit-scrollbar { display: none; }
+      /* Breadcrumb condenses to the leaf (page, or app on a detail route)
+         under 768px so the crowded topbar keeps the workspace/palette
+         controls reachable. */
+      .dm-context-group, .dm-context-sep { display: none; }
+      .dm-context-page:not(.dm-context-leaf) { display: none; }
+      .dm-context-detail { max-width: 8rem; }
       .dm-cmdk-label, .dm-kbd, .dm-conn-text { display: none; }
       .dm-cmdk { padding: 8px; }
       .dm-chip span:not(.material-symbols-outlined) { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -189,6 +230,11 @@ type MenuKey = 'ws' | 'profile' | null;
 export class TopbarComponent implements OnInit, OnDestroy {
   readonly api = inject(DaimonApi);
   private readonly host = inject(ElementRef);
+  private readonly router = inject(Router);
+  // Active-context breadcrumb (M156), derived from the URL after every
+  // navigation. null on an unknown path (no crumb rather than a wrong one).
+  readonly context = signal<NavContext | null>(null);
+  private navSub?: Subscription;
   workspace = signal<string | null>(null);
   profile = signal<string | null>(null);
   profiles = signal<string[]>([]);
@@ -208,12 +254,19 @@ export class TopbarComponent implements OnInit, OnDestroy {
     const d = localStorage.getItem(DENSITY_KEY);
     this.applyDensity(d === 'compact' ? 'compact' : 'comfortable');
     void this.loadProfiles();
+    // Active-context breadcrumb: seed from the current URL, then follow every
+    // completed navigation.
+    this.context.set(contextForUrl(this.router.url));
+    this.navSub = this.router.events
+      .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
+      .subscribe(e => this.context.set(contextForUrl(e.urlAfterRedirects)));
     // Stay in sync when other components (or the cwd auto-pick) update the
     // active workspace.
     window.addEventListener('daimon:workspace', this.onWorkspaceChanged);
   }
 
   ngOnDestroy(): void {
+    this.navSub?.unsubscribe();
     window.removeEventListener('daimon:workspace', this.onWorkspaceChanged);
   }
 

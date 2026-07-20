@@ -4,6 +4,28 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-07-21
+
+"Wayfinding" — part 2 of the UI redesign trilogy (M156–M161). v1.11 gave the dashboard a visual language; v1.12 gives it an **information architecture**. The pages had accreted release-by-release: a flat fourteen-entry nav rail in ship order, a `/` route that was just the apps list, an app-detail page that grew a why panel, tests, and timeline links with no layout, and a command palette that did navigation OR search depending on a `>` prefix. Navigation was never designed — you found features by luck. v1.12 groups routes by task (**observe / investigate / configure**), unifies the palette into one ranked list, turns `/` into a real overview that answers "how are things" before a click, and re-lays the app page as readable anchored sections — while holding the one hard rule: **every URL that worked yesterday still resolves tomorrow.** This release **recomposes existing endpoints** — no new HTTP endpoint, no new config key, no history migration, no new dependency, no frozen shape moved. **Migration: some URLs redirect (all listed in `RELEASE-v1.12.0.md`); nothing 404s.**
+
+### Changed
+
+- **The nav rail is grouped by task, not ship order (M156).** Fourteen destinations now sit under three labelled groups — **Observe** (Apps, Events, Logs, Timeline, Sessions), **Investigate** (Errors, History, Trends, Tests, Regressions, Report, Agents), **Configure** (Settings, Doctor) — defined once in `dashboard/src/app/nav-model.ts` and consumed by both the rail and the new topbar breadcrumb, so they can't drift. The keyboard-shortcuts help table mirrors the same groups.
+- **The apps list moved to `/apps`; `/` is now the overview home (M156/M158).** `/` composes existing endpoints into four widgets — status summary, needs-attention errors, test pass-rate, and a resource glance — each degrading independently to a note (a missing data source shows that widget's note, never a spinner forever). The `g a` chord and the palette's app entry retarget to `/apps`. Old `/` deep-links still resolve (to the overview); the group-chip filter now lives at `/apps?group=…`.
+- **The command palette is one unified, ranked list (M157).** Navigation, app jumps, actions, and history search merged into a single fuzzy-ranked list (exact-prefix > word-start > scattered, pure-function ranking unit-tested in `command-palette-helpers.ts`). The `>` prefix still forces search-only; plain typing matches commands and surfaces search hits beneath as they arrive. Recents (navigation only, never replayed actions) persist in localStorage and show on open. Palette actions grew to the app header set: start / stop / restart / mute / test. Fully keyboard-reachable with `aria-activedescendant`.
+- **The app-detail page is sectioned, not tabbed (M159).** `overview / errors / logs / tests / timeline / why` are now scroll-spy-highlighted sections with **stable `#anchors`** (`/apps/:name#errors`, `#logs`, `#tests`, `#timeline`, `#why`) — a deep-link contract that never renames. A consistent header action row (start/stop/restart/mute/test) matches the apps list and palette. The env panel folded into Overview; the compile-history spark became the Timeline section; a new Tests section recomposes `GET /api/tests`. Legacy `?tab=errors|logs|history|env|why` deep-links map to the corresponding section and still resolve. Removing the Material tabs dependency shrank the app-detail chunk.
+
+### Added
+
+- **`dashboard/src/app/nav-model.ts`** — the IA's single source of truth: the three task groups and a pure `contextForUrl` resolver, unit-tested in `nav-model.spec.ts`.
+- **Active-context breadcrumb** in the topbar (group › page › app), replacing per-page ad-hoc titles.
+- **`dashboard/e2e/route-audit.ts`** — a checked-in inventory of every URL shape the dashboard has ever exposed, driven by a generated **redirect test suite** (`redirects.spec.ts`) that asserts each one still resolves.
+- **Guided fresh-install empty states** on home, errors, tests, and timeline — each names what will appear and which command feeds it, instead of a blank table.
+
+### Notes
+
+- **No new HTTP endpoints, config keys, history migrations, or dependencies.** The redesign recomposes existing APIs; the daemon, CLI, and MCP surfaces are untouched. Deep-link back-compat is a gate: `redirects.spec.ts` drives the full audit map. A11y floor holds — axe zero serious/critical on every route at 1280 + 390px, keyboard specs extended to the grouped nav.
+
 ## [1.11.0] — 2026-07-21
 
 "Fresh Coat" — part 1 of the UI redesign trilogy (M150–M155). The dashboard had grown feature-by-feature for eight-plus versions, every page styled by analogy to its neighbours, and no release ever designed the whole: the color roles were Angular Material's system palette aliased one-to-one, radii ran 4–14px with no rationale, and per-page styles had drifted. v1.11 states a **visual language** in `DESIGN.md` — a designed OKLCH palette (cool-neutral surfaces, an iris brand accent, a four-hue semantic set), a rational radius scale (4·6·8·12·16), soft cool elevation, and a deliberate type scale — implements it entirely at the token layer (`dashboard/src/styles/tokens.css`), and restyles every component and page to it. **Visual only:** zero route, daemon, CLI, HTTP, or MCP change; no new config key; no history migration; no frozen shape moved. AA contrast is verified at the token level (every fg/bg pairing computed OKLCH → sRGB → WCAG; all pass 4.5:1 text / 3:1 non-text in both themes with margin). `DESIGN.md` is the contract v1.12 (information architecture) and v1.13 (TUI) inherit. **Migration: none.**

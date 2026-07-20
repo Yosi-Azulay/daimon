@@ -218,6 +218,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 
 ## Conventions
 
+- **Deep-link back-compat is a HARD RULE, and dashboard work RECOMPOSES — it never adds endpoints (M156–M161, v1.12).** Every URL shape the dashboard ever exposed must keep resolving — a redirect is fine, a 404 never is. That includes every `routes.ts` path, the v0.13 search/why deep-links, the v1.8 timeline query links (`/timeline?ts=&app=&kind=&session=`), the app-detail `?tab=` inputs, AND the app-detail **section anchors** `#overview/#errors/#logs/#tests/#timeline/#why` (once shipped, a fragment id never renames — the rule applies to fragments too). `dashboard/e2e/route-audit.ts` is the checked-in inventory of every shape and `redirects.spec.ts` drives it as a gate. The information architecture is defined ONCE in `dashboard/src/app/nav-model.ts` (the three task groups Observe/Investigate/Configure + the pure `contextForUrl` resolver) — the nav rail, the topbar breadcrumb, and the shortcuts-help table all consume it so they cannot drift. The home (`/`), app-detail, and command palette COMPOSE what `daimon-api.ts` already exposes — **nothing lands in `server.ts`**; no new HTTP endpoint, no new analytics, no new state, no new config key, no new dep. A dashboard feature that needs a new endpoint is out of scope, not a new route. The apps list lives at `/apps` since v1.12; `/` is the overview home (old `/` deep-links still resolve to it). The command palette is one fuzzy-ranked list (ranking is pure functions in `command-palette-helpers.ts`, unit-tested; `>` still forces search-only; recents are navigation-only, never replayed actions).
 - **The dashboard has a designed visual language, and it lives in tokens (M150, v1.11).** `DESIGN.md` (repo root) is the contract — principles + the full `--dm-*` token scale (color/spacing/type/radius/elevation/motion) for both themes and both densities, with the token-level AA table. Everything themable is a `--dm-*` custom property in `dashboard/src/styles/tokens.css`; a component that hard-codes a color is a **defect**, not a style choice. Contrast fixes land at the token layer, never in a component (the M89 discipline). Color roles are the language's own OKLCH values (authored as `light-dark()`), and tokens.css **re-points** the consumed `--mat-sys-*` Material roles onto them — so Material widgets track the language too; do not re-introduce raw `--mat-sys-*` reads in components. The one exception: `--dm-chart-*` ship as theme-split sRGB **hex** (not `light-dark()`/`oklch()`), because Chart.js reads them via `getComputedStyle` and its parser accepts only hex/rgb — see the tokens.css header. `DESIGN.md` is inherited by v1.12 (IA) and v1.13 (TUI); AA is a floor verified at the token level AND by the axe gate on every route at both viewports.
 - TS strict mode (3 tsconfig projects: root, dashboard/app, vscode-extension).
 - Tests run against compiled `dist/*.js`, not `src/*.ts` — always `npm run build` before `npm test`.
@@ -423,6 +424,38 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   resources, and prompts declare tiers at their source of truth
   (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
   `MCP_PROMPT_STABILITY`).
+
+## v1.12 highlights (what landed this release)
+
+- **Wayfinding (M156–M161)**: part 2 of the UI redesign trilogy — an
+  **information architecture** on top of v1.11's visual language. Dashboard-only
+  and recompose-only: zero new HTTP endpoint / config key / history migration /
+  dependency; no frozen shape moved; the daemon/CLI/MCP surfaces untouched.
+  **IA + nav model (M156)**: `dashboard/src/app/nav-model.ts` is the single
+  source of truth — three task groups (**Observe** Apps/Events/Logs/Timeline/
+  Sessions · **Investigate** Errors/History/Trends/Tests/Regressions/Report/
+  Agents · **Configure** Settings/Doctor) + a pure `contextForUrl` resolver
+  feeding the grouped rail, the topbar breadcrumb, and the shortcuts help.
+  Route audit map (`e2e/route-audit.ts`) + generated redirect suite
+  (`e2e/redirects.spec.ts`) enforce deep-link back-compat. **Palette 2.0
+  (M157)**: one fuzzy-ranked list unifying nav/apps/actions/search (ranking pure
+  + unit-tested; `>` still search-only; localStorage recents; keyboard-reachable
+  with `aria-activedescendant`; actions cover start/stop/restart/mute/test).
+  **Overview home (M158)**: `/` composes status + needs-attention + test
+  pass-rate + resource glance from existing endpoints, each widget degrading
+  independently to a note; the apps list moved to `/apps` (`g a` retargeted).
+  **Sectioned app detail (M159)**: tabs became scroll-spy-highlighted sections
+  with **stable `#anchors`** (`#overview/#errors/#logs/#tests/#timeline/#why` — a
+  deep-link contract), a consistent start/stop/restart/mute/test header row, env
+  folded into overview, a new Tests section over `GET /api/tests`; legacy `?tab=`
+  still maps to the right section (Material tabs dropped — the app-detail chunk
+  shrank). **Responsive + empty states (M160)**: 390px pass on the new IA;
+  guided fresh-install empty states on home/errors/tests/timeline. All new UI
+  surfaces `experimental`; deep-link back-compat + a11y floor verified
+  per-milestone. Backend suite **1007 tests**, dashboard vitest 130. New specs:
+  `nav-model.spec.ts`, `home-page-helpers.spec.ts`, palette ranking/recents in
+  `command-palette.spec.ts`; Playwright `redirects/palette/home/app-detail/
+  empty-states.spec.ts`.
 
 ## v1.11 highlights (what landed this release)
 

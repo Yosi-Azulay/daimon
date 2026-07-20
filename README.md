@@ -551,6 +551,56 @@ It uses a throwaway `DAIMON_HOME` and workspace and never touches your real
 notes — that is what upgrades a *fixture-verified* cell to *verified* for your
 platform.
 
+## Wayfinding (v1.12)
+
+Part 2 of the UI redesign trilogy. v1.11 gave the dashboard a visual language;
+v1.12 gives it an **information architecture** — you find features by looking,
+not by luck. Dashboard-only, recompose-only: no new endpoint, config key,
+history migration, or dependency, and **every URL that worked before still
+resolves** (a redirect is fine, a 404 never is — a checked-in route audit map
+drives a redirect test suite as a gate).
+
+### Navigation grouped by task
+
+The nav rail is three labelled groups instead of a flat list in ship order:
+
+- **Observe** — Apps · Events · Logs · Timeline · Sessions
+- **Investigate** — Errors · History · Trends · Tests · Regressions · Report · Agents
+- **Configure** — Settings · Doctor
+
+A topbar breadcrumb shows where you are (*group › page › app*). The apps list
+now lives at `/apps`; `/` is an **overview home** that answers "how are things"
+before a click — status, apps needing attention, test pass-rate, and a resource
+glance, each degrading independently to a note (a missing data source shows a
+note, never an endless spinner).
+
+### One command palette
+
+`⌘K` / `Ctrl+K` opens a single ranked list that unifies navigation, app jumps,
+actions (start / stop / restart / mute / test), and history search. Plain typing
+fuzzy-matches commands *and* surfaces search hits beneath as they arrive; a
+leading `>` still forces search-only. Recent selections show on open. Everything
+is reachable with arrows + Enter + Esc alone.
+
+### Keyboard shortcuts
+
+`g` then a key jumps to a page; `?` shows the full grouped list.
+
+| chord | page | chord | page |
+|---|---|---|---|
+| `g a` | Apps | `g e` | Errors |
+| `g v` | Events | `g h` | History |
+| `g l` | Logs | `g t` | Trends |
+| `g i` | Timeline | `g x` | Tests |
+| `g n` | Sessions | `g r` | Regressions |
+| `g s` | Settings | `g p` | Report |
+| `g d` | Doctor | `g g` | Agents |
+
+The app-detail page is now readable anchored sections —
+`/apps/:name#overview`, `#errors`, `#logs`, `#tests`, `#timeline`, `#why` (the
+fragment ids are a permanent deep-link contract) — with a consistent
+start/stop/restart/mute/test action row.
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:

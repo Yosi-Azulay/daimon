@@ -99,6 +99,7 @@ function seedLeakEpisodeFor(app: string): void {
 // a hidden nav label first and false-fail.
 const ROUTES: { path: string; expect: (page: Page) => Promise<void> }[] = [
   { path: '/',           expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
+  { path: '/apps',       expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
   { path: '/errors',     expect: async p => { await expect(p.locator('main').getByText(/error|warning/i).first()).toBeVisible(); } },
   { path: '/logs',       expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
   { path: '/config',     expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
@@ -160,14 +161,14 @@ test.describe('routes (tour pre-dismissed)', () => {
   // M73 — v0.11 drive additions: mission control across a mixed multi-framework
   // workspace (badges from the registry), and detail reachable from a card.
   test('mission control shows framework badges for a mixed workspace', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/apps');
     await expect(page.locator('dm-framework-badge').first()).toBeVisible({ timeout: 10_000 });
     const badges = await page.locator('dm-framework-badge .dm-fw-tag').allTextContents();
     expect(new Set(badges.filter(Boolean)).size, `distinct badges: ${badges.join(',')}`).toBeGreaterThanOrEqual(3);
   });
 
   test('app detail opens from a mission-control card', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/apps');
     await page.locator('article.c').first().click();
     await expect(page).toHaveURL(/\/apps\//);
     await expect(page.locator('h1, h2').first()).toBeVisible();
@@ -394,7 +395,7 @@ test.describe('routes (tour pre-dismissed)', () => {
     const target = apps[0].name;
     await request.post(`${baseURL}/api/apps/${target}/mute`, { data: { forMs: 3_600_000 } });
     try {
-      await page.goto('/');
+      await page.goto('/apps');
       const card = page.locator('article.c', { hasText: target }).first();
       await expect(card).toBeVisible({ timeout: 10_000 });
       await expect(card.locator('.mb')).toBeVisible();

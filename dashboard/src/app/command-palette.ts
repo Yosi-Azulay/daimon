@@ -3,20 +3,49 @@ import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { DaimonApi } from './daimon-api';
+import { NAV_ENTRIES } from './nav-model';
 import {
   flattenGroups,
   fmtHitAgo,
   groupHitsByKind,
   isSearchQuery,
+  parseRecents,
+  rankItems,
+  rememberRecent,
   routeForHit,
   searchQueryText,
+  type RecentEntry,
   type SearchHit,
   type SearchHitGroup,
 } from './command-palette-helpers';
 
-interface PaletteItem { kind: 'app' | 'nav' | 'action'; label: string; hint?: string; icon: string; run: () => void; }
+// One unified item model (M157). `route` present ⇒ it's a navigation and is
+// remembered in recents; actions have only `run` and are never replayed blind.
+interface PaletteItem {
+  kind: 'nav' | 'app' | 'action';
+  label: string;
+  keywords?: string;
+  hint?: string;
+  icon: string;
+  route?: string;
+  run: () => void;
+}
+
+// A rendered row: either a non-selectable group header or a selectable item /
+// search hit carrying its keyboard index in the unified list.
+type PaletteRow =
+  | { type: 'header'; label: string }
+  | { type: 'item'; item: PaletteItem; index: number }
+  | { type: 'hit'; hit: SearchHit; index: number };
+
+// The indexed (keyboard-selectable) subset — items and hits, never headers.
+type SelectableRow = Extract<PaletteRow, { index: number }>;
 
 const SEARCH_DEBOUNCE_MS = 250;
+// Plain (non-`>`) typing also searches history, but only once there's enough
+// to be meaningful — a single character would fire a noisy query on every app.
+const PLAIN_SEARCH_MIN = 2;
+const RECENTS_KEY = 'daimon.palette.recents';
 
 @Component({
   selector: 'dm-command-palette',
@@ -34,57 +63,57 @@ const SEARCH_DEBOUNCE_MS = 250;
                  (ngModelChange)="onQuery($event)"
                  placeholder="Jump to app, run action, navigate… (type &gt; to search logs/errors/events)"
                  autocomplete="off"
-                 spellcheck="false" />
+                 spellcheck="false"
+                 role="combobox"
+                 aria-controls="dm-palette-list"
+                 aria-expanded="true"
+                 [attr.aria-activedescendant]="activeId()" />
           <kbd>esc</kbd>
         </div>
-        @if (isSearchMode()) {
-          @if (searchFallback()) {
-            <div class="dm-palette-note">
-              <mat-icon fontSet="material-symbols-outlined">info</mat-icon>
-              LIKE fallback — full-text index unavailable, results may be less precise.
-            </div>
-          }
-          <ul class="dm-palette-list" #list>
-            @if (searchLoading() && flatSearchHits().length === 0) {
-              <li class="dm-palette-empty">Searching…</li>
-            } @else if (currentSearchText().length === 0) {
-              <li class="dm-palette-empty">Type to search logs, errors and events.</li>
-            } @else if (flatSearchHits().length === 0) {
-              <li class="dm-palette-empty">No matches.</li>
-            } @else {
-              @for (group of searchGroups(); track group.kind) {
-                <li class="dm-palette-group-label">{{ group.label }}</li>
-                @for (h of group.hits; track h.ref) {
-                  <li class="dm-palette-item dm-palette-hit"
-                      [class.active]="hitIndex(h) === active()"
-                      (mouseenter)="active.set(hitIndex(h))"
-                      (click)="selectHit(h)">
-                    <mat-icon fontSet="material-symbols-outlined">{{ hitIcon(h) }}</mat-icon>
-                    <span class="dm-palette-hit-app">{{ h.app }}</span>
-                    <span class="dm-palette-hit-snippet">{{ h.snippet }}</span>
-                    <span class="dm-palette-hit-ago">{{ fmtAgo(h.ts) }}</span>
-                  </li>
-                }
-              }
-            }
-          </ul>
-        } @else {
-          <ul class="dm-palette-list" #list>
-            @for (item of visible(); track $index; let i = $index) {
-              <li class="dm-palette-item"
-                  [class.active]="i === active()"
-                  (mouseenter)="active.set(i)"
-                  (click)="runIdx(i)">
-                <mat-icon fontSet="material-symbols-outlined">{{ item.icon }}</mat-icon>
-                <span class="dm-palette-label">{{ item.label }}</span>
-                @if (item.hint) { <span class="dm-palette-hint">{{ item.hint }}</span> }
-                <span class="dm-palette-kind">{{ item.kind }}</span>
-              </li>
-            } @empty {
-              <li class="dm-palette-empty">No matches.</li>
-            }
-          </ul>
+        @if (fallbackVisible()) {
+          <div class="dm-palette-note">
+            <mat-icon fontSet="material-symbols-outlined">info</mat-icon>
+            LIKE fallback — full-text index unavailable, results may be less precise.
+          </div>
         }
+        <ul class="dm-palette-list" id="dm-palette-list" role="listbox" #list>
+          @if (searchLoading() && flatSearchHits().length === 0 && rankedCommands().length === 0 && !isSearchMode()) {
+            <li class="dm-palette-empty">Searching…</li>
+          }
+          @for (row of rows(); track $index) {
+            @if (row.type === 'header') {
+              <li class="dm-palette-group-label" role="presentation">{{ row.label }}</li>
+            } @else if (row.type === 'item') {
+              <li class="dm-palette-item"
+                  role="option"
+                  [id]="'dm-pi-' + row.index"
+                  [attr.aria-selected]="row.index === active()"
+                  [class.active]="row.index === active()"
+                  (mouseenter)="active.set(row.index)"
+                  (click)="runIdx(row.index)">
+                <mat-icon fontSet="material-symbols-outlined">{{ row.item.icon }}</mat-icon>
+                <span class="dm-palette-label">{{ row.item.label }}</span>
+                @if (row.item.hint) { <span class="dm-palette-hint">{{ row.item.hint }}</span> }
+                <span class="dm-palette-kind">{{ row.item.kind }}</span>
+              </li>
+            } @else {
+              <li class="dm-palette-item dm-palette-hit"
+                  role="option"
+                  [id]="'dm-pi-' + row.index"
+                  [attr.aria-selected]="row.index === active()"
+                  [class.active]="row.index === active()"
+                  (mouseenter)="active.set(row.index)"
+                  (click)="runIdx(row.index)">
+                <mat-icon fontSet="material-symbols-outlined">{{ hitIcon(row.hit) }}</mat-icon>
+                <span class="dm-palette-hit-app">{{ row.hit.app }}</span>
+                <span class="dm-palette-hit-snippet">{{ row.hit.snippet }}</span>
+                <span class="dm-palette-hit-ago">{{ fmtAgo(row.hit.ts) }}</span>
+              </li>
+            }
+          } @empty {
+            <li class="dm-palette-empty">{{ emptyMessage() }}</li>
+          }
+        </ul>
       </div>
     }
   `,
@@ -172,57 +201,128 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   open = signal(false);
   query = '';
   active = signal(0);
+  readonly recents = signal<RecentEntry[]>([]);
 
   readonly searchHits = signal<SearchHit[]>([]);
   readonly searchFallback = signal(false);
   readonly searchLoading = signal(false);
-  // Depend only on the searchHits signal (not the plain `query` field) so
-  // these stay properly reactive — `query` is a plain field driven by
-  // ngModel, and a computed() that read it directly would never re-run
-  // (Angular computed() only invalidates on signal reads).
   readonly searchGroups = computed<SearchHitGroup[]>(() => groupHitsByKind(this.searchHits()));
   readonly flatSearchHits = computed<SearchHit[]>(() => flattenGroups(this.searchGroups()));
 
   private searchTimer?: ReturnType<typeof setTimeout>;
   private searchToken = 0;
 
-  private allItems = computed<PaletteItem[]>(() => {
+  // Every reachable command (nav destinations from the shared nav model, plus
+  // per-app jumps + actions). Recomputed when the app list changes.
+  private readonly allItems = computed<PaletteItem[]>(() => {
     const items: PaletteItem[] = [];
-    items.push({ kind: 'nav', icon: 'apps', label: 'Go to Apps', hint: 'g a', run: () => this.go('/') });
-    items.push({ kind: 'nav', icon: 'timeline', label: 'Go to Events', hint: 'g v', run: () => this.go('/events') });
-    items.push({ kind: 'nav', icon: 'terminal', label: 'Go to Logs', hint: 'g l', run: () => this.go('/logs') });
-    items.push({ kind: 'nav', icon: 'error', label: 'Go to Errors', hint: 'g e', run: () => this.go('/errors') });
-    items.push({ kind: 'nav', icon: 'trending_down', label: 'Go to Regressions', hint: 'g r', run: () => this.go('/regressions') });
-    items.push({ kind: 'nav', icon: 'medical_services', label: 'Go to Doctor', hint: 'g d', run: () => this.go('/doctor') });
-    items.push({ kind: 'nav', icon: 'tune', label: 'Go to Config', hint: 'g c', run: () => this.go('/config') });
-    items.push({ kind: 'nav', icon: 'query_stats', label: 'Go to History', hint: 'g h', run: () => this.go('/history') });
-    items.push({ kind: 'nav', icon: 'summarize', label: 'Go to Report', hint: 'g p', run: () => this.go('/report') });
+    for (const e of NAV_ENTRIES) {
+      items.push({ kind: 'nav', icon: e.icon, label: `Go to ${e.label}`, keywords: e.label, hint: e.shortcut, route: e.path, run: () => this.go(e.path) });
+    }
     for (const a of this.api.apps()) {
-      items.push({ kind: 'app', icon: 'app_registration', label: a.name, hint: a.status, run: () => this.go(`/apps/${a.name}`) });
-      items.push({ kind: 'action', icon: 'play_arrow', label: `Start ${a.name}`, run: () => void this.api.startApp(a.name) });
-      items.push({ kind: 'action', icon: 'restart_alt', label: `Restart ${a.name}`, run: () => void this.api.restartApp(a.name) });
-      items.push({ kind: 'action', icon: 'stop', label: `Stop ${a.name}`, run: () => void this.api.stopApp(a.name) });
-      items.push({ kind: 'action', icon: 'terminal', label: `Logs for ${a.name}`, run: () => this.go(`/logs/${a.name}`) });
+      items.push({ kind: 'app', icon: 'app_registration', label: a.name, keywords: 'open app ' + (a.status ?? ''), hint: a.status, route: `/apps/${a.name}`, run: () => this.go(`/apps/${a.name}`) });
+      items.push({ kind: 'action', icon: 'play_arrow', label: `Start ${a.name}`, keywords: a.name, run: () => void this.api.startApp(a.name) });
+      items.push({ kind: 'action', icon: 'restart_alt', label: `Restart ${a.name}`, keywords: a.name, run: () => void this.api.restartApp(a.name) });
+      items.push({ kind: 'action', icon: 'stop', label: `Stop ${a.name}`, keywords: a.name, run: () => void this.api.stopApp(a.name) });
+      // Mute reads live state: offer the opposite of what's set.
+      if (a.muted) {
+        items.push({ kind: 'action', icon: 'notifications_active', label: `Unmute ${a.name}`, keywords: a.name + ' notifications', run: () => void this.api.unmuteApp(a.name) });
+      } else {
+        items.push({ kind: 'action', icon: 'notifications_off', label: `Mute ${a.name}`, keywords: a.name + ' notifications', run: () => void this.api.muteApp(a.name) });
+      }
+      items.push({ kind: 'action', icon: 'science', label: `Test ${a.name}`, keywords: a.name + ' run tests', run: () => void this.api.runAppTest(a.name) });
+      items.push({ kind: 'action', icon: 'terminal', label: `Logs for ${a.name}`, keywords: a.name, run: () => this.go(`/logs/${a.name}`) });
     }
     return items;
   });
 
-  visible = computed<PaletteItem[]>(() => {
-    const q = this.query.trim().toLowerCase();
-    if (!q) return this.allItems().slice(0, 12);
-    return this.allItems().filter(i => i.label.toLowerCase().includes(q) || (i.hint ?? '').toLowerCase().includes(q)).slice(0, 30);
+  // Ranked command items for the current query. Empty query → recents are
+  // shown separately, so here we show a lean default slice (nav + apps only,
+  // no actions) to teach what's reachable without a wall of Start/Stop rows.
+  readonly rankedCommands = computed<PaletteItem[]>(() => {
+    if (this.isSearchMode()) return [];
+    const q = this.query.trim();
+    if (!q) {
+      return this.allItems().filter(i => i.kind !== 'action').slice(0, 8);
+    }
+    return rankItems(q, this.allItems()).slice(0, 20);
   });
 
-  // M102: a caller (e.g. the Logs page's "search" affordance) can pre-fill
-  // the palette straight into search mode via the event's `detail.query` —
-  // every other dispatcher (keyboard-shortcuts.ts's Ctrl+K, the topbar
-  // button) fires the bare event with no detail, which opens blank as before.
+  // Convert a stored recent to a runnable item.
+  private recentToItem(r: RecentEntry): PaletteItem {
+    return { kind: 'nav', icon: r.icon, label: r.label, route: r.route, run: () => this.go(r.route) };
+  }
+
+  // The fully assembled, index-annotated row list the template renders and the
+  // keyboard navigates. Group headers are interleaved but never indexed.
+  rows(): PaletteRow[] {
+    const out: PaletteRow[] = [];
+    let idx = 0;
+
+    if (this.isSearchMode()) {
+      for (const g of this.searchGroups()) {
+        out.push({ type: 'header', label: g.label });
+        for (const h of g.hits) out.push({ type: 'hit', hit: h, index: idx++ });
+      }
+      return out;
+    }
+
+    const q = this.query.trim();
+    if (!q) {
+      const rec = this.recents();
+      if (rec.length) {
+        out.push({ type: 'header', label: 'Recent' });
+        for (const r of rec) out.push({ type: 'item', item: this.recentToItem(r), index: idx++ });
+      }
+      const cmds = this.rankedCommands();
+      if (cmds.length) {
+        out.push({ type: 'header', label: 'Jump to' });
+        for (const it of cmds) out.push({ type: 'item', item: it, index: idx++ });
+      }
+      return out;
+    }
+
+    const cmds = this.rankedCommands();
+    if (cmds.length) {
+      out.push({ type: 'header', label: 'Commands' });
+      for (const it of cmds) out.push({ type: 'item', item: it, index: idx++ });
+    }
+    for (const g of this.searchGroups()) {
+      out.push({ type: 'header', label: g.label });
+      for (const h of g.hits) out.push({ type: 'hit', hit: h, index: idx++ });
+    }
+    return out;
+  }
+
+  private selectableRows(): SelectableRow[] {
+    return this.rows().filter((r): r is SelectableRow => r.type !== 'header');
+  }
+
+  selectableCount(): number {
+    return this.selectableRows().length;
+  }
+
+  activeId(): string | null {
+    return this.open() && this.selectableCount() ? 'dm-pi-' + this.active() : null;
+  }
+
+  emptyMessage(): string {
+    if (this.isSearchMode()) {
+      if (this.currentSearchText().length === 0) return 'Type to search logs, errors and events.';
+      if (this.searchLoading()) return 'Searching…';
+      return 'No matches.';
+    }
+    return 'No matches.';
+  }
+
+  fallbackVisible(): boolean {
+    return this.searchFallback() && (this.isSearchMode() || this.query.trim().length >= PLAIN_SEARCH_MIN);
+  }
+
   private listener = (e: Event) => this.openPalette((e as CustomEvent<{ query?: string }>).detail?.query);
 
   ngOnInit(): void {
     window.addEventListener('daimon:cmdk', this.listener);
-    // Tell the app shell we can hear cmdk now — it replays a first-open
-    // request that arrived before this @defer-mounted component existed.
     window.dispatchEvent(new CustomEvent('daimon:cmdk-ready'));
   }
   ngOnDestroy(): void {
@@ -230,9 +330,6 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     if (this.searchTimer) clearTimeout(this.searchTimer);
   }
 
-  // Remembers whatever had focus before the palette opened (M89) so close()
-  // can restore it — usually the topbar's "Jump to…" button or Ctrl+K
-  // whatever else was focused, but never assumed to be a specific element.
   private lastFocused: HTMLElement | null = null;
 
   openPalette(presetQuery?: string): void {
@@ -240,11 +337,10 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     this.open.set(true);
     this.query = presetQuery ?? '';
     this.active.set(0);
+    this.recents.set(parseRecents(localStorage.getItem(RECENTS_KEY)));
     this.resetSearch();
     setTimeout(() => {
       this.input?.nativeElement.focus();
-      // A preset query is set programmatically (no ngModelChange fires for
-      // it), so kick off search mode's debounce/fetch by hand.
       if (this.query) this.onQuery(this.query);
     }, 0);
   }
@@ -256,8 +352,6 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     this.lastFocused = null;
   }
 
-  // Minimal Tab focus trap (M89): keeps keyboard focus cycling within the
-  // dialog's focusable elements instead of escaping into the page behind it.
   private onTab(e: KeyboardEvent, host: HTMLElement): void {
     const focusable = Array.from(
       host.querySelectorAll<HTMLElement>('input, button, [href], [tabindex]:not([tabindex="-1"])'),
@@ -275,15 +369,20 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Plain methods (not computed()) since `query` is a plain ngModel-bound
-  // field, not a signal — the template re-evaluates these every change
-  // detection cycle, which is exactly what we want on every keystroke.
   isSearchMode(): boolean {
     return isSearchQuery(this.query);
   }
 
   currentSearchText(): string {
     return searchQueryText(this.query);
+  }
+
+  // The text sent to GET /api/search — the stripped `>` text in search mode,
+  // or the plain query (when long enough) so typing also surfaces history.
+  private effectiveSearchText(): string {
+    if (this.isSearchMode()) return this.currentSearchText();
+    const q = this.query.trim();
+    return q.length >= PLAIN_SEARCH_MIN ? q : '';
   }
 
   hitIcon(h: SearchHit): string {
@@ -294,19 +393,15 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     return fmtHitAgo(ts);
   }
 
-  hitIndex(h: SearchHit): number {
-    return this.flatSearchHits().indexOf(h);
-  }
-
   onQuery(_q: string): void {
     this.active.set(0);
     if (this.searchTimer) { clearTimeout(this.searchTimer); this.searchTimer = undefined; }
-    if (!this.isSearchMode() || !this.currentSearchText().trim()) {
+    const text = this.effectiveSearchText();
+    if (!text.trim()) {
       this.resetSearch();
       return;
     }
     this.searchLoading.set(true);
-    const text = this.currentSearchText();
     this.searchTimer = setTimeout(() => void this.runSearch(text), SEARCH_DEBOUNCE_MS);
   }
 
@@ -320,7 +415,7 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     const token = ++this.searchToken;
     try {
       const r = await this.api.search({ q: text, limit: 30 });
-      if (token !== this.searchToken) return; // a newer query superseded this one — drop the stale response
+      if (token !== this.searchToken) return; // superseded
       this.searchHits.set(r.hits);
       this.searchFallback.set(r.fallback);
     } finally {
@@ -329,13 +424,20 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   }
 
   runIdx(i: number): void {
-    if (this.isSearchMode()) {
-      const hit = this.flatSearchHits()[i];
-      if (hit) this.selectHit(hit);
+    const row = this.selectableRows().find(r => r.index === i);
+    if (!row) return;
+    if (row.type === 'hit') {
+      this.selectHit(row.hit);
       return;
     }
-    const item = this.visible()[i];
-    if (!item) return;
+    const item = row.item;
+    // Remember navigation selections (nav + app jumps) before closing —
+    // actions are never remembered (replaying "Stop web" blind is unsafe).
+    if (item.route) {
+      const next = rememberRecent(this.recents(), { label: item.label, route: item.route, icon: item.icon });
+      this.recents.set(next);
+      try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)); } catch {}
+    }
     this.close();
     item.run();
   }
@@ -356,16 +458,25 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
       if (dialog) this.onTab(e, dialog);
       return;
     }
-    const count = this.isSearchMode() ? this.flatSearchHits().length : this.visible().length;
+    const count = this.selectableCount();
     if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) {
       e.preventDefault();
       this.active.update(i => Math.min(count - 1, i + 1));
+      this.scrollActiveIntoView();
     } else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) {
       e.preventDefault();
       this.active.update(i => Math.max(0, i - 1));
+      this.scrollActiveIntoView();
     } else if (e.key === 'Enter') {
       e.preventDefault();
       this.runIdx(this.active());
     }
+  }
+
+  private scrollActiveIntoView(): void {
+    queueMicrotask(() => {
+      const el = (this.host.nativeElement as HTMLElement).querySelector<HTMLElement>('#dm-pi-' + this.active());
+      el?.scrollIntoView({ block: 'nearest' });
+    });
   }
 }

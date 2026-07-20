@@ -142,8 +142,8 @@ const DENSITY_BUCKETS = 48;
       <div class="dm-sr-only" role="status" aria-live="polite" aria-atomic="true">{{ announceText() }}</div>
 
       @if (filtered().length === 0 && !loading()) {
-        <dm-empty title="No events in window"
-                  hint="Widen the window or pick different kinds. Status / error / lint / bundle / task all live here."></dm-empty>
+        <dm-empty icon="view_timeline" title="No events in window"
+                  hint="Events appear as your apps start, compile, error, and run tests — status / error / lint / bundle / task all live here. Widen the window or pick different kinds if you expected some."></dm-empty>
       } @else {
         <cdk-virtual-scroll-viewport #viewport itemSize="44" class="dm-tl-viewport" tabindex="0"
                                      aria-label="Timeline events. Use arrow keys to move, Home and End to jump to the newest and oldest events, Enter to open details."

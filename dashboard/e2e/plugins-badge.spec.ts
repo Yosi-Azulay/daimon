@@ -25,7 +25,7 @@ async function withOverviewPlugins(page: import('@playwright/test').Page, plugin
 
 test('plugins badge shows active/total and flags non-active plugins', async ({ page }) => {
   await withOverviewPlugins(page, { total: 3, active: 2, nonActive: 1 });
-  await page.goto('/');
+  await page.goto('/apps');
   const badge = page.getByTestId('plugins-badge');
   await expect(badge).toBeVisible();
   await expect(badge).toContainText('2');
@@ -37,7 +37,7 @@ test('plugins badge shows active/total and flags non-active plugins', async ({ p
 
 test('all-active plugins render without the error accent', async ({ page }) => {
   await withOverviewPlugins(page, { total: 2, active: 2, nonActive: 0 });
-  await page.goto('/');
+  await page.goto('/apps');
   const badge = page.getByTestId('plugins-badge');
   await expect(badge).toBeVisible();
   await expect(badge).not.toHaveClass(/dm-total-error/);
@@ -45,14 +45,14 @@ test('all-active plugins render without the error accent', async ({ page }) => {
 
 test('badge absent when the daemon reports no plugin files', async ({ page }) => {
   await withOverviewPlugins(page, null);
-  await page.goto('/');
+  await page.goto('/apps');
   await page.waitForLoadState('networkidle').catch(() => {});
   await expect(page.getByTestId('plugins-badge')).toHaveCount(0);
 });
 
 test('axe: overview with the plugins badge has no serious/critical violations', async ({ page }) => {
   await withOverviewPlugins(page, { total: 3, active: 2, nonActive: 1 });
-  await page.goto('/');
+  await page.goto('/apps');
   await page.waitForLoadState('networkidle').catch(() => {});
   await expect(page.getByTestId('plugins-badge')).toBeVisible();
   const results = await new AxeBuilder({ page })

@@ -30,7 +30,7 @@ test.describe('named app groups', () => {
     const consoleErrors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
 
-    await page.goto('/');
+    await page.goto('/apps');
     const webChip = page.locator('.dm-group-chip-row .dm-chip', { hasText: 'web' });
     await expect(webChip).toBeVisible({ timeout: 10_000 });
     await expect(webChip).toHaveAttribute('aria-pressed', 'false');
@@ -61,7 +61,7 @@ test.describe('named app groups', () => {
 
   test('grouped sections render with proper headings when no chip filter is active', async ({ page }) => {
     test.skip(!seeded, 'no registry apps in the driven workspace, or daemon predates /api/groups');
-    await page.goto('/');
+    await page.goto('/apps');
     await expect(page.locator('.dm-group-chip-row')).toBeVisible({ timeout: 10_000 });
 
     const headings = page.locator('h2.dm-group-heading');
@@ -84,7 +84,7 @@ test.describe('named app groups', () => {
 
   test('group filter deep-links via ?group= and survives a reload', async ({ page }) => {
     test.skip(!seeded, 'no registry apps in the driven workspace, or daemon predates /api/groups');
-    await page.goto('/?group=web');
+    await page.goto('/apps?group=web');
     const webChip = page.locator('.dm-group-chip-row .dm-chip', { hasText: 'web' });
     await expect(webChip).toBeVisible({ timeout: 10_000 });
     await expect(webChip).toHaveAttribute('aria-pressed', 'true');
