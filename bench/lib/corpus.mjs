@@ -20,14 +20,32 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { repoRoot } from './daemonHarness.mjs';
 
-export const SEEDER_VERSION = 1;
+// Bump to invalidate every cached corpus. v2: anchored timestamps (see below).
+export const SEEDER_VERSION = 2;
 export const CORPUS_DIR = path.join(repoRoot, 'bench', '.corpus');
 
-// Fixed epoch so every seeded row lands on the same absolute timestamps on
-// every machine and every run — the alternative (Date.now()) would make the
-// corpus non-reproducible and every derived budget unfalsifiable.
-export const CORPUS_EPOCH = Date.UTC(2026, 0, 1, 0, 0, 0);
 export const CORPUS_SPAN_DAYS = 90;
+
+// How stale a cached corpus may get before it must be rebuilt.
+//
+// The corpus is ANCHORED so its newest rows land at "today" and it stretches 90
+// days back. This is not cosmetic: `why` and `context` query hardcoded
+// last-24h / last-7d windows, so a corpus pinned to a fixed calendar epoch
+// would go empty as soon as real time moved past it, and their budgets would be
+// certifying the speed of querying NOTHING. Anchoring keeps those windows
+// populated.
+//
+// Determinism is preserved where it matters: the anchor is an INPUT to
+// seedCorpus (the seeder itself never reads the clock), and every message,
+// app, level and row count is fixed-seed PRNG output. Two seeds with the same
+// anchor are byte-comparable; only the timestamp base moves between days.
+export const CORPUS_MAX_AGE_DAYS = 7;
+
+/** UTC midnight of the day `now` falls in — the anchor's stable reference. */
+export function anchorFor(now) {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
 
 // The searchable needles. Fixed strings at fixed densities so a search budget
 // measures a KNOWN hit count rather than whatever the RNG happened to produce.
@@ -82,13 +100,18 @@ function metaPath(scale) {
 }
 
 /** True when a cached corpus of this scale + seeder version is ready to reuse. */
-export function corpusReady(scale) {
+export function corpusReady(scale, now = Date.now()) {
   const db = corpusPath(scale);
   const meta = metaPath(scale);
   if (!fs.existsSync(db) || !fs.existsSync(meta)) return false;
   try {
     const m = JSON.parse(fs.readFileSync(meta, 'utf8'));
-    return m.seederVersion === SEEDER_VERSION && m.scale === scale && m.complete === true;
+    if (m.seederVersion !== SEEDER_VERSION || m.scale !== scale || m.complete !== true) return false;
+    // A corpus that has aged out no longer populates the last-24h / last-7d
+    // windows that `why` and `context` query, so reusing it would silently
+    // certify empty results. Rebuild instead.
+    const ageDays = (now - (m.anchorMs ?? 0)) / 86400_000;
+    return ageDays >= 0 && ageDays <= CORPUS_MAX_AGE_DAYS;
   } catch {
     return false;
   }
@@ -98,16 +121,18 @@ export function corpusReady(scale) {
  * Seed (or reuse) a corpus. Returns { dbPath, meta, seeded }.
  * `seeded` is false when a valid cache was reused.
  */
-export async function ensureCorpus(scale, { onProgress = () => {} } = {}) {
+export async function ensureCorpus(scale, { onProgress = () => {}, now = Date.now() } = {}) {
   const dbPath = corpusPath(scale);
-  if (corpusReady(scale)) {
+  if (corpusReady(scale, now)) {
     return { dbPath, meta: JSON.parse(fs.readFileSync(metaPath(scale), 'utf8')), seeded: false };
   }
   fs.mkdirSync(CORPUS_DIR, { recursive: true });
   // A partial corpus from an interrupted run must never be reused.
   for (const p of [dbPath, metaPath(scale)]) { try { fs.rmSync(p, { force: true }); } catch {} }
 
-  const meta = await seedCorpus(dbPath, scale, { onProgress });
+  // The clock is read HERE and passed in — the seeder stays pure so two seeds
+  // with the same anchor are identical.
+  const meta = await seedCorpus(dbPath, scale, { onProgress, anchorMs: anchorFor(now) });
   fs.writeFileSync(metaPath(scale), JSON.stringify(meta, null, 2) + '\n');
   return { dbPath, meta, seeded: true };
 }
@@ -117,14 +142,17 @@ export async function ensureCorpus(scale, { onProgress = () => {} } = {}) {
  * ensureCorpus so the determinism contract can be tested at a tiny scale in the
  * normal suite, against a temp dir, without touching the cached corpora.
  */
-export async function seedCorpus(dbPath, scale, { onProgress = () => {} } = {}) {
+export async function seedCorpus(dbPath, scale, { onProgress = () => {}, anchorMs } = {}) {
+  if (!Number.isFinite(anchorMs)) throw new Error('seedCorpus requires an explicit anchorMs — the seeder never reads the clock');
   const { History } = await import(pathToFileURL(path.join(repoRoot, 'dist', 'history.js')).href);
   const h = new History({ enabled: true, path: dbPath, retentionDays: 3650 });
   const t0 = performance.now();
   const comp = composition(scale);
   const rnd = mulberry32(0xda1de5ec);
   const spanMs = CORPUS_SPAN_DAYS * 86400_000;
-  const tsAt = frac => CORPUS_EPOCH + Math.floor(frac * spanMs);
+  // Newest rows land at the anchor (today's UTC midnight), oldest 90 days back.
+  const startMs = anchorMs - spanMs;
+  const tsAt = frac => startMs + Math.floor(frac * spanMs);
 
   // --- events -------------------------------------------------------------
   // Types mirror what a real install accumulates: mostly status churn, a fifth
@@ -257,7 +285,8 @@ export async function seedCorpus(dbPath, scale, { onProgress = () => {} } = {}) 
     scale,
     complete: true,
     composition: comp,
-    epoch: CORPUS_EPOCH,
+    anchorMs,
+    startMs,
     spanDays: CORPUS_SPAN_DAYS,
     needles: NEEDLES,
     seedMs: Math.round(performance.now() - t0),

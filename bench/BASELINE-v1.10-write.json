@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "release": "v1.10.0",
+  "scale": 1000000,
+  "corpus": {
+    "rows": {
+      "events": 1000180,
+      "log_lines": 2000000,
+      "compile_times": 50000,
+      "test_runs": 500,
+      "test_failures": 145,
+      "env_snapshots": 200,
+      "crashes": 100,
+      "resource_samples": 100000,
+      "events_fts": 1000180,
+      "log_fts": 2000000
+    },
+    "dbBytes": 639549440
+  },
+  "machineQuiet": true,
+  "machine": {
+    "before": {
+      "cpuRefMedianMs": 17.6,
+      "cpuRefMadRatio": 0.0325,
+      "systemBusyFraction": 0.3272,
+      "quiet": true,
+      "cores": 20,
+      "platform": "win32",
+      "nodeVersion": "v22.14.0"
+    },
+    "after": {
+      "cpuRefMedianMs": 16.8,
+      "cpuRefMadRatio": 0.0584,
+      "systemBusyFraction": 0.2402,
+      "quiet": true,
+      "cores": 20,
+      "platform": "win32",
+      "nodeVersion": "v22.14.0"
+    }
+  },
+  "fts": {
+    "ratio": 0.857,
+    "triggers": 2,
+    "insertTriggers": 0
+  },
+  "metrics": {
+    "event-ingest": {
+      "p50": 0.0003,
+      "p95": 0.0013,
+      "p99": 0.0022,
+      "max": 2.346,
+      "samples": 50000,
+      "peakQueue": 20000,
+      "finalDepth": 0,
+      "cpuRefMedianMs": 18.8,
+      "method": "50000 sequential recordEvent calls, per-call timing, flushed every 20k"
+    },
+    "logline-ingest": {
+      "p50": 0.0003,
+      "p95": 0.0009,
+      "p99": 0.0015,
+      "max": 3.436,
+      "samples": 100000,
+      "peakQueue": 20000,
+      "finalDepth": 0,
+      "cpuRefMedianMs": 16.3,
+      "method": "100000 sequential recordLogLine calls, per-call timing, flushed every 20k"
+    },
+    "retention-prune": {
+      "p50": 73,
+      "p95": 144.2,
+      "maxSliceMs": 325.7,
+      "totalMs": 19867.9,
+      "slices": 242,
+      "samples": 242,
+      "cpuRefMedianMs": 15.6,
+      "method": "retentionDays=30 over the 1000000-event, 90-day corpus (~2/3 eligible); budgeted figure is the p95 SINGLE synchronous slice, not the total"
+    }
+  }
+}

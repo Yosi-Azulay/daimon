@@ -123,21 +123,36 @@ test('probeMachine reports both quietness signals and a verdict', async () => {
 // Corpus determinism — the contract that makes every scale budget comparable
 // ---------------------------------------------------------------------------
 
-test('corpus: two seeds of the same scale are row-for-row identical (fixed-seed PRNG)', async () => {
+test('corpus: two seeds with the same anchor are row-for-row identical (fixed-seed PRNG)', async () => {
   const { seedCorpus, countRows } = await import('../bench/lib/corpus.mjs');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'daimon-corpus-det-'));
+  const anchorMs = Date.UTC(2026, 5, 1);
   try {
     const a = path.join(tmp, 'a.db');
     const b = path.join(tmp, 'b.db');
-    const metaA = await seedCorpus(a, 2000);
-    const metaB = await seedCorpus(b, 2000);
+    const metaA = await seedCorpus(a, 2000, { anchorMs });
+    const metaB = await seedCorpus(b, 2000, { anchorMs });
     assert.deepEqual(metaA.rows, metaB.rows, 'row census must be identical across seeds');
     assert.deepEqual(metaA.composition, metaB.composition);
-    assert.equal(metaA.epoch, metaB.epoch, 'a fixed epoch, never Date.now()');
+    assert.equal(metaA.startMs, metaB.startMs, 'the same anchor must produce the same time base');
     assert.deepEqual(countRows(a), countRows(b));
   } finally {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
+});
+
+test('corpus: the anchor is an INPUT — seedCorpus refuses to invent one', async () => {
+  const { seedCorpus } = await import('../bench/lib/corpus.mjs');
+  await assert.rejects(() => seedCorpus('unused.db', 10), /requires an explicit anchorMs/);
+});
+
+test('corpus: a stale cached corpus is rejected — aged-out data empties the why/context windows', async () => {
+  const { corpusReady, CORPUS_MAX_AGE_DAYS } = await import('../bench/lib/corpus.mjs');
+  // No corpus on disk for this absurd scale, so this also pins the "missing
+  // means not ready" branch; the age arithmetic is asserted below it.
+  assert.equal(corpusReady(-1), false);
+  assert.ok(CORPUS_MAX_AGE_DAYS > 0 && CORPUS_MAX_AGE_DAYS <= 30,
+    'the staleness window must be short enough that last-7d queries still hit data');
 });
 
 test('corpus: composition ratios are scale-invariant, so 100k and 1M are the same shape', async () => {
@@ -149,11 +164,18 @@ test('corpus: composition ratios are scale-invariant, so 100k and 1M are the sam
   }
 });
 
-test('corpus: the seeder never calls Date.now() or Math.random() — determinism would break', () => {
+test('corpus: seedCorpus itself never reads the clock or Math.random()', () => {
   const src = fs.readFileSync(path.join(repoRoot, 'bench', 'lib', 'corpus.mjs'), 'utf8');
-  const code = src.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.ok(!/Date\.now\(\)/.test(code), 'Date.now() in the seeder makes the corpus unreproducible');
-  assert.ok(!/Math\.random\(\)/.test(code), 'Math.random() in the seeder makes the corpus unreproducible');
+  const start = src.indexOf('export async function seedCorpus');
+  assert.ok(start > 0, 'seedCorpus must exist');
+  // Up to the next top-level export — the seeder body only.
+  const rest = src.slice(start + 1);
+  const end = rest.indexOf('\nexport ');
+  const body = (end === -1 ? rest : rest.slice(0, end))
+    .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/Date\.now\(\)/.test(body), 'Date.now() inside seedCorpus makes the corpus unreproducible — the anchor is a parameter');
+  assert.ok(!/Math\.random\(\)/.test(body), 'Math.random() inside seedCorpus makes the corpus unreproducible');
+  assert.ok(!/new Date\(\)/.test(body), 'new Date() inside seedCorpus makes the corpus unreproducible');
 });
 
 // ---------------------------------------------------------------------------

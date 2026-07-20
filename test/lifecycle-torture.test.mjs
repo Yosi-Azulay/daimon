@@ -206,9 +206,29 @@ if (!lockPath().startsWith(fakeHome)) {
     try {
       await waitForDaemon(apiPort);
       const d2 = spawnDaemon(home, apiPort);
+      // Contention-derived liveness bound (M91 discipline, widened in v1.10).
+      //
+      // This asserts the loser EXITS rather than hangs — it is not a speed
+      // budget, so the bound must track the machine. On Windows the EADDRINUSE
+      // forensics shell out to PowerShell (Get-NetTCPConnection +
+      // Get-CimInstance): ~2s when measured on an idle box, but the spawn is
+      // scheduler-bound and balloons when 20 test files run in parallel, which
+      // made a fixed 20s wait fail under full-suite load while passing alone.
+      // Scale by a CPU reference so a loaded machine gets proportionally
+      // longer, capped — a genuine hang never exits and still fails.
+      const cpuRefMs = (() => {
+        const s = performance.now();
+        let x = 0;
+        for (let i = 0; i < 4_000_000; i++) x = (x * 31 + i) % 1000003;
+        if (x === -1) throw new Error('unreachable');
+        return performance.now() - s;
+      })();
+      const QUIET_REF_MS = 18;  // measured idle cost of the reference above
+      const waitMs = Math.min(120_000, Math.max(20_000, 20_000 * (cpuRefMs / QUIET_REF_MS)));
       const t0 = Date.now();
-      while (d2.child.exitCode === null && Date.now() - t0 < 20_000) await sleep(250);
-      assert.notEqual(d2.child.exitCode, null, 'second daemon must exit, not hang');
+      while (d2.child.exitCode === null && Date.now() - t0 < waitMs) await sleep(250);
+      assert.notEqual(d2.child.exitCode, null,
+        `second daemon must exit, not hang (waited ${Math.round(waitMs)}ms; cpuRef ${cpuRefMs.toFixed(1)}ms vs ${QUIET_REF_MS}ms quiet)`);
       assert.notEqual(d2.child.exitCode, 0, 'second daemon exits non-zero');
       const err = d2.stderr();
       assert.match(err, /EADDRINUSE|failed to bind/i, 'stderr names the bind failure');

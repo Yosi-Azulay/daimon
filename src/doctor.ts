@@ -53,9 +53,35 @@ export const DOCTOR_COVERAGE: DoctorCoverageRow[] = [
   { failure: 'Plugin failed to load, or was disabled after a hook threw', kind: 'rule', coverage: '`plugin-load-error: <file>` (M118, v1.5) — advise-only: names the captured error and the remedy (fix or remove the file, then `daimon daemon restart`). Doctor never deletes or edits plugin files; a hook throw disables the plugin for the session with one `plugin-error` self-event (M117 crash isolation), never a daemon-down. `daimon plugins` is the detail view.' },
 ];
 
-export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opts?: { plugins?: boolean }): Promise<{ ok: boolean; checks: Check[] }> {
+export async function runDoctor(
+  config: AppmanConfig,
+  apps: DiscoveredApp[],
+  opts?: { plugins?: boolean; historyHealth?: boolean },
+): Promise<{ ok: boolean; checks: Check[] }> {
   const checks: Check[] = [];
   const appNames = new Set(apps.map(a => a.name));
+
+  // ONE history handle for the whole sweep (M146, v1.10).
+  //
+  // Six separate `new History(...)` opens used to happen per run, and each one
+  // paid an O(database-size) `PRAGMA integrity_check`: measured at 8.5s per
+  // open on the 1M-event corpus, so a single `daimon doctor` spent ~51s inside
+  // SQLite verifying the same file six times. Opened lazily (the first rule
+  // that needs it wins) and closed once at the end.
+  //
+  // `verify: 'skip'` is correct rather than a shortcut: doctor runs its OWN
+  // explicit health check below, so having the constructor verify as well was
+  // always duplicated work.
+  let sharedHistory: History | null = null;
+  let historyOpened = false;
+  const history = (): History | null => {
+    if (!historyOpened) {
+      historyOpened = true;
+      try { sharedHistory = new History(config.history, { verify: 'skip' }); } catch { sharedHistory = null; }
+    }
+    return sharedHistory;
+  };
+  const closeHistory = () => { try { sharedHistory?.close(); } catch {} };
 
   // Active state directory (M79): relocatable via DAIMON_HOME.
   checks.push({
@@ -173,14 +199,18 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
     }
   }
 
-  if (config.history.enabled) {
+  // The deep health check. `historyHealth: false` lets a REQUEST path (the
+  // `why` route) run doctor's per-app rules without paying for it — quick_check
+  // is still O(database size) (5.9s on the 610MB corpus), and `why` filters
+  // this finding out of its response anyway.
+  if (config.history.enabled && opts?.historyHealth !== false) {
     let ok = false;
     let detail: string | undefined;
     try {
-      const h = new History(config.history);
+      const h = history();
+      if (!h) throw new Error('history db could not be opened');
       ok = h.quickCheck();
       const archived = h.archivedCorruptDbPath();
-      h.close();
       if (!ok) detail = 'quick_check failed';
       else if (archived) detail = `rebuilt fresh; previous db archived at ${archived}`;
     } catch (err: any) {
@@ -214,12 +244,12 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
   // Also reports orphaned-app cleanups (M55) from the last 24h.
   if (config.history.enabled) {
     try {
-      const h = new History(config.history);
+      const h = history();
+      if (!h) throw new Error('history db unavailable');
       const since = Date.now() - 7 * 24 * 60 * 60_000;
       const events = h.queryEvents({ since, type: 'status', limit: 20_000 });
       const orphanCleanups = h.queryEvents({ app: '__daemon__', since: Date.now() - 24 * 60 * 60_000, limit: 500 })
         .filter(e => (e.message || '').startsWith('orphaned app detached'));
-      h.close();
       checks.push({
         name: 'orphaned-app-cleanup',
         ok: true,
@@ -244,9 +274,9 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
   // restartStorm.perHour within the last hour, from the crashes table.
   if (config.history.enabled) {
     try {
-      const h = new History(config.history);
+      const h = history();
+      if (!h) throw new Error('history db unavailable');
       const crashes = h.queryCrashes({ since: Date.now() - 3600_000, limit: 1000 });
-      h.close();
       const threshold = config.restartStorm?.perHour ?? 20;
       const byApp = new Map<string, { count: number; exits: Map<string, number> }>();
       for (const c of crashes) {
@@ -279,11 +309,11 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
   // spike, mute it, or stop the app.
   if (config.history.enabled) {
     try {
-      const h = new History(config.history);
+      const h = history();
+      if (!h) throw new Error('history db unavailable');
       const since = Date.now() - 6 * 3600_000;
       const storms = h.queryEvents({ since, type: 'log-storm', limit: 1000 });
       const ends = h.queryEvents({ since, type: 'log-storm-end', limit: 1000 });
-      h.close();
       const lastEnd = new Map<string, number>();
       for (const e of ends) lastEnd.set(e.app, Math.max(lastEnd.get(e.app) ?? 0, e.ts));
       let anyLogStorm = false;
@@ -316,11 +346,11 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
   // ADVISE-ONLY, no auto-fix exists: warn-never-kill extends to doctor.
   if (config.history.enabled) {
     try {
-      const h = new History(config.history);
+      const h = history();
+      if (!h) throw new Error('history db unavailable');
       const since = Date.now() - 6 * 3600_000;
       const storms = h.queryEvents({ since, type: 'cpu-storm', limit: 1000 });
       const statuses = h.queryEvents({ since, type: 'status', limit: 2000 });
-      h.close();
       const lastStart = new Map<string, number>();
       for (const ev of statuses) {
         if (ev.to_state === 'starting') lastStart.set(ev.app, Math.max(lastStart.get(ev.app) ?? 0, ev.ts));
@@ -354,7 +384,8 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
   // resolves on disk. Suggest-only — never fails doctor, never auto-fixed.
   if (config.history.enabled) {
     try {
-      const h = new History(config.history);
+      const h = history();
+      if (!h) throw new Error('history db unavailable');
       for (const a of apps) {
         const row = h.queryEnvSnapshots({ app: a.name, limit: 1 })[0];
         if (!row) continue;
@@ -371,7 +402,6 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
           }
         } catch {}
       }
-      h.close();
     } catch {}
   }
   for (const [appName, files] of Object.entries(config.envFiles ?? {})) {
@@ -450,6 +480,8 @@ export async function runDoctor(config: AppmanConfig, apps: DiscoveredApp[], opt
   } catch { /* plugins must never break doctor's built-in rules */ }
 
   checks.push({ name: 'agent token footprint', ok: true, detail: tokenFootprint(apps) });
+
+  closeHistory();
 
   const ok = checks.every(c => c.ok);
   return { ok, checks };

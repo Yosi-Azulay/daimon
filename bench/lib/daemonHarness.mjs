@@ -37,16 +37,43 @@ export async function freePort() {
  * `dbPath` optionally points history at a pre-seeded corpus instead of a
  * fresh DB (the M146 1M corpus reuse path).
  */
-export function makeInstall({ apiPort, dbPath = null, retentionDays = 3650 } = {}) {
+export function makeInstall({ apiPort, dbPath = null, retentionDays = 3650, apps = [] } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'daimon-bench-home-'));
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'daimon-bench-ws-'));
+  // searchRoots point at the APP DIRECTORIES, not their parent — discovery
+  // matches a framework profile against the root itself. Pointing at the
+  // parent yields "no serveable projects discovered" and an empty registry,
+  // which would silently turn every per-app bench into a 404 measurement.
+  const appDirs = seedWorkspaceApps(workspace, apps);
   const config = {
-    searchRoots: [workspace],
+    searchRoots: appDirs.length ? appDirs : [workspace],
     apiPort,
     history: { enabled: true, retentionDays, ...(dbPath ? { path: dbPath } : {}) },
   };
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(config, null, 2));
-  return { home, workspace, config };
+  return { home, workspace, config, apps: appDirs.map(d => path.basename(d)) };
+}
+
+/**
+ * Populate a bench workspace with discoverable stub apps.
+ *
+ * `why` and `context` are per-APP routes: they 404 unless the registry knows
+ * the name. A corpus full of history for `web`/`api` benches nothing if the
+ * daemon booted against an empty workspace, so the workspace is given one
+ * package.json stub per corpus app. The stubs declare a `dev` script but are
+ * NEVER started — discovery only needs the marker file to register the name.
+ */
+export function seedWorkspaceApps(workspace, appNames) {
+  const dirs = [];
+  for (const name of appNames) {
+    const dir = path.join(workspace, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name, private: true, scripts: { dev: 'node -e "setInterval(()=>{},1e9)"' },
+    }, null, 2));
+    dirs.push(dir);
+  }
+  return dirs;
 }
 
 export function cleanupInstall(inst) {

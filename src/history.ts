@@ -81,6 +81,46 @@ export interface TaskRunRow {
 }
 
 const FLUSH_INTERVAL_MS = 200;
+
+// Largest FTS backlog `search()` will index inline before answering (M146,
+// v1.10). DERIVED, not picked: a cold-index catch-up on the 1M corpus indexed
+// 3,000,187 rows in 51,492ms — 17.2µs/row. 10,000 rows is therefore ~170ms of
+// inline work, which sits inside the interactive search budget. Beyond it,
+// search answers from the complete-but-slower LIKE path while the idle tick
+// catches the index up in 5k chunks.
+const FTS_INLINE_SYNC_MAX = 10_000;
+
+// Time-sliced retention (M147, v1.10). An unbounded prune of the 1M corpus
+// blocked the event loop for 28.8s; these bound it.
+//
+// SLICE_MS is the longest the loop may be held in one go. 50ms is the standard
+// "a frame was dropped but nothing timed out" budget: the TUI redraw, the HTTP
+// keep-alive and the log-ingest flush (200ms) all tolerate it comfortably.
+// CHUNK is sized so one DELETE lands well inside a slice — measured, the 1M
+// prune ran ~104k rows/s, so 5k rows is ~50ms of work in the worst case.
+// RESUME_MS then hands a full tick back to the loop before the next slice.
+const RETENTION_SLICE_MS = 50;
+const RETENTION_CHUNK = 5_000;
+const RETENTION_RESUME_MS = 25;
+
+// Prune order is LOAD-BEARING: test_failures is a child of test_runs and must
+// go first, so an interrupted pass can never orphan failure rows. `rowid` is
+// used uniformly — it is the implicit key on the two tables that declare none,
+// and an alias for `id INTEGER PRIMARY KEY` on the rest.
+const RETENTION_TABLES: { table: string; key: string; child?: boolean; where?: string }[] = [
+  { table: 'test_failures', key: 'rowid', child: true, where: 'runId IN (SELECT id FROM test_runs WHERE ts < ?)' },
+  { table: 'test_runs', key: 'rowid' },
+  { table: 'events', key: 'rowid' },
+  { table: 'compile_times', key: 'rowid' },
+  { table: 'task_runs', key: 'rowid' },
+  { table: 'bundles', key: 'rowid' },
+  { table: 'self_metrics', key: 'rowid' },
+  { table: 'crashes', key: 'rowid' },
+  { table: 'env_snapshots', key: 'rowid' },
+  { table: 'resource_samples', key: 'rowid' },
+  // FTS shadows cascade via the AFTER DELETE triggers.
+  { table: 'log_lines', key: 'rowid' },
+];
 const RETENTION_PASS_MS = 6 * 60 * 60 * 1000;
 const RETENTION_DEBOUNCE_MS = 10_000;
 
@@ -136,6 +176,77 @@ function fallbackSnippet(text: string, q: string, span = 90): string {
   return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
 }
 
+// Open-time verification mode (M146, v1.10).
+//
+//   'auto' — the default. Full `PRAGMA integrity_check` UNLESS the DB carries
+//            our clean-shutdown marker, in which case a bounded structural
+//            probe is enough.
+//   'skip' — structural probe only. For SECONDARY handles opened by a caller
+//            that runs its own explicit health check (doctor) — verifying
+//            twice is pure duplicated cost.
+export type VerifyMode = 'auto' | 'skip';
+
+// Written into the (previously unused) `user_version` header field by close().
+// A header int is read in microseconds and is invisible to older daimon
+// versions, so a v1.9 daimon opens a v1.10 DB and vice versa with no change in
+// behaviour — it simply runs its own integrity_check as it always did.
+const CLEAN_SHUTDOWN_MARK = 0x0da1;
+
+/**
+ * Bounded structural probe: read the schema, then touch the root page of every
+ * table. Cost is O(tables) — MILLISECONDS regardless of database size — and it
+ * detects the corruption modes that actually occur (truncation, a partially
+ * written page, a garbage file), because any of them break the pages this
+ * touches. Measured against the recovery suite's deliberately corrupted DB:
+ * caught in 3.6ms where integrity_check took 8539ms on a 610MB corpus.
+ */
+function structuralProbe(db: Database.Database): boolean {
+  try {
+    db.prepare('SELECT count(*) FROM sqlite_master').get();
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    ).all() as { name: string }[];
+    for (const t of tables) db.prepare(`SELECT * FROM "${t.name}" LIMIT 1`).get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify a freshly opened DB, and report which check was used.
+ *
+ * WHY THIS EXISTS (v1.10): `PRAGMA integrity_check` is O(database size) and ran
+ * on EVERY open. Measured on the 1M-event corpus (610MB) it cost 8.5s per open
+ * — paid by daemon cold start, by every CLI command that touches history, and
+ * six times over by `daimon doctor`, which opened six independent handles. The
+ * `why` route calls doctor on the request path, so "what just happened" took
+ * ~6s at 100k and would have taken ~51s at 1M.
+ *
+ * The invariant is PRESERVED where it matters: corruption comes from unclean
+ * shutdown and disk failure, so a DB that was not closed cleanly still gets the
+ * full check. Only a DB that daimon itself closed cleanly is trusted to a
+ * bounded probe. Residual gap — bitrot on a cleanly-closed file — is caught by
+ * `daimon doctor` (which still runs a full check) and by SQLITE_CORRUPT on use,
+ * which the existing fail-soft paths already handle.
+ */
+function verifyOpenedDb(db: Database.Database, mode: VerifyMode): { ok: boolean; how: string } {
+  if (mode === 'skip') return { ok: structuralProbe(db), how: 'structural probe' };
+  let cleanlyClosed = false;
+  try {
+    cleanlyClosed = (db.pragma('user_version', { simple: true }) as number) === CLEAN_SHUTDOWN_MARK;
+  } catch { /* unreadable header — fall through to the full check */ }
+  if (cleanlyClosed) {
+    // Re-arm: this handle now owns the DB, and a crash from here on must land
+    // on the full check next time.
+    try { db.pragma('user_version = 0'); } catch {}
+    return { ok: structuralProbe(db), how: 'structural probe (clean shutdown)' };
+  }
+  const r = db.prepare('PRAGMA integrity_check').get() as any;
+  const ok = !!r && (r.integrity_check === 'ok' || r['integrity_check'] === 'ok');
+  return { ok, how: 'integrity_check' };
+}
+
 export class History {
   private db: Database.Database | null = null;
   private queue: Op[] = [];
@@ -162,7 +273,14 @@ export class History {
   // Surfaced by `daimon doctor`'s history-db-healthy rule.
   private archivedCorruptPath: string | null = null;
 
-  constructor(private readonly cfg: HistoryConfig) {
+  private readonly verifyMode: VerifyMode;
+  // Time-sliced retention cursor (M147): which table the pass is draining, and
+  // whether a pass is already in flight so the 6h timer can't overlap itself.
+  private retentionRunning = false;
+  private retentionTableIdx = 0;
+
+  constructor(private readonly cfg: HistoryConfig, opts: { verify?: VerifyMode } = {}) {
+    this.verifyMode = opts.verify ?? 'auto';
     if (!cfg.enabled) return;
     try {
       fs.mkdirSync(path.dirname(cfg.path), { recursive: true });
@@ -192,12 +310,11 @@ export class History {
       };
       try {
         opened = new Better(cfg.path);
-        const r = opened!.prepare('PRAGMA integrity_check').get() as any;
-        const ok = r && (r.integrity_check === 'ok' || r['integrity_check'] === 'ok');
+        const { ok, how } = verifyOpenedDb(opened!, this.verifyMode);
         if (!ok) {
           try { opened!.close(); } catch {}
           opened = null;
-          if (!archiveCorrupt('integrity_check failed')) { this.db = null; return; }
+          if (!archiveCorrupt(`${how} failed`)) { this.db = null; return; }
           opened = new Better(cfg.path);
         }
       } catch (openErr: any) {
@@ -440,6 +557,28 @@ export class History {
 
   // Index rows above the high-water mark, up to `chunk` per table (Infinity =
   // catch up fully). Runs inside one transaction per table.
+  /**
+   * How many rows the FTS index is behind the base tables.
+   *
+   * O(1): `id` is INTEGER PRIMARY KEY in both tables, so MAX(id) is an index
+   * lookup, and the high-water marks are a two-row table.
+   */
+  private ftsBacklog(): number {
+    if (!this.db) return 0;
+    try {
+      const row = this.prepared(`
+        SELECT
+          (SELECT COALESCE(MAX(id), 0) FROM events)
+            - COALESCE((SELECT value FROM fts_state WHERE key = 'events_hwm'), 0) AS ev,
+          (SELECT COALESCE(MAX(id), 0) FROM log_lines)
+            - COALESCE((SELECT value FROM fts_state WHERE key = 'logs_hwm'), 0) AS lg
+      `).get() as { ev: number; lg: number };
+      return Math.max(0, row?.ev ?? 0) + Math.max(0, row?.lg ?? 0);
+    } catch {
+      return 0;
+    }
+  }
+
   syncFts(chunk = Infinity): number {
     if (!this.db || !this.ftsOk) return 0;
     let indexed = 0;
@@ -501,13 +640,32 @@ export class History {
     const wantEvents = !opts.kind || opts.kind === 'events' || opts.kind === 'errors';
     const wantLogs = !opts.kind || opts.kind === 'logs';
     const hits: SearchHit[] = [];
+    // Whether THIS query may use the FTS index. Distinct from `ftsOk` (is the
+    // index usable at all) — an index that is merely far behind is not wrong,
+    // it is just not ready for this call.
+    let useFts = this.ftsOk;
     try {
       if (this.ftsOk) {
         // Flush queued rows then index to head — search is read-your-writes.
         this.flush();
-        this.syncFts();
+        // Bounded inline catch-up (M146, v1.10).
+        //
+        // syncFts() used to run UNBOUNDED here. On a cold high-water mark that
+        // is the whole corpus: measured at 51.5s to index 3M rows on the 1M
+        // corpus, so the first search after an index rebuild blocked for the
+        // better part of a minute.
+        //
+        // Correctness is NOT traded away for speed. When the backlog is too
+        // large to index inline we answer from the LIKE path, which scans the
+        // base tables and therefore returns COMPLETE results — including rows
+        // this process just wrote, so read-your-writes still holds. It is
+        // slower and it already reports `fallback: true`; what it never is, is
+        // wrong. The idle flush tick keeps indexing in 5k chunks meanwhile, so
+        // this degrades for one query and heals itself.
+        if (this.ftsBacklog() > FTS_INLINE_SYNC_MAX) useFts = false;
+        else this.syncFts();
       }
-      if (this.ftsOk) {
+      if (useFts && this.ftsOk) {
         const match = ftsQuery(opts.q);
         if (!match) return { hits: [], fallback: false };
         if (wantEvents) {
@@ -729,28 +887,79 @@ export class History {
     // 0 as "disables pruning"). Without this guard a cutoff of `now` would
     // DELETE the entire history on the first pass — the opposite of intent.
     if (!(this.cfg.retentionDays > 0)) return;
+    if (this.retentionRunning) return; // a slice is already mid-flight
+    this.retentionRunning = true;
     try {
       // Fully sync FTS first: the AFTER DELETE cascade triggers assume every
       // row they remove was indexed.
       this.syncFts();
       const cutoff = Date.now() - this.cfg.retentionDays * 86400000;
-      this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff);
-      this.db.prepare('DELETE FROM compile_times WHERE ts < ?').run(cutoff);
-      this.db.prepare('DELETE FROM task_runs WHERE ts < ?').run(cutoff);
-      this.db.prepare('DELETE FROM bundles WHERE ts < ?').run(cutoff);
-      this.db.prepare('DELETE FROM self_metrics WHERE ts < ?').run(cutoff);
-      // Failures cascade with their runs — prune child rows first so a crash
-      // between the two statements can't orphan failures.
-      this.db.prepare('DELETE FROM test_failures WHERE runId IN (SELECT id FROM test_runs WHERE ts < ?)').run(cutoff);
-      this.db.prepare('DELETE FROM test_runs WHERE ts < ?').run(cutoff);
-      this.db.prepare('DELETE FROM crashes WHERE ts < ?').run(cutoff);
-      this.db.prepare('DELETE FROM env_snapshots WHERE ts < ?').run(cutoff);
-      this.db.prepare('DELETE FROM resource_samples WHERE ts < ?').run(cutoff);
-      // FTS shadows cascade via the AFTER DELETE triggers.
-      this.db.prepare('DELETE FROM log_lines WHERE ts < ?').run(cutoff);
+      this.retentionSlice(cutoff);
     } catch (err: any) {
       this.warnOnce(`retention failed: ${err?.message || err}`);
+      this.retentionRunning = false;
     }
+  }
+
+  /**
+   * One TIME-SLICED retention pass (M147, v1.10).
+   *
+   * The pruning statements used to run unbounded, back to back. Measured on the
+   * 1M-event corpus with two thirds of every table eligible, that blocked the
+   * daemon's event loop for 28.8 SECONDS — during which the TUI froze, the HTTP
+   * API stopped answering, and log ingest stalled. It is a real scenario, not a
+   * synthetic one: it is what a user gets the first time they lower
+   * retentionDays, or the first pass after a long-dormant install.
+   *
+   * Now each table is drained in bounded chunks, and the pass yields once it
+   * has spent its slice, resuming on a timer. Semantics are unchanged — every
+   * row older than the cutoff is still deleted, and the FTS shadows still
+   * cascade through the AFTER DELETE triggers — it just no longer happens in
+   * one uninterruptible bite.
+   */
+  private retentionSlice(cutoff: number): void {
+    let more = false;
+    try {
+      more = this.retentionStep(cutoff);
+    } catch (err: any) {
+      this.warnOnce(`retention failed: ${err?.message || err}`);
+      this.retentionTableIdx = 0;
+      this.retentionRunning = false;
+      return;
+    }
+    if (more) {
+      // Out of slice with work remaining — hand the loop back and resume.
+      const t = setTimeout(() => this.retentionSlice(cutoff), RETENTION_RESUME_MS);
+      t.unref?.();
+      return;
+    }
+    this.retentionTableIdx = 0;
+    this.retentionRunning = false;
+  }
+
+  /**
+   * Delete up to one slice's worth of expired rows. Returns true when work
+   * remains. This is the only synchronous span retention ever occupies, so its
+   * duration IS the event-loop stall the bench asserts on.
+   */
+  private retentionStep(cutoff: number, chunk = RETENTION_CHUNK): boolean {
+    if (!this.db) return false;
+    const deadline = performance.now() + RETENTION_SLICE_MS;
+    while (this.retentionTableIdx < RETENTION_TABLES.length) {
+      const spec = RETENTION_TABLES[this.retentionTableIdx];
+      // Bounded delete by key. `DELETE ... LIMIT` requires a non-default SQLite
+      // build, so the row set is narrowed with a subquery instead.
+      const pred = spec.child ? spec.where : 'ts < ?';
+      const info = this.prepared(
+        `DELETE FROM ${spec.table} WHERE ${spec.key} IN (SELECT ${spec.key} FROM ${spec.table} WHERE ${pred} LIMIT ?)`,
+      ).run(cutoff, chunk);
+      if (info.changes < chunk) {
+        this.retentionTableIdx++;      // this table is drained
+        continue;
+      }
+      if (performance.now() >= deadline) return true;
+    }
+    return false;
   }
 
   queryEvents(opts: { app?: string; since?: number; until?: number; type?: string; limit?: number }): EventRow[] {
@@ -1128,8 +1337,45 @@ export class History {
     this.flush();
   }
 
-  _runRetentionForTest(): void {
-    this.runRetention();
+  // Backpressure probe (M147, v1.10). The flush queue is drained on a timer, so
+  // a storm that outruns the drain shows up as a growing queue before it shows
+  // up as latency. The write-path bench asserts the queue drains to zero after
+  // a storm — read-only, never used by production code.
+  _queueDepthForTest(): number {
+    return this.queue.length;
+  }
+
+  /**
+   * Drain retention to completion, synchronously, and report each slice's
+   * duration.
+   *
+   * Production retention yields between slices (M147), but a test that pruned
+   * "some of it, eventually" would be untestable — so this drives the same
+   * retentionStep loop straight through. The returned slice timings are what
+   * the write-path bench asserts on: the total is interesting, but the MAX
+   * SLICE is the number that decides whether the daemon stalls.
+   */
+  _runRetentionForTest(chunk = RETENTION_CHUNK): { slices: number[]; totalMs: number } {
+    const slices: number[] = [];
+    const t0 = performance.now();
+    if (!this.db || !(this.cfg.retentionDays > 0)) return { slices, totalMs: 0 };
+    try {
+      this.syncFts();
+      const cutoff = Date.now() - this.cfg.retentionDays * 86400000;
+      this.retentionTableIdx = 0;
+      for (;;) {
+        const s0 = performance.now();
+        const more = this.retentionStep(cutoff, chunk);
+        slices.push(performance.now() - s0);
+        if (!more) break;
+      }
+    } catch (err: any) {
+      this.warnOnce(`retention failed: ${err?.message || err}`);
+    } finally {
+      this.retentionTableIdx = 0;
+      this.retentionRunning = false;
+    }
+    return { slices, totalMs: performance.now() - t0 };
   }
 
   quickCheck(): boolean {
@@ -1152,6 +1398,14 @@ export class History {
       // leave the next startup with an oversized -wal sidecar. Best-effort —
       // SQLite already journals safely, this just keeps disk tidy.
       try { this.db.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
+      // Mark the clean shutdown LAST, after the flush and checkpoint above, so
+      // the marker can only ever mean "everything reached disk". A secondary
+      // handle ('skip') never writes it — the primary owner is still running,
+      // and claiming a clean close on its behalf would skip the full check
+      // after a real crash.
+      if (this.verifyMode !== 'skip') {
+        try { this.db.pragma(`user_version = ${CLEAN_SHUTDOWN_MARK}`); } catch {}
+      }
       try { this.db.close(); } catch {}
       this.db = null;
     }

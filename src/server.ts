@@ -1622,7 +1622,11 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             const allApps = registry.names().map(n => registry.getApp(n)!).filter(Boolean);
             // plugins:false — never re-import plugin files on a request path
             // (unbounded ESM module-registry growth; see runDoctor).
-            const result = await runDoctor(cfg, allApps, { plugins: false });
+            // historyHealth:false — `why` filters doctor's findings down to
+            // this app's, so the history-db health check is DISCARDED, yet its
+            // quick_check is O(database size) (5.9s on the 610MB corpus). It
+            // belongs to the explicit `daimon doctor`, not to a request path.
+            const result = await runDoctor(cfg, allApps, { plugins: false, historyHealth: false });
             const root = (appRow?.workspaceRoot ?? '').toLowerCase();
             doctorFindings = result.checks.filter(c =>
               c.name.includes(whyName)
