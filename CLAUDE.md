@@ -24,10 +24,17 @@ src/
   history.ts        # SQLite-backed events / compiles / bundles / tasks / test runs /
                     # crashes (ring 10/app) / log lines / self-metrics.
                     # Auto-archives a corrupt DB on startup as history.db.corrupt-<ts>.
+                    # v1.10 (M146): open-time verification is depth-tiered — full
+                    # integrity_check only when the clean-shutdown marker
+                    # (user_version) is absent; otherwise a bounded structural probe.
                     # FTS5 search (M77) uses DEFERRED indexing via fts_state high-water
                     # marks — never add per-insert FTS triggers (measured 4-10× on the
                     # write path); sync runs on idle flush ticks, before retention, and
-                    # before every search. FTS failure degrades to LIKE, never blocks.
+                    # before search — but BOUNDED since v1.10: a backlog over
+                    # FTS_INLINE_SYNC_MAX answers from the complete LIKE path instead
+                    # of stalling. FTS failure degrades to LIKE, never blocks.
+                    # Retention is TIME-SLICED (M147): ~50ms slices, never one long
+                    # block; RETENTION_TABLES order is load-bearing (children first).
   groups.ts         # Named app groups (M93, v1.1): resolution (resolveGroup /
                     # groupUpPlan / groupStopOrder), boot autoStartPlan (dedup at
                     # resolution — one spawn, one log line), validateGroups warnings.
@@ -153,13 +160,17 @@ src/
   mcp.ts            # MCP server. Wraps the HTTP API and forwards X-Daimon-Agent.
   ...
 dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
+bench/              # Perf harness + committed baselines (M145-M148, v1.10). Corpora cached
+                    # under bench/.corpus (gitignored, never shipped). npm run bench.
 completions/        # GENERATED shell completion (bash/zsh/powershell) — never hand-edit.
                     # Regen: npm run build:completions; drift-gated by test/completion.test.mjs.
 scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIMON_HOME only.
 scripts/platform-smoke.sh # (M143, v1.9) ~2-min PASS/FAIL probe for a REAL Mac/Linux box.
                     # POSIX sh, zero deps, throwaway DAIMON_HOME; --dry-run runs the
                     # plumbing on any host. The human runs it before publish.
-test/               # node --test suite. 971 test cases (v1.9); files run in parallel child processes.
+test/               # node --test suite. 1007 test cases (v1.10); files run in parallel child processes.
+                    # NEVER run a bench (npm run bench) and npm test at the same
+                    # time — they contend and produce spurious failures.
                     # test/helpers/platformSkip.mjs + test/fixtures/platform/<tool>/ (M141-M142).
 vscode-extension/   # VS Code extension (published as flycotech.daimon). Independent package.json.
 ```
@@ -250,6 +261,54 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   it in-process at start; the dashboard calls `GET /api/report?since=`. Dismissal
   merge-writes `awayAck` (additive state.json key). The digest's single 1-min
   interval stays the ONLY scheduler.
+- **Performance budgets are DERIVED from a committed baseline, never typed in (M145–M148, v1.10).**
+  The rule, in one line: `budget = measured quiet-machine baseline p95 × a
+  per-class headroom factor` (interactive 2×, startup 2.5×, query 3×, batch 3×,
+  write 4× — the factors are policy and live in `bench/lib/machine.mjs`;
+  everything else is measurement). Baselines live in `bench/BASELINE-v1.10*.json`
+  and are recorded by `--write`, which REFUSES to run on a machine that is not
+  quiet — quietness is two signals, CPU-reference dispersion **and** system-wide
+  busy fraction, because dispersion alone reported "quiet" on a 20-core box
+  while the full suite was running. Every budget carries a second, contention
+  axis (pass on the absolute OR on the ratio to an interleaved CPU reference,
+  ceiling derived as `budget ÷ baseline cpuRef × 3`), so external load cannot
+  fake a regression. **A red budget means investigate; loosening it is not an
+  available move.** MEASURE FIRST: no optimization lands without a before/after
+  number against the committed baseline.
+- **The 1M-event corpus is the scale fixture (M146, v1.10).** `bench/lib/corpus.mjs`
+  seeds it deterministically (fixed-seed mulberry32 — the seeder never reads the
+  clock; the anchor is a parameter) and caches it under `bench/.corpus/`, which
+  is gitignored and never shipped. It is ANCHORED so its newest rows land today
+  and it stretches 90 days back, and `corpusReady` rebuilds it once it is older
+  than 7 days — `why` and `context` query hardcoded last-24h/last-7d windows, so
+  a corpus pinned to a fixed calendar epoch would silently certify the speed of
+  querying nothing. Bump `SEEDER_VERSION` on any composition change. Run the
+  gates with `npm run bench` (or `bench:baselines` / `bench:scale` / `bench:write`
+  / `bench:startup`); never run a bench and `npm test` at the same time — they
+  contend, and the contention shows up as spurious failures in
+  `lifecycle-torture` and `demo-script`.
+- **History verification is depth-tiered, and the tier is earned (M146, v1.10).**
+  `PRAGMA integrity_check` is O(database size) — 8.5s per open on the 1M corpus —
+  so it no longer runs on every open. `close()` records a clean-shutdown marker
+  in SQLite's `user_version` header field; an open whose DB carries that marker
+  gets a bounded structural probe (O(tables)), and an open WITHOUT it still gets
+  the full check, because corruption comes from unclean shutdown and disk
+  failure. Secondary handles pass `{ verify: 'skip' }` and must never write the
+  clean marker — the primary owner is still running. `daimon doctor` keeps the
+  deep check and opens history exactly ONCE per sweep (grep-gated in
+  `test/history-verify.test.mjs`); request paths that don't surface the finding
+  pass `historyHealth: false`. Old and new DBs interoperate in both directions:
+  a pre-v1.10 DB has no marker and simply takes the full check.
+- **Retention is time-sliced and search degrades rather than stalls (M146–M147, v1.10).**
+  Pruning yields every ~50ms (`RETENTION_SLICE_MS`) instead of blocking the loop
+  for 28.8s, but its SEMANTICS are unchanged — every expired row still goes, and
+  `RETENTION_TABLES` order is load-bearing (`test_failures` before `test_runs`,
+  or an interrupted pass orphans rows). `search()` no longer syncs FTS
+  unbounded: a backlog over `FTS_INLINE_SYNC_MAX` answers from the LIKE path
+  instead, which is COMPLETE (it scans the base tables, so read-your-writes
+  still holds) and merely slower. That distinction is the rule — **a
+  wrong-but-fast answer is worse than a slow one**; never cache or truncate a
+  result to hit a budget.
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
 - **Every platform branch is inventoried, fixture-tested, and honestly labeled (M140–M143, v1.9).** The dev box is Windows; POSIX behavior is proven via recorded-output fixtures + injectable seams (the `platform`/`CmdRunner` parameter pattern), NEVER by pretending to run on Linux. Three binding rules: (1) **a `process.platform`/`os.platform()` fork needs a row in `src/platformInventory.ts`** — `test/platform-inventory.test.mjs` greps `dist/` and fails if any token escapes the table (the docs "Platform support" page renders from that same data). (2) **A parser/branch with a Windows fixture gets a POSIX one** in `test/fixtures/platform/<tool>/` with a provenance note, fed through the production parse path via the injectable runner (no test-only fork) — deleting a fixture fails the suite. (3) **Platform-conditional tests SKIP LOUDLY** via `platformSkip(t, plat, note)` (`test/helpers/platformSkip.mjs`) — a bare `if (isWin)` or `process.platform … return` is a defect; `test/platform-skips.test.mjs` asserts the skip set against a committed expectation and fails on a silent gate. Support-matrix statuses are earned: `verified` (real test on that OS), `fixture-verified` (recorded-output test), `best-effort` (only `scripts/platform-smoke.sh` on real hardware) — never asserted. User-facing OS commands route through `src/platformRemedy.ts` (taskkill vs kill), never a per-callsite `process.platform ===`.
 - **History migrations are additive** — `CREATE TABLE IF NOT EXISTS`, plus (since v1.2) a guarded nullable `ALTER TABLE … ADD COLUMN` (check `PRAGMA table_info` first; column must be nullable; every INSERT names its columns so an older daimon keeps writing the same table). Never a rename, drop, retype, or NOT NULL addition — a v0.11 DB must open cleanly under v1.2 and vice versa.
@@ -364,7 +423,36 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
   `MCP_PROMPT_STABILITY`).
 
-## v1.9 highlights (what landed this release)
+## v1.10 highlights (what landed this release)
+
+- **Featherweight (M145–M149)**: performance & scale certification — no new
+  feature surface, no config key, no history migration, no frozen shape moved.
+  **Baselines first (M145)**: `bench/` harness + committed `BASELINE-v1.10*.json`
+  for cold-start, CLI round-trip, idle RSS/CPU, TUI attach and per-route
+  dashboard TTI; two-signal quiet detection; the budget-derivation rule above.
+  **1M corpus (M146)**: 1M events / 2M log lines / 610MB / 3M FTS rows,
+  deterministic and anchored; six read paths certified; contract suite green
+  against the 1M DB. **Write-path audit (M147)**: ingest p95 0.0013ms/call with
+  the queue draining to zero, FTS provably off the write path (×0.857).
+  **Startup + bundle (M148)**: lazy-required CLI graph and the first automated
+  dashboard payload gate.
+- **Four real bugs the scale run found**, each fixed with a measured
+  before/after: `PRAGMA integrity_check` ran on EVERY History open (8303ms →
+  7ms on a 610MB DB); `daimon doctor` opened six History handles per sweep
+  (~51s → 5.1s); `daimon why` paid an O(db-size) health check for a finding it
+  discarded (6284ms → 58.8ms p50 at 100k); and retention blocked the event loop
+  for 28.8s in one bite (→ p95 144ms slices). Plus: a first search on a cold FTS
+  index stalled 51.5s (→ complete LIKE answer), and `daimon --help` cost 307ms
+  (→ 121ms).
+- **A documentation correction**: the "135.39 KB gz" dashboard figure quoted
+  since v1.7 is Angular's *brotli* estimate. Real numbers: raw 492.7KB, gzip
+  148.5KB, brotli 132.0KB. The <150KB gzip claim holds, with ~1% headroom rather
+  than the ~10% assumed — and is now actually enforced by
+  `test/bundle-budget.test.mjs`.
+- Tests: `test/bench-harness.test.mjs`, `test/history-verify.test.mjs`,
+  `test/bundle-budget.test.mjs`. Certified numbers live in **PERFORMANCE.md**.
+
+## v1.9 highlights
 
 - **Everywhere (M140–M144)**: macOS/Linux certification — no schema/config/dep
   change, no history migration; every new surface `experimental`. **Platform

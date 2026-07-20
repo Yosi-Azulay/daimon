@@ -34,7 +34,7 @@ process.env.DAIMON_HOME = prevHome;
 // session-state.json (and its .bak) every few seconds with zero paths
 // added/removed. Fall back to a structural check (no paths added/removed)
 // in that case; use the strict exact-snapshot check otherwise.
-function isRealDaemonLive(realHome) {
+function hasLiveLock(realHome) {
   try {
     const raw = fs.readFileSync(path.join(realHome, 'daemon.lock'), 'utf8');
     const info = JSON.parse(raw);
@@ -42,6 +42,64 @@ function isRealDaemonLive(realHome) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Is something OTHER than this test writing to the real ~/.daimon right now?
+ *
+ * The lock file alone is not a reliable answer. Observed during v1.10: a real
+ * daemon was live and appending to notifications.log while ~/.daimon/daemon.lock
+ * did not exist at all (an unclean exit can leave the lock behind, and a
+ * later daemon need not recreate it). The strict exact-snapshot check then ran
+ * against a home that a background daemon was actively mutating, and failed for
+ * a reason that had nothing to do with the demo.
+ *
+ * So rather than infer the confound, MEASURE it: snapshot the tree twice with a
+ * pause between and see whether it moves on its own. A live writer is exactly
+ * what that detects, whether or not it kept a lock file.
+ */
+async function isDaemonAnswering(realHome) {
+  let apiPort = 4999;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(realHome, 'config.json'), 'utf8'));
+    if (Number.isInteger(cfg?.apiPort)) apiPort = cfg.apiPort;
+  } catch { /* default port */ }
+  try {
+    const ctrl = AbortSignal.timeout(1500);
+    const r = await fetch(`http://127.0.0.1:${apiPort}/api/signature`, { signal: ctrl });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function hasForeignWriter(realHome, settleMs = 2500) {
+  // Decisive signal first: a daemon answering on the real apiPort owns this
+  // home and writes to it on its own clock, lock file or not.
+  if (hasLiveLock(realHome)) return true;
+  if (await isDaemonAnswering(realHome)) return true;
+  // Fallback: watch the tree actually move. Catches a writer that is neither
+  // locked nor listening (a shutting-down daemon flushing its last rows).
+  const a = snapshotTree(realHome);
+  await new Promise(r => setTimeout(r, settleMs));
+  const b = snapshotTree(realHome);
+  return JSON.stringify(a) !== JSON.stringify(b);
+}
+
+/** Human-readable diff of two snapshots, for a failure message worth reading. */
+function describeDiff(before, after) {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const lines = [];
+  for (const k of keys) {
+    const b = before[k];
+    const a = after[k];
+    if (!b) lines.push(`  + ${k}`);
+    else if (!a) lines.push(`  - ${k}`);
+    else if (b.mtimeMs !== a.mtimeMs || b.size !== a.size) {
+      lines.push(`  ~ ${k} (size ${b.size} -> ${a.size})`);
+    }
+  }
+  return lines.length ? lines.join('\n') : '  (no path-level differences)';
 }
 
 function snapshotTree(dir) {
@@ -101,7 +159,7 @@ if (!isolated) {
 } else {
   test('demo-script: runs a full headless session, exits 0, never touches the real ~/.daimon', async () => {
     const realHome = path.join(os.homedir(), '.daimon');
-    const liveBefore = isRealDaemonLive(realHome);
+    const liveBefore = await hasForeignWriter(realHome);
     const before = snapshotTree(realHome);
 
     const result = await runDemo(120_000);
@@ -115,7 +173,7 @@ if (!isolated) {
       assert.deepEqual(added, [], `demo run added files under the real ~/.daimon while a live daemon was already running (own state was excluded from the check): ${added.join(', ')}`);
       assert.deepEqual(removed, [], `demo run removed files under the real ~/.daimon while a live daemon was already running: ${removed.join(', ')}`);
     } else {
-      assert.deepEqual(after, before, `real ~/.daimon was mutated by the demo run\n--- stdout tail ---\n${result.stdout.slice(-2000)}\n--- stderr tail ---\n${result.stderr.slice(-2000)}`);
+      assert.deepEqual(after, before, `real ~/.daimon was mutated by the demo run (no foreign writer was detected beforehand)\n--- changed paths ---\n${describeDiff(before, after)}\n--- stdout tail ---\n${result.stdout.slice(-1200)}\n--- stderr tail ---\n${result.stderr.slice(-1200)}`);
     }
 
     assert.equal(result.code, 0, `demo script exited ${result.code}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`);

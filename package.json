@@ -1,6 +1,6 @@
 {
   "name": "daimon",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Local dev-server manager for 20+ frameworks (Angular/Nx/Next.js/Vite/Django/Rails/.NET/Flutter/Deno/Bun…) — dev servers, tests, crash forensics, and full-text search behind a TUI, loopback HTTP API, JSON CLI, and MCP server for Claude Code",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Yosi Azulay (https://flycotech.com)",
