@@ -13,3 +13,6 @@ dashboard/test-results/
 # NuGet restore artifacts that `daimon test`/`dotnet` runs drop into fixtures
 test/fixtures/**/obj/
 test/fixtures/**/bin/
+
+# bench corpora — multi-hundred-MB generated fixtures, rebuilt on demand
+bench/.corpus/

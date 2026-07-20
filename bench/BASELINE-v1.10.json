@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "release": "v1.10.0",
+  "quick": false,
+  "machineQuiet": true,
+  "machine": {
+    "before": {
+      "cpuRefMedianMs": 18.5,
+      "cpuRefMadRatio": 0.0491,
+      "systemBusyFraction": 0.3353,
+      "quiet": true,
+      "cores": 20,
+      "platform": "win32",
+      "nodeVersion": "v22.14.0"
+    },
+    "after": {
+      "cpuRefMedianMs": 16.6,
+      "cpuRefMadRatio": 0.0252,
+      "systemBusyFraction": 0.2397,
+      "quiet": true,
+      "cores": 20,
+      "platform": "win32",
+      "nodeVersion": "v22.14.0"
+    }
+  },
+  "metrics": {
+    "daemon-cold-start": {
+      "p50": 921.5,
+      "p95": 1082.6,
+      "min": 749.4,
+      "max": 1082.6,
+      "samples": 7,
+      "cpuRefMedianMs": 19.3,
+      "method": "spawn(dist/main.js --headless) -> first 200 from GET /api/signature, fresh DAIMON_HOME each run"
+    },
+    "cli-roundtrip": {
+      "p50": 323.5,
+      "p95": 399.3,
+      "min": 266.5,
+      "max": 458.2,
+      "samples": 50,
+      "cpuRefMedianMs": 17.9,
+      "method": "spawn(dist/cli.js list --json) -> exit, warm daemon, N=50"
+    },
+    "idle-footprint": {
+      "rssMb": {
+        "p50": 68.7,
+        "p95": 85.2,
+        "max": 85.2
+      },
+      "cpuPct": {
+        "p50": 0,
+        "p95": 1.03,
+        "max": 5.45
+      },
+      "samples": 22,
+      "windowMs": 60000,
+      "method": "pidusage on the daemon pid every 2s over 60s, idle daemon, empty workspace"
+    },
+    "tui-attach": {
+      "p50": 917.1,
+      "p95": 1017.6,
+      "min": 894.9,
+      "max": 1017.6,
+      "samples": 5,
+      "cpuRefMedianMs": 15.6,
+      "method": "spawn(dist/main.js) -> first stdout chunk containing the ribbon frame"
+    },
+    "dashboard-route-tti": {
+      "routes": {
+        "/": {
+          "p50": 84.8,
+          "p95": 95.3,
+          "samples": 3
+        },
+        "/errors": {
+          "p50": 82.4,
+          "p95": 122,
+          "samples": 3
+        },
+        "/logs": {
+          "p50": 102.1,
+          "p95": 105.7,
+          "samples": 3
+        },
+        "/config": {
+          "p50": 103,
+          "p95": 159.4,
+          "samples": 3
+        },
+        "/doctor": {
+          "p50": 124.1,
+          "p95": 178.7,
+          "samples": 3
+        },
+        "/events": {
+          "p50": 99.9,
+          "p95": 132,
+          "samples": 3
+        },
+        "/history": {
+          "p50": 97.5,
+          "p95": 105.2,
+          "samples": 3
+        },
+        "/trends": {
+          "p50": 132.8,
+          "p95": 139.2,
+          "samples": 3
+        },
+        "/timeline": {
+          "p50": 87.8,
+          "p95": 125.6,
+          "samples": 3
+        },
+        "/tests": {
+          "p50": 106.2,
+          "p95": 112.3,
+          "samples": 3
+        },
+        "/sessions": {
+          "p50": 108.4,
+          "p95": 113.7,
+          "samples": 3
+        },
+        "/agents": {
+          "p50": 109.9,
+          "p95": 125.3,
+          "samples": 3
+        },
+        "/regressions": {
+          "p50": 116.4,
+          "p95": 141.9,
+          "samples": 3
+        },
+        "/report": {
+          "p50": 124.6,
+          "p95": 158.9,
+          "samples": 3
+        }
+      },
+      "worstRouteP95": 178.7,
+      "method": "chromium goto(waitUntil=networkidle) x3 per route against a daemon on the seeded corpus"
+    }
+  }
+}
