@@ -36,6 +36,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { path: '/events',   icon: 'timeline',             label: 'Events',   shortcut: 'g v' },
       { path: '/logs',     icon: 'terminal',             label: 'Logs',     shortcut: 'g l' },
       { path: '/timeline', icon: 'view_timeline',        label: 'Timeline', shortcut: 'g i' },
+      { path: '/graph',    icon: 'account_tree',         label: 'Graph',    shortcut: 'g y' },
       { path: '/sessions', icon: 'radio_button_checked', label: 'Sessions', shortcut: 'g n' },
     ],
   },

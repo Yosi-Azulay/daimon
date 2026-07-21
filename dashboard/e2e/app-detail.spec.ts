@@ -56,9 +56,12 @@ test('header action row includes start/stop, restart, mute, test', async ({ page
   const bar = page.locator('.dm-action-bar');
   await expect(bar).toBeVisible({ timeout: 10_000 });
   await expect(bar.getByText(/^(Start|Stop)$/)).toBeVisible();
-  await expect(bar.getByText('Restart')).toBeVisible();
+  // exact: the icon ligature text ("restart_alt") is also a text node in the
+  // bar, and getByText's default substring match is case-insensitive — the
+  // loose form resolves to 2 elements and trips strict mode.
+  await expect(bar.getByText('Restart', { exact: true })).toBeVisible();
   await expect(bar.getByText(/^(Mute|Unmute)$/)).toBeVisible();
-  await expect(bar.getByText('Test')).toBeVisible();
+  await expect(bar.getByText('Test', { exact: true })).toBeVisible();
 });
 
 test('Test action fires POST /api/apps/:name/test', async ({ page, request }) => {

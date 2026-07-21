@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { DaimonApi, Report } from './daimon-api';
@@ -16,6 +16,7 @@ import {
 } from './report-page-helpers';
 
 type SectionKey = keyof Report['sections'];
+const WS_KEY = 'daimon.workspace';
 
 @Component({
   selector: 'dm-report-page',
@@ -294,12 +295,29 @@ type SectionKey = keyof Report['sections'];
 })
 export class ReportPageComponent implements OnInit, OnDestroy {
   readonly api = inject(DaimonApi);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly period = signal<ReportPeriod>('24h');
   readonly customSince = signal<string>('3d');
   readonly appFilter = signal<string>('');
+  readonly workspace = signal<string | null>(null);
   readonly report = signal<Report | null>(null);
   readonly loading = signal<boolean>(true);
+
+  constructor() {
+    this.workspace.set(localStorage.getItem(WS_KEY));
+    const onWs = (e: Event) => {
+      this.workspace.set(((e as CustomEvent).detail as string | null) ?? null);
+      void this.load();
+    };
+    window.addEventListener('daimon:workspace', onWs);
+    this.destroyRef.onDestroy(() => window.removeEventListener('daimon:workspace', onWs));
+  }
+
+  @HostListener('window:storage', ['$event'])
+  onStorage(ev: StorageEvent): void {
+    if (ev.key === WS_KEY) { this.workspace.set(ev.newValue); void this.load(); }
+  }
 
   readonly customValid = computed(() => isValidSince(this.customSince()));
 
@@ -368,7 +386,7 @@ export class ReportPageComponent implements OnInit, OnDestroy {
     if (!silent) this.loading.set(true);
     try {
       const since = periodToSince(this.period(), this.customSince());
-      const r = await this.api.getReport({ since, app: this.appFilter() || undefined });
+      const r = await this.api.getReport({ since, app: this.appFilter() || undefined, workspace: this.workspace() ?? undefined });
       this.report.set(r);
     } finally {
       this.loading.set(false);

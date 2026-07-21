@@ -40,6 +40,8 @@ const EXPECTED_TOOLS = [
   'daimon_audit', 'daimon_agents',
   // v1.8 (M134): walk history by derived work session.
   'daimon_sessions',
+  // v1.15 (M175): read-only depends-graph view.
+  'daimon_graph',
 ].sort();
 
 const EXPECTED_RESOURCES = ['daimon://report', 'daimon://context/{app}', 'daimon://logs/{app}'].sort();
@@ -73,7 +75,7 @@ function minimalArgs(schema) {
 const client = await connectedClient();
 const { tools } = await client.listTools();
 
-test('mcp surface: tools/list returns exactly the expected 32 tools', () => {
+test('mcp surface: tools/list returns exactly the expected 35 tools', () => {
   assert.deepEqual(tools.map(t => t.name).sort(), EXPECTED_TOOLS);
 });
 

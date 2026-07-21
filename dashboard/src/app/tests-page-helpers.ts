@@ -134,3 +134,12 @@ export function pillKindForRun(run: TestRun | null): 'ok' | 'fail' | 'neutral' {
 export function shortHead(gitHead: string | null): string {
   return gitHead ? gitHead.slice(0, 7) : '—';
 }
+
+// Workspace filtering (M177, v1.15): trims the per-app cards to apps in the
+// active workspace. `members` is the Set-or-null shape from workspace-helpers'
+// workspaceMemberNames() — `null` means no filter is active, so every card
+// (including one for an app no longer known to the registry) stays visible,
+// matching the pre-M177 behavior.
+export function filterCardsByWorkspace<T extends { app: string }>(cards: T[], members: Set<string> | null): T[] {
+  return members === null ? cards : cards.filter(c => members.has(c.app));
+}

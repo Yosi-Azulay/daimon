@@ -15,6 +15,7 @@ export const ROUTE_PATHS: string[] = [
   '/history',
   '/trends',
   '/timeline',
+  '/graph',
   '/tests',
   '/sessions',
   '/agents',

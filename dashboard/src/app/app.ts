@@ -155,8 +155,17 @@ export class AppComponent implements OnInit, OnDestroy {
   // Read `?cwd=<path>` from the URL; if present, ask the daemon which workspace
   // covers it, then pre-select the workspace filter pill. If no workspace
   // covers the cwd, raise the unknown-cwd banner.
+  //
+  // Precedence (M173, v1.15): an EXPLICIT `?workspace=<label>` deep-link wins
+  // over both the stored preference and the cwd auto-pick — a shared link must
+  // land on the workspace it names, not on whatever the viewer last selected.
   private async detectCwd(): Promise<void> {
     const params = new URLSearchParams(window.location.search);
+    const explicit = params.get('workspace');
+    if (explicit) {
+      try { localStorage.setItem(WS_KEY, explicit); } catch {}
+      window.dispatchEvent(new CustomEvent('daimon:workspace', { detail: explicit }));
+    }
     const cwd = params.get('cwd');
     if (!cwd) return;
     this.api.cwdHint.set(cwd);
@@ -166,7 +175,7 @@ export class AppComponent implements OnInit, OnDestroy {
       return;
     }
     this.api.cwdResolved.set({ path: r.path, label: r.label ?? null });
-    if (r.label) {
+    if (r.label && !explicit) {
       // Hand the workspace label to the existing topbar/apps-list filter via
       // localStorage + the same daimon:workspace event they already subscribe to.
       try { localStorage.setItem(WS_KEY, r.label); } catch {}

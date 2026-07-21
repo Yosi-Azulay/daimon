@@ -999,10 +999,14 @@ export class History {
     return this.prepared(sql).all(...args) as BundleRow[];
   }
 
-  trends(opts: { app?: string; metric: 'compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu'; sinceMs: number; bucketMs: number }): { points: { t: number; v: number; v2?: number }[]; count: number } {
+  // `apps` (M177, v1.15 — additive): restrict rows to an app-name set, for
+  // the ?workspace= filter on /api/history/trends. Applied in the same JS
+  // bucketing pass the metric already does — no schema or query change.
+  trends(opts: { app?: string; apps?: Set<string>; metric: 'compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu'; sinceMs: number; bucketMs: number }): { points: { t: number; v: number; v2?: number }[]; count: number } {
     if (!this.db) return { points: [], count: 0 };
     const sinceTs = Date.now() - opts.sinceMs;
     const bucket = opts.bucketMs;
+    const inScope = (app: string | null | undefined): boolean => !opts.apps || (!!app && opts.apps.has(app));
     const buckets = new Map<number, { sum: number; n: number; sum2?: number }>();
     const bumpAvg = (t: number, v: number) => {
       const b = Math.floor(t / bucket) * bucket;
@@ -1018,11 +1022,11 @@ export class History {
     };
     let count = 0;
     if (opts.metric === 'compile') {
-      const rows = this.queryCompiles({ app: opts.app, since: sinceTs, limit: 10000 });
+      const rows = this.queryCompiles({ app: opts.app, since: sinceTs, limit: 10000 }).filter(r => inScope(r.app));
       count = rows.length;
       for (const r of rows) bumpAvg(r.ts, r.ms);
     } else if (opts.metric === 'bundle') {
-      const rows = this.queryBundles({ app: opts.app, since: sinceTs, limit: 10000 });
+      const rows = this.queryBundles({ app: opts.app, since: sinceTs, limit: 10000 }).filter(r => inScope(r.app));
       count = rows.length;
       for (const r of rows) {
         const b = Math.floor(r.ts / bucket) * bucket;
@@ -1035,7 +1039,7 @@ export class History {
     } else if (opts.metric === 'rss' || opts.metric === 'cpu') {
       // Resource series (M109, v1.3): bucket-averaged rss (MB) / cpu (%)
       // from resource_samples. Null readings are skipped, not zeroed.
-      const rows = this.queryResourceSamples({ app: opts.app, since: sinceTs, limit: 10000 });
+      const rows = this.queryResourceSamples({ app: opts.app, since: sinceTs, limit: 10000 }).filter(r => inScope(r.app));
       for (const r of rows) {
         const raw = opts.metric === 'rss' ? r.rss : r.cpu;
         if (raw == null) continue;
@@ -1043,12 +1047,12 @@ export class History {
         count++;
       }
     } else if (opts.metric === 'errors') {
-      const rows = this.queryEvents({ app: opts.app, since: sinceTs, limit: 10000 });
+      const rows = this.queryEvents({ app: opts.app, since: sinceTs, limit: 10000 }).filter(r => inScope(r.app));
       for (const r of rows) {
         if (r.type === 'error-new' || r.type === 'error-recur') { bumpCount(r.ts); count++; }
       }
     } else {
-      const rows = this.queryEvents({ app: opts.app, since: sinceTs, limit: 10000 });
+      const rows = this.queryEvents({ app: opts.app, since: sinceTs, limit: 10000 }).filter(r => inScope(r.app));
       for (const r of rows) {
         if (r.type === 'status' && r.to_state === 'starting' && (r.from_state === 'error' || r.from_state === 'serving' || r.from_state === 'compiling')) {
           bumpCount(r.ts); count++;

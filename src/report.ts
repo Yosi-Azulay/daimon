@@ -9,6 +9,7 @@ import type { Registry } from './registry.js';
 import type { History } from './history.js';
 import { findFlakyTests } from './testRunners.js';
 import { diffEnvSnapshots } from './envFiles.js';
+import { matchesWorkspace } from './graph.js';
 
 export interface ReportOpts {
   // Window start (ms since epoch).
@@ -66,7 +67,9 @@ export function buildReport(inputs: ReportInputs, opts: ReportOpts): Report {
   const allApps = registry.list();
   const scoped = allApps.filter(a => {
     if (opts.app && a.name !== opts.app && a.baseName !== opts.app) return false;
-    if (opts.workspace && a.workspaceLabel !== opts.workspace) return false;
+    // Effective-label matching (M177, v1.15): label ?? basename(root) — the
+    // same rule every other ?workspace= surface uses (src/graph.ts).
+    if (opts.workspace && !matchesWorkspace(a, opts.workspace)) return false;
     if (groupSet && !groupSet.has(a.name) && !(a.baseName && groupSet.has(a.baseName))) return false;
     return true;
   });

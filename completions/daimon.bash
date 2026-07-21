@@ -14,7 +14,7 @@ _daimon_complete() {
     return 0
   fi
   if [ "$cword" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "agents audit ci claude clean completion config context daemon dashboard discover doctor down ensure ensure-up env errors events export export-config focus frameworks free-port handoff history init list log logs ls mute orchestrate overview pin-health plugin plugins ports profiles ps record replay report restart run search self sessions snapshot start status stop tasks test test-history timeline top try-fix unmute up wait why why-empty workspaces" -- "$cur") )
+    COMPREPLY=( $(compgen -W "agents audit ci claude clean completion config context daemon dashboard discover doctor down ensure ensure-up env errors events export export-config focus frameworks free-port graph handoff history init list log logs ls mute orchestrate overview pin-health plugin plugins ports profiles ps record replay report restart run search self sessions snapshot start status stop tasks test test-history timeline top try-fix unmute up wait why why-empty workspaces" -- "$cur") )
     return 0
   fi
   canon="${COMP_WORDS[1]}"
@@ -73,13 +73,14 @@ _daimon_complete() {
     ensure) flags="--until --timeout --help --no-color --no-spawn" ;;
     ensure-up) flags="--until --timeout --help --no-color --no-spawn" ;;
     env) flags="--from --to --use --help --no-color --no-spawn" ;;
-    errors) flags="--group --since --since-last --client --structured --full --compact --help --no-color --no-spawn" ;;
+    errors) flags="--group --workspace --since --since-last --client --structured --full --compact --help --no-color --no-spawn" ;;
     events) flags="--since --app --stream --help --no-color --no-spawn" ;;
     export) flags="--since --app --format --out --help --no-color --no-spawn" ;;
     export-config) flags="--redacted --help --no-color --no-spawn" ;;
     focus) flags="--until --timeout --help --no-color --no-spawn" ;;
     frameworks) flags="--help --no-color --no-spawn" ;;
     free-port) flags="--force --help --no-color --no-spawn" ;;
+    graph) flags="--json --workspace --all --help --no-color --no-spawn" ;;
     handoff) flags="--help --no-color --no-spawn" ;;
     history) flags="--help --no-color --no-spawn" ;;
     init) flags="--yes --force --auto --help --no-color --no-spawn" ;;
@@ -98,7 +99,7 @@ _daimon_complete() {
     report) flags="--since --app --workspace --group --md --help --no-color --no-spawn" ;;
     restart) flags="--steal --help --no-color --no-spawn" ;;
     run) flags="--watch --help --no-color --no-spawn" ;;
-    search) flags="--app --since --kind --limit --help --no-color --no-spawn" ;;
+    search) flags="--app --workspace --since --kind --limit --help --no-color --no-spawn" ;;
     self) flags="--help --no-color --no-spawn" ;;
     sessions) flags="--since --json --help --no-color --no-spawn" ;;
     snapshot) flags="--help --no-color --no-spawn" ;;
@@ -112,7 +113,7 @@ _daimon_complete() {
     top) flags="--json --help --no-color --no-spawn" ;;
     try-fix) flags="--until --timeout --help --no-color --no-spawn" ;;
     unmute) flags="--help --no-color --no-spawn" ;;
-    up) flags="--until --timeout --steal --help --no-color --no-spawn" ;;
+    up) flags="--until --timeout --steal --dry-run --help --no-color --no-spawn" ;;
     wait) flags="--until --timeout --help --no-color --no-spawn" ;;
     why) flags="--help --no-color --no-spawn" ;;
     why-empty) flags="--help --no-color --no-spawn" ;;

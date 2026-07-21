@@ -23,6 +23,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { AppRow, DaimonApi, LockSnapshot } from './daimon-api';
 import { SkeletonComponent, EmptyStateComponent, MonoComponent, StatusPillComponent, FrameworkBadgeComponent, SparklineComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
+import { appMatchesWorkspace } from './workspace-helpers';
 import { filterByGroup, groupChips, groupSections, sectionOffsets, type GroupSection } from './groups-helpers';
 import { FirstRunCardComponent } from './first-run-card';
 import { readFirstRunDismissed, newlyAppearedApps } from './first-run-helpers';
@@ -680,7 +681,7 @@ export class AppsListComponent implements OnInit, AfterViewInit {
     const ws = this.workspace();
     const tags = this.selectedTags();
     const base = this.api.apps().filter(a => {
-      if (ws && a.workspaceLabel !== ws) return false;
+      if (!appMatchesWorkspace(a, ws)) return false;
       if (s === 'serving' && a.status !== 'serving') return false;
       if (s === 'errors' && a.status !== 'error' && a.errorCount === 0) return false;
       if (s === 'stopped' && a.status !== 'stopped') return false;
@@ -817,7 +818,11 @@ export class AppsListComponent implements OnInit, AfterViewInit {
     const next = this.activeGroup() === name ? null : name;
     this.activeGroup.set(next);
     this.focusedIndex.set(0);
-    void this.router.navigate(['/'], { queryParams: { group: next }, queryParamsHandling: 'merge' });
+    // '/apps', not '/' — the apps list moved off the root in v1.12 (M158) and
+    // this navigate kept pointing at the old home, so a chip click silently
+    // LEFT the apps page for the overview. Caught by the full Playwright
+    // drive in v1.15 (groups.spec had been red since the move).
+    void this.router.navigate(['/apps'], { queryParams: { group: next }, queryParamsHandling: 'merge' });
   }
 
   // A section's child list emits a LOCAL index (0-based within that

@@ -17,6 +17,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { AppRow, DaimonApi } from './daimon-api';
 import { EmptyStateComponent, MonoComponent, SkeletonComponent, StatusPillComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
+import { appMatchesWorkspace } from './workspace-helpers';
 
 type Level = 'error' | 'warning' | 'lint';
 
@@ -37,6 +38,7 @@ interface RawError {
 interface FlatError {
   app: string;
   workspaceLabel: string | null;
+  workspaceRoot: string | null;
   file: string;
   line: number | null;
   col: number | null;
@@ -469,6 +471,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
         out.push({
           app: name,
           workspaceLabel: app?.workspaceLabel ?? null,
+          workspaceRoot: app?.workspaceRoot ?? null,
           file: file ?? '',
           line: line ?? null,
           col: col ?? null,
@@ -500,7 +503,7 @@ export class ErrorsPanelComponent implements OnInit, OnDestroy {
     // hides them entirely so they don't drown the headline metric.
     const ws = this.workspace();
     return this.flat().filter(e => {
-      if (ws && e.workspaceLabel !== ws) return false;
+      if (!appMatchesWorkspace(e, ws)) return false;
       if (sev === 'errors' && e.level !== 'error') return false;
       if (sev === 'warnings' && e.level !== 'warning') return false;
       if (sev === 'lint' && e.level !== 'lint') return false;

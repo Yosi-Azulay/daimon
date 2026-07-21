@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { MatExpansionModule } from '@angular/material/expansion';
@@ -8,6 +8,7 @@ import { DaimonApi } from './daimon-api';
 import { EmptyStateComponent, SkeletonComponent, MonoComponent } from './ui-primitives';
 import {
   diffRuns,
+  filterCardsByWorkspace,
   flakyByFingerprint,
   groupRunsByApp,
   isFlaky,
@@ -22,6 +23,9 @@ import {
   type TestFailure,
   type TestRun,
 } from './tests-page-helpers';
+import { workspaceMemberNames } from './workspace-helpers';
+
+const WS_KEY = 'daimon.workspace';
 
 interface AppCard {
   app: string;
@@ -51,20 +55,20 @@ const SPARK_MAX = 30;
       </button>
     </div>
 
-    @if (loading() && cards().length === 0) {
+    @if (loading() && visibleCards().length === 0) {
       <dm-skeleton height="14rem"></dm-skeleton>
-    } @else if (cards().length === 0 && api.apps().length === 0) {
+    } @else if (visibleCards().length === 0 && api.apps().length === 0) {
       <dm-empty icon="apps" title="No apps yet"
                 hint="Test history appears here once you have an app configured and have run daimon test against it.">
         <a routerLink="/apps" class="dm-link-btn">
           <mat-icon fontSet="material-symbols-outlined">apps</mat-icon>Go to apps
         </a>
       </dm-empty>
-    } @else if (cards().length === 0) {
+    } @else if (visibleCards().length === 0) {
       <dm-empty icon="science" title="No test runs recorded yet" hint="Run daimon test &lt;app&gt; (or let an agent do it) to populate this page."></dm-empty>
     } @else {
       <div class="dm-grid">
-        @for (c of cards(); track c.app) {
+        @for (c of visibleCards(); track c.app) {
           <mat-expansion-panel class="dm-card" [expanded]="cards().length === 1">
             <mat-expansion-panel-header>
               <mat-panel-title>
@@ -285,13 +289,34 @@ const SPARK_MAX = 30;
 })
 export class TestsPageComponent implements OnInit {
   readonly api = inject(DaimonApi);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly loading = signal<boolean>(true);
   readonly cards = signal<AppCard[]>([]);
   readonly flakyThreshold = signal<number>(3);
+  readonly workspace = signal<string | null>(null);
+
+  // Workspace filtering (M177, v1.15): trims to apps in the active workspace.
+  // A card for an app no longer known to the registry stays visible only
+  // when no filter is active (filterCardsByWorkspace's null-members case).
+  readonly visibleCards = computed<AppCard[]>(() =>
+    filterCardsByWorkspace(this.cards(), workspaceMemberNames(this.api.apps(), this.workspace())),
+  );
 
   private readonly expandedRun = signal<Record<string, number | null>>({});
   private readonly diffSel = signal<Record<string, [number | null, number | null]>>({});
+
+  constructor() {
+    this.workspace.set(localStorage.getItem(WS_KEY));
+    const onWs = (e: Event) => this.workspace.set(((e as CustomEvent).detail as string | null) ?? null);
+    window.addEventListener('daimon:workspace', onWs);
+    this.destroyRef.onDestroy(() => window.removeEventListener('daimon:workspace', onWs));
+  }
+
+  @HostListener('window:storage', ['$event'])
+  onStorage(ev: StorageEvent): void {
+    if (ev.key === WS_KEY) this.workspace.set(ev.newValue);
+  }
 
   readonly pillKindForRun = pillKindForRun;
   readonly runLabel = runLabel;

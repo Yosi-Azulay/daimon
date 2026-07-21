@@ -13,6 +13,7 @@ import { computeRibbon, renderRibbon } from './ribbon.js';
 import { allProfiles, profileBadge } from '../frameworks.js';
 import { canStartTestRun, formatTestSummary } from './testChord.js';
 import { cycleGroupFilter, filterByGroup, computeGroupHealth, formatGroupHeader } from './groupChord.js';
+import { cycleWorkspaceFilter, filterByWorkspace, workspaceCycle } from './workspaceChord.js';
 import { renderAwayLine, type AwaySummary } from '../away.js';
 import TimelinePane from './TimelinePane.js';
 import {
@@ -93,6 +94,10 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
   const [selected, setSelected] = useState(0);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
+  // Workspace filter (M173, v1.15) — CLIENT-SIDE by design: this TUI process's
+  // own state, never written to the daemon or state.json, so two attached TUIs
+  // can watch two different workspaces at once.
+  const [wsFilter, setWsFilter] = useState<string | null>(null);
   const [tagPicking, setTagPicking] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [editing, setEditing] = useState<{ name: string; field: 'command' | 'port' | 'env'; cmd: string; port: string; env: string } | null>(null);
@@ -173,9 +178,12 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
   // `groupMembers` null = no group filter active; [] = the active group is
   // empty or vanished from config (filters the list down to nothing).
   const groupMembers = groupFilter ? (registry.getConfig().groups?.[groupFilter]?.apps ?? []) : null;
-  const visibleApps = filterByGroup(
-    tagFilter.length === 0 ? apps : apps.filter(a => tagFilter.every(t => a.tags.includes(t))),
-    groupMembers,
+  const visibleApps = filterByWorkspace(
+    filterByGroup(
+      tagFilter.length === 0 ? apps : apps.filter(a => tagFilter.every(t => a.tags.includes(t))),
+      groupMembers,
+    ),
+    wsFilter,
   ).filter(a => !filterLc || a.name.toLowerCase().includes(filterLc));
   const selIdx = Math.min(selected, Math.max(0, visibleApps.length - 1));
   const current = visibleApps[selIdx];
@@ -415,6 +423,12 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
       const names = Object.keys(registry.getConfig().groups ?? {});
       setGroupFilter(f => cycleGroupFilter(names, f));
     },
+    wsFilter: () => {
+      const labels = workspaceCycle(registry.getConfig());
+      const next = cycleWorkspaceFilter(labels, wsFilter);
+      setWsFilter(next);
+      flashStatus(next ? `workspace: ${next}` : labels.length ? 'workspace filter off' : 'no searchRoots configured');
+    },
     viewHint: () => {
       setChord('g');
       setTimeout(() => setChord(c => (c === 'g' ? null : c)), 1200);
@@ -592,6 +606,7 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
     nameFilter: filterText,
     tagFilter,
     groupFilter,
+    wsFilter,
     mutedCount,
     stormCount,
     appCount: apps.length,

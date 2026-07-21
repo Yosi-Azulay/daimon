@@ -5,6 +5,7 @@ import type { FlakyTest, TestRun } from './tests-page-helpers';
 import type { SearchHit } from './command-palette-helpers';
 import type { GroupInfo } from './groups-helpers';
 import type { LogLevel } from './logs-page-helpers';
+import { workspaceOptionsFrom } from './workspace-helpers';
 
 export type StatusKind = 'stopped' | 'starting' | 'compiling' | 'serving' | 'error';
 export type HealthKind = 'unknown' | 'healthy' | 'unhealthy';
@@ -53,6 +54,40 @@ export interface WorkspaceRow {
   label: string | null;
   appCount: number;
   apps: string[];
+}
+
+// GET /api/graph (M175, v1.15 — experimental): the READ-ONLY depends-graph
+// view. Mirrors src/graph.ts's GraphView shape; the dashboard renders it and
+// never re-derives cycles/levels client-side, so the page cannot drift from
+// what `up` actually executes.
+export interface GraphNode {
+  name: string;
+  baseName: string;
+  status: StatusKind;
+  health: HealthKind;
+  workspaceLabel: string | null;
+  groups: string[];
+  dependsOn: string[];
+  dependedOnBy: string[];
+  inCycle: boolean;
+}
+
+export interface GraphGroupPlan {
+  name: string;
+  apps: string[];
+  levels: string[][];
+  cyclic: string[];
+  unknown: string[];
+}
+
+export interface GraphView {
+  workspace: string | null;
+  nodes: GraphNode[];
+  edges: { from: string; to: string }[];
+  levels: string[][];
+  cycles: string[][];
+  unordered: string[];
+  groups: GraphGroupPlan[];
 }
 
 export interface Overview {
@@ -282,6 +317,12 @@ export class DaimonApi {
     return Array.from(seen).sort();
   });
 
+  // Switcher options (M173, v1.15): every configured searchRoot's EFFECTIVE
+  // label (label, or folder basename when unlabeled) in config order, then
+  // any label seen on a live app. Supersedes `workspaces` for the topbar —
+  // that computed misses unlabeled roots and roots whose apps are stopped.
+  workspaceOptions = computed(() => workspaceOptionsFrom(this.workspaceRows(), this.apps()));
+
   byName(name: string): AppRow | undefined {
     return this.apps().find(a => a.name === name);
   }
@@ -297,6 +338,7 @@ export class DaimonApi {
     void this.loadFrameworks();
     void this.loadSparkline();
     void this.loadGroups();
+    void this.listWorkspaces();
     this.streamStop = this.openEventStream();
     this.pollTimer = setInterval(() => void this.refresh(), POLL_MS);
     this.sparkTimer = setInterval(() => void this.loadSparkline(), 60_000);
@@ -489,12 +531,16 @@ export class DaimonApi {
 
   // Batched v0.9 trends fetch: one HTTP round-trip returns all four metrics
   // for one app. Cuts the Trends page from 4N parallel calls down to N.
-  async getTrendsMulti(opts: { app?: string; metrics: ('compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu')[]; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; since: string; metrics: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }>; _meta?: { aggregation: string } } | null> {
+  // `workspace` (M177, v1.15 — additive): server-side scope; a pre-v1.15
+  // daemon errors on an unknown param's label check never — it just ignores
+  // it, and the fail-soft catch covers everything else.
+  async getTrendsMulti(opts: { app?: string; workspace?: string | null; metrics: ('compile' | 'bundle' | 'errors' | 'restarts' | 'rss' | 'cpu')[]; since: '24h' | '7d' | '30d' }): Promise<{ app: string | null; since: string; metrics: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }>; _meta?: { aggregation: string } } | null> {
     try {
       const params = new URLSearchParams();
       if (opts.app) params.set('app', opts.app);
       params.set('metrics', opts.metrics.join(','));
       params.set('since', opts.since);
+      if (opts.workspace) params.set('workspace', opts.workspace);
       return await firstValueFrom(this.http.get<any>(`/api/history/trends?${params.toString()}`));
     } catch { return null; }
   }
@@ -575,6 +621,17 @@ export class DaimonApi {
       if (opts.app) qs.set('app', opts.app);
       if (opts.workspace) qs.set('workspace', opts.workspace);
       return await firstValueFrom(this.http.get<Report>('/api/report?' + qs.toString()));
+    } catch { return null; }
+  }
+
+  // READ-ONLY depends-graph view (M175, v1.15 — experimental). A pre-v1.15
+  // daemon (404) or any failure degrades to null — the graph page renders a
+  // guided empty state, never an error wall.
+  async getGraph(workspace?: string | null): Promise<GraphView | null> {
+    try {
+      const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+      const r = await firstValueFrom(this.http.get<GraphView>('/api/graph' + qs));
+      return r && Array.isArray(r.nodes) ? r : null;
     } catch { return null; }
   }
 

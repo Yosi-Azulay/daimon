@@ -5,6 +5,7 @@ import {
   rangeToPct,
   moveFocusIndex,
   announceRow,
+  filterTimelineRows,
   parseKindsParam,
   sessionWindow,
 } from './timeline-page-helpers';
@@ -129,6 +130,38 @@ describe('timeline-page helpers', () => {
     });
     it('resolves a null (current/open) end to now', () => {
       expect(sessionWindow({ start: 100, end: null }, 999)).toEqual({ from: 100, to: 999 });
+    });
+  });
+
+  // Workspace filtering (M177, v1.15): folded into the same filter pass as
+  // kind/brush narrowing.
+  describe('filterTimelineRows', () => {
+    const rows = [
+      { ts: 1, app: 'web', kind: 'status', summary: 'a' },
+      { ts: 2, app: 'api', kind: 'status', summary: 'b' },
+      { ts: 3, app: '__daemon__', kind: 'status', summary: 'daemon-start' },
+      { ts: 4, app: '', kind: 'status', summary: 'no app' },
+    ];
+    const allKinds = new Set(['status', 'error']);
+
+    it('null members -> no workspace filtering, only kind/brush apply', () => {
+      const out = filterTimelineRows(rows, { kinds: allKinds, brush: null, members: null });
+      expect(out).toHaveLength(4);
+    });
+
+    it('a member set drops rows for apps outside it, but keeps __daemon__ and app-less rows', () => {
+      const out = filterTimelineRows(rows, { kinds: allKinds, brush: null, members: new Set(['web']) });
+      expect(out.map(r => r.app)).toEqual(['web', '__daemon__', '']);
+    });
+
+    it('still applies the kind filter alongside workspace membership', () => {
+      const out = filterTimelineRows(rows, { kinds: new Set(['error']), brush: null, members: new Set(['web']) });
+      expect(out).toHaveLength(0);
+    });
+
+    it('still applies the brush range alongside workspace membership', () => {
+      const out = filterTimelineRows(rows, { kinds: allKinds, brush: { from: 3, to: 4 }, members: new Set(['web']) });
+      expect(out.map(r => r.app)).toEqual(['__daemon__', '']);
     });
   });
 });

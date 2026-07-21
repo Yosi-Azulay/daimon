@@ -724,6 +724,7 @@ behaved.
 | `/` | filter the app list by name | list, detail |
 | `t` | filter the app list by tags | list, detail |
 | `G` | cycle the group filter (v1.1) | list, detail |
+| `w` | cycle the workspace filter: none → each workspace → none (v1.15; this TUI only — another attached TUI keeps its own) | list, detail |
 | `g` | view hints: g then a/e/v/s/n | list, detail |
 
 **Log pane**
@@ -768,6 +769,67 @@ behaved.
 | `r` | restart the selected app | attach |
 | `q` | detach (the daemon keeps running) | attach |
 <!-- chords:end -->
+
+## Atlas (v1.15)
+
+Workspaces and the dependency graph become visible, navigable surfaces — a
+map of what daimon already knows. The depends graph has ordered every `up`
+since v0.3 without ever being *seen*; workspaces labeled every app without
+ever being a place you could *stand in*. v1.15 draws the map. Zero new
+dependencies (the graph is hand-rolled SVG), zero new config keys, zero
+history migration.
+
+### `daimon graph` — the map in a terminal
+
+```bash
+daimon graph              # topo-level tree for the current workspace
+daimon graph --all        # every workspace
+daimon graph --json       # the /api/graph body, pipe-friendly
+daimon graph --workspace fullstack
+```
+
+Nodes carry live status/health, workspace, and group membership; edges come
+from `config.depends`; the levels are the exact start order orchestrate uses.
+Dependency cycles are named (`✗ cycle: c1 → c2 → c1`), and apps blocked
+downstream of a cycle are reported, never silently dropped. **Read-only,
+permanently**: the graph renders what daimon already computes — it never
+starts, stops, or reorders anything (a test greps the module for
+process-touching APIs). Also `GET /api/graph[?workspace=]` and MCP
+`daimon_graph` — all `experimental`.
+
+### The dashboard graph page
+
+`/graph` (Observe group, `g y`): columns are the topo levels — dependencies
+left, so the picture *is* the start order. Node color follows the status
+tokens with a distinct glyph and border per status (health is never
+color-only); cycles get a flagged banner. Fully keyboard-navigable — Tab
+walks nodes in topo order, arrows walk the graph itself (left → dependency,
+right → dependent), Enter opens the app — with an offscreen narration of the
+whole graph for screen readers. v1.1 groups render as labeled cluster hulls,
+and the group panel previews `up <group>`'s plan, computed by the same call
+the verb executes. `daimon up <group> --dry-run` prints that plan and starts
+nothing.
+
+### Workspaces are a place you stand
+
+The dashboard header's workspace pill is a real switcher: every configured
+searchRoot (an unlabeled root shows as its folder basename) plus "All
+workspaces", persisted per browser in localStorage; a `?workspace=` deep-link
+wins over the stored choice. In the TUI, `w` cycles the workspace filter and
+the status bar shows `ws:<label>` — held in that TUI's own state, so two
+attached TUIs can watch two different workspaces at once. The daemon never
+carries an "active workspace".
+
+The filter means the same thing everywhere (M177): one matching rule (label,
+or basename when unlabeled) across `list`/`errors`/`search`/`report`/
+`trends`/`overview`/`graph`, and an unknown label errors naming the known
+ones instead of impersonating an empty workspace:
+
+```bash
+daimon errors --workspace fullstack   # every app's errors in one workspace
+daimon search "ECONNREFUSED" --workspace fullstack
+daimon report --workspace fullstack --md
+```
 
 ## Multi-agent on one machine (v0.9 + v0.10)
 
@@ -952,8 +1014,8 @@ daimon stop <name> [--steal]
 daimon restart <name> [--steal]
 daimon test <name> [--timeout <dur>] [--steal]   # run the app's own test suite; exit 0/1/2/5 (v0.12)
 daimon mute <name> [--for <dur>] / daimon unmute <name>   # silence OS notifications per app (v0.13)
-daimon up [<profile>]              # topological start; waits for each to reach serving
-daimon down [<profile>]
+daimon up [<group>|<profile>] [--dry-run]   # topological start; --dry-run previews a group's start order (v1.15)
+daimon down [<group>|<profile>]
 daimon run <name> <task> [--watch] [-- args...]
 daimon clean <name> [--deep] [--yes]
 daimon daemon start|stop|status|restart|attach|install-service
@@ -961,11 +1023,11 @@ daimon daemon start|stop|status|restart|attach|install-service
 # queries
 daimon list [--tag <name>] [--workspace <label>] [--full|--compact] [--stream] [--explain]
 daimon status <name> [--full|--compact]
-daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]
+daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured]   # or --workspace <label> for one workspace's errors (v1.15)
 daimon events [--since 1h] [--app <name>] [--stream]
 daimon logs <name> [--tail N] [--since 30s] [--level error|warn|info|debug] [--grep <regex>] [--stream]   # --level: classified lines only (v1.2); --grep/--stream: filtered live tail (v0.12)
 daimon history <name>              # uptime%, restart count, compile p50/p95, top errors
-daimon search <query> [--app <a>] [--since <dur>] [--kind logs|errors|events]   # full-text search (v0.12)
+daimon search <query> [--app <a>] [--workspace <label>] [--since <dur>] [--kind logs|errors|events]   # full-text search (v0.12; --workspace v1.15)
 daimon test-history <name> [--flaky] [--limit N]   # recent test runs / flaky tests (v0.12)
 daimon report [--since 24h|7d] [--app <a>] [--workspace <l>] [--md]   # the digest (v0.13)
 daimon export [--since 7d] [--app <a>] [--format json|md|csv] [--out <file>]   # one-way carry-out bundle, schemaVersion 1 (v1.4)
@@ -991,6 +1053,7 @@ daimon why-empty                   # explain an empty `daimon list`
 daimon env <name> [--use <file>]   # env-file awareness: files, key names, snapshot age (v0.13); --use sets the active file
 daimon env diff <name> [--from <ts>] [--to <ts>]   # files/keys added/removed/changed between spawns (v0.13)
 daimon ports                       # app → port → source (pinned|pool|announced) → pid + foreign holders (v0.13)
+daimon graph [--json] [--workspace <label>] [--all]   # READ-ONLY depends graph: topo levels, cycles, groups (v1.15)
 daimon discover                    # read-only discovery pass: scanned/rejected counts per folder
 daimon timeline [--since 7d] [--app <name>] [--kinds status,error,warning,lint,bundle,task]
 daimon tasks <name>                # discovered non-serve tasks
@@ -1039,7 +1102,8 @@ GET  /api/history/trends?app=&metric=&since=
 GET  /api/history/bundles?app=
 GET  /api/tests?app=&limit=&since=              # test-run history + failures (v0.12)
 GET  /api/tests/flaky?app=                      # flaky tests at each gitHead (v0.12)
-GET  /api/search?q=&app=&since=&kind=           # full-text search (v0.12)
+GET  /api/search?q=&app=&since=&kind=           # full-text search (v0.12); ?workspace= (v1.15, experimental)
+GET  /api/graph[?workspace=&cwd=]               # READ-ONLY depends graph: nodes, edges, topo levels, cycles, group plans (v1.15, experimental)
 GET  /api/why/:name                             # crash forensics composition (v0.12; + envChanged v0.13)
 GET  /api/context/:name?budget=                 # agent context pack (v0.12)
 GET  /api/report?since=&app=&workspace=[&md=1]  # the digest (v0.13)
@@ -1131,7 +1195,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-1102 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
+1180 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 

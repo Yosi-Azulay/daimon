@@ -108,6 +108,7 @@ const ROUTES: { path: string; expect: (page: Page) => Promise<void> }[] = [
   { path: '/history',    expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
   { path: '/trends',     expect: async p => { await expect(p.locator('main').getByText(/trend/i).first()).toBeVisible(); } },
   { path: '/timeline',   expect: async p => { await expect(p.locator('main').getByText(/timeline/i).first()).toBeVisible(); } },
+  { path: '/graph',      expect: async p => { await expect(p.locator('main').getByText(/graph|dependency/i).first()).toBeVisible(); } },
   { path: '/tests',      expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
   { path: '/sessions',   expect: async p => { await expect(p.locator('main h1, main h2').first()).toBeVisible(); } },
   { path: '/agents',     expect: async p => { await expect(p.locator('main').getByText(/agent/i).first()).toBeVisible(); } },
@@ -169,8 +170,15 @@ test.describe('routes (tour pre-dismissed)', () => {
 
   test('app detail opens from a mission-control card', async ({ page }) => {
     await page.goto('/apps');
-    await page.locator('article.c').first().click();
-    await expect(page).toHaveURL(/\/apps\//);
+    // The apps page re-renders on every live event (SSE + 5s poll), so a
+    // single click can race a layout shift between hit-point resolution and
+    // dispatch and land on a card child that stops propagation. Retry the
+    // click until the navigation lands — the standard pattern for clicking
+    // into a genuinely live-updating list.
+    await expect(async () => {
+      await page.locator('article.c').first().click();
+      await expect(page).toHaveURL(/\/apps\/./, { timeout: 1_500 });
+    }).toPass({ timeout: 15_000 });
     await expect(page.locator('h1, h2').first()).toBeVisible();
   });
 

@@ -381,7 +381,11 @@ interface EnvInfo {
                   <span class="material-symbols-outlined">vertical_align_bottom</span>
                 </button>
               </div>
-              <div #logBox class="dm-logbox" (scroll)="onLogScroll($event)">
+              <!-- tabindex=0: a scrollable region must be keyboard-reachable
+                   (axe scrollable-region-focusable, WCAG 2.1.1) — arrow keys
+                   scroll it once focused. Only fires when logs overflow, which
+                   is why a data-poor drive never caught it. -->
+              <div #logBox class="dm-logbox" tabindex="0" role="log" aria-label="Log lines" (scroll)="onLogScroll($event)">
                 @for (l of logLines(); track $index) {
                   <div class="dm-logline"><dm-mono>{{ l }}</dm-mono></div>
                 } @empty {
@@ -959,6 +963,9 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   ];
   readonly activeSection = signal<string>('overview');
   private sectionObserver?: IntersectionObserver;
+  // See setupSectionSpy: observer updates are held while a programmatic
+  // scroll (deep link / nav click) settles, so the pinned target survives.
+  private spyHoldUntil = 0;
 
   private readonly state = signal<any>(null);
   private readonly errs = signal<DetailError[]>([]);
@@ -1163,6 +1170,13 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     if (!els.length || typeof IntersectionObserver === 'undefined') return;
     this.sectionObserver = new IntersectionObserver(
       entries => {
+        // A programmatic scroll (deep-link cold load, section-nav click) just
+        // pinned its target as active; on a page short enough that the target
+        // can't reach the viewport top, this callback's initial batch would
+        // immediately override the pin with the topmost section — so the pin
+        // holds until the programmatic scroll has settled. Real user scrolls
+        // after that update normally.
+        if (Date.now() < this.spyHoldUntil) return;
         const visible = entries.filter(e => e.isIntersecting);
         if (visible.length) {
           // Topmost intersecting section wins.
@@ -1185,6 +1199,7 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     const el = host.querySelector<HTMLElement>('#' + id);
     if (!el) return;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this.spyHoldUntil = Date.now() + (smooth && !reduced ? 800 : 300);
     el.scrollIntoView({ behavior: smooth && !reduced ? 'smooth' : 'auto', block: 'start' });
     this.activeSection.set(id);
     // Keep the deep-link honest without adding a history entry per click.

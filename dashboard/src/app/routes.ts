@@ -23,6 +23,7 @@ export const ROUTES: Routes = [
   { path: 'timeline', loadComponent: () => import('./timeline-page').then(m => m.TimelinePageComponent) },
   { path: 'tests', loadComponent: () => import('./tests-page').then(m => m.TestsPageComponent) },
   { path: 'sessions', loadComponent: () => import('./sessions-page').then(m => m.SessionsPageComponent) },
+  { path: 'graph', loadComponent: () => import('./graph-page').then(m => m.GraphPageComponent) },
   { path: 'requests/:name', loadComponent: () => import('./requests-page').then(m => m.RequestsPageComponent) },
   { path: 'agents', loadComponent: () => import('./agents-page').then(m => m.AgentsPageComponent) },
   { path: 'regressions', loadComponent: () => import('./regressions-page').then(m => m.RegressionsPageComponent) },

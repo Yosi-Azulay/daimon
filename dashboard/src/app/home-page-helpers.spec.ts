@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { computePassRate, passRateTone, statusSummary } from './home-page-helpers';
+import {
+  computePassRate,
+  filterByMemberSet,
+  passRateTone,
+  resourceTotalsFromApps,
+  statusSummary,
+  statusSummaryFromApps,
+} from './home-page-helpers';
 
 describe('computePassRate', () => {
   it('aggregates passed/total across runs with usable totals', () => {
@@ -48,5 +55,48 @@ describe('statusSummary', () => {
   it('normalizes partial/missing totals to zeros', () => {
     expect(statusSummary(null)).toEqual({ apps: 0, serving: 0, errors: 0, stopped: 0 });
     expect(statusSummary({ apps: 3, serving: 2 })).toEqual({ apps: 3, serving: 2, errors: 0, stopped: 0 });
+  });
+});
+
+// Workspace filtering (M177, v1.15): client-side recomputation used once a
+// workspace filter takes the Status/Resources widgets off the server's
+// daemon-wide overview.totals.
+describe('statusSummaryFromApps', () => {
+  it('counts serving/errors/stopped over a (workspace-filtered) app row set', () => {
+    const apps = [
+      { status: 'serving', errorCount: 0 },
+      { status: 'error', errorCount: 2 },
+      { status: 'serving', errorCount: 1 }, // serving but with errors still counts as errored
+      { status: 'stopped', errorCount: 0 },
+    ];
+    expect(statusSummaryFromApps(apps)).toEqual({ apps: 4, serving: 2, errors: 2, stopped: 1 });
+  });
+
+  it('empty input -> all zeros', () => {
+    expect(statusSummaryFromApps([])).toEqual({ apps: 0, serving: 0, errors: 0, stopped: 0 });
+  });
+});
+
+describe('resourceTotalsFromApps', () => {
+  it('sums cpu/mem across apps that report a numeric value', () => {
+    const apps = [{ cpu: 10, memMB: 100 }, { cpu: 5, memMB: null }, { cpu: null, memMB: 50 }];
+    expect(resourceTotalsFromApps(apps)).toEqual({ cpuPct: 15, memMb: 150 });
+  });
+
+  it('null when nothing in the set reports that metric (never a fabricated 0)', () => {
+    expect(resourceTotalsFromApps([{ cpu: null, memMB: null }])).toEqual({ cpuPct: null, memMb: null });
+    expect(resourceTotalsFromApps([])).toEqual({ cpuPct: null, memMb: null });
+  });
+});
+
+describe('filterByMemberSet', () => {
+  const items = [{ app: 'web' }, { app: 'api' }];
+
+  it('null members -> no filter (pass through)', () => {
+    expect(filterByMemberSet(items, null, i => i.app)).toBe(items);
+  });
+
+  it('keeps only items whose key is in the member set', () => {
+    expect(filterByMemberSet(items, new Set(['web']), i => i.app)).toEqual([{ app: 'web' }]);
   });
 });

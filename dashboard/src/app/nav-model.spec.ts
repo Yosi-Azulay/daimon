@@ -6,15 +6,15 @@ describe('nav-model grouping', () => {
     expect(NAV_GROUPS.map(g => g.label)).toEqual(['Observe', 'Investigate', 'Configure']);
   });
 
-  it('covers all 14 nav destinations, each exactly once', () => {
+  it('covers all 15 nav destinations, each exactly once', () => {
     const paths = NAV_ENTRIES.map(e => e.path);
-    expect(paths.length).toBe(14);
-    expect(new Set(paths).size).toBe(14);
+    expect(paths.length).toBe(15);
+    expect(new Set(paths).size).toBe(15);
   });
 
   it('groups the pages by task as specified', () => {
     const byGroup = Object.fromEntries(NAV_GROUPS.map(g => [g.label, g.entries.map(e => e.label)]));
-    expect(byGroup['Observe']).toEqual(['Apps', 'Events', 'Logs', 'Timeline', 'Sessions']);
+    expect(byGroup['Observe']).toEqual(['Apps', 'Events', 'Logs', 'Timeline', 'Graph', 'Sessions']);
     expect(byGroup['Investigate']).toEqual(['Errors', 'History', 'Trends', 'Tests', 'Regressions', 'Report', 'Agents']);
     expect(byGroup['Configure']).toEqual(['Settings', 'Doctor']);
   });
@@ -40,6 +40,7 @@ describe('contextForUrl', () => {
     expect(contextForUrl('/errors')).toEqual({ group: 'Investigate', page: 'Errors' });
     expect(contextForUrl('/logs')).toEqual({ group: 'Observe', page: 'Logs' });
     expect(contextForUrl('/config')).toEqual({ group: 'Configure', page: 'Settings' });
+    expect(contextForUrl('/graph')).toEqual({ group: 'Observe', page: 'Graph' });
   });
 
   it('ignores query and fragment', () => {

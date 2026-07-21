@@ -422,6 +422,15 @@ function formatQuery(f: Flags): string {
   return '';
 }
 
+// The shared effective-label rule (M177, v1.15): a labeled app matches its
+// label; an unlabeled one matches its workspaceRoot's basename — mirrors
+// src/graph.ts without importing it (the CLI dispatch stays lazy, M148).
+function effectiveWorkspaceMatch(a: { workspaceLabel?: string | null; workspaceRoot?: string | null }, ws: string): boolean {
+  if (a.workspaceLabel) return a.workspaceLabel === ws;
+  const base = (a.workspaceRoot ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+  return base === ws;
+}
+
 // Build a `cwd=<process.cwd()>` query fragment for per-app commands, unless
 // the user explicitly opted out with --all or pinned a workspace label.
 function scopeQs(f: Flags): URLSearchParams {
@@ -994,8 +1003,11 @@ async function main() {
       // Belt-and-braces for version skew (new CLI, pre-v0.14 daemon that
       // ignores ?tag=/?workspace=): re-filter locally when rows carry the
       // fields (full shape). Harmless when the daemon already filtered.
+      // v1.15 (M177): the local match follows the same effective-label rule
+      // as the server (label ?? basename(root)) or it would drop the rows a
+      // v1.15 daemon correctly returned for an unlabeled searchRoot.
       if (f.tags.length) arr = arr.filter((a: any) => !Array.isArray(a.tags) || f.tags.every(t => a.tags.includes(t)));
-      if (f.workspace) arr = arr.filter((a: any) => !('workspaceLabel' in a) || a.workspaceLabel === f.workspace);
+      if (f.workspace) arr = arr.filter((a: any) => !('workspaceLabel' in a) || effectiveWorkspaceMatch(a, f.workspace!));
       if (f.groupName) {
         // Same skew belt-and-braces for ?group= (a pre-v1.1 daemon ignores
         // it): the member list lives in local config, so re-intersect.
@@ -1202,8 +1214,10 @@ async function main() {
       if (f.app) params.set('app', f.app);
       if (f.since) params.set('since', f.since);
       if (f.kind) params.set('kind', f.kind);
+      if (f.workspace) params.set('workspace', f.workspace);
       if (f.limit != null && Number.isFinite(f.limit)) params.set('limit', String(Math.floor(f.limit)));
       const r = await call('/api/search?' + params.toString());
+      if (r.status === 400 && r.body?.error && r.body?.hint) failHint(r.body.error, r.body.hint);
       if (r.status === 400) fail(JSON.stringify(r.body));
       out(r.body);
       return;
@@ -1340,6 +1354,28 @@ async function main() {
       const qs = params.toString();
       const r = await call(`/api/sessions${qs ? '?' + qs : ''}`);
       out(r.body);
+      return;
+    }
+    case 'graph': {
+      // READ-ONLY depends-graph view (M175, v1.15). Scoped to the current
+      // workspace by cwd like the other read verbs; --all opts out; --workspace
+      // pins a label (unknown labels 400 with the known ones named).
+      const params = new URLSearchParams();
+      if (f.workspace) params.set('workspace', f.workspace);
+      else if (!f.all) {
+        await ensureCurrentWorkspace();
+        params.set('cwd', process.cwd());
+      }
+      const qs = params.toString();
+      const r = await call(`/api/graph${qs ? '?' + qs : ''}`);
+      if (r.status === 400 && r.body?.error) failHint(r.body.error, r.body.hint);
+      const b: any = r.body;
+      if (!f.json && process.stdout.isTTY && b && typeof b === 'object' && Array.isArray(b.nodes)) {
+        const { renderGraphTree } = await import('./graph.js');
+        process.stdout.write(renderGraphTree(b) + '\n');
+        return;
+      }
+      out(b);
       return;
     }
     case 'env': {
@@ -1631,6 +1667,16 @@ async function main() {
         out(r.body);
         return;
       }
+      // Workspace scope (M177, v1.15 — experimental): all of one workspace's
+      // errors, flat shape, no app name needed. Same pattern as --group <g>.
+      if (!name && f.workspace) {
+        const params = new URLSearchParams({ workspace: f.workspace });
+        if (f.level) params.set('level', f.level);
+        const r = await call('/api/errors?' + params.toString());
+        if (r.status === 400 && r.body?.error) failHint(r.body.error, r.body.hint);
+        out(r.body);
+        return;
+      }
       if (!name) fail(JSON.stringify({ error: 'usage: daimon errors <name> [--since 2m] [--since-last] [--client <id>] [--structured] [--group] [--full|--compact] [--level error|warning|lint|all]' }));
       if (!f.all) await ensureCurrentWorkspace();
       const params = scopeQs(f);
@@ -1877,6 +1923,27 @@ async function main() {
       // returns the readiness summary; legacy profile invocations below stay
       // byte-identical.
       if (profile && knownConfig.groups?.[profile]) {
+        // Start-order preview (M176, v1.15 — display only). --dry-run returns
+        // the plan and acts on NOTHING; on a TTY the same plan prints as
+        // chrome before the real run. Piped non-dry output stays byte-
+        // identical to v1.14 — the preview is never part of the JSON body.
+        if (cmd === 'up' && (f.dryRun || (!f.json && process.stdout.isTTY))) {
+          const g = await call('/api/graph');
+          const plan = Array.isArray(g.body?.groups) ? g.body.groups.find((p: any) => p.name === profile) : null;
+          if (f.dryRun) {
+            if (!plan) failHint(`daemon did not return a plan for group ${profile}`, "the daemon may predate v1.15 — run 'daimon daemon restart' to hand off to the current version");
+            out({ group: profile, dryRun: true, plannedOrder: plan.levels, cyclic: plan.cyclic, unknown: plan.unknown });
+            return;
+          }
+          // Preview chrome is TTY-only and NEVER part of a --json stdout —
+          // an explicit --json on a TTY still gets pure, parseable JSON.
+          // (NO_COLOR terminals keep the preview: it is text, not color.)
+          if (plan && Array.isArray(plan.levels) && plan.levels.length) {
+            const lvls = plan.levels.map((lvl: string[], i: number) => `level ${i + 1}: ${lvl.join(', ')}`).join(' · ');
+            const extra = plan.cyclic?.length ? ` · in cycle (skipped): ${plan.cyclic.join(', ')}` : '';
+            process.stdout.write(`will start: ${lvls}${extra}\n`);
+          }
+        }
         const params = new URLSearchParams();
         if (f.steal) params.set('steal', '1');
         if (cmd === 'up') {
@@ -1900,6 +1967,20 @@ async function main() {
         // is an error, not a silent 0.
         if (cmd === 'down' && r.body?.allStopped === false) process.exit(1);
         return;
+      }
+      // M176 review fix: --dry-run exists only on `up <group>`. Falling
+      // through here would silently perform a REAL start/stop — the M131 law
+      // is an error naming the gap, never a silent full run.
+      if (f.dryRun) {
+        if (cmd === 'down') failHint('down does not support --dry-run', "preview a group's order with 'daimon graph' (stop order is the reverse)");
+        failHint(
+          profile
+            ? `--dry-run is not supported for legacy profiles (${profile} is not a group)`
+            : '--dry-run is not supported for the autoStart list',
+          profile
+            ? `preview a profile with 'daimon orchestrate ${profile} --dry-run', or define '${profile}' as a group in daimon.config.json to use 'daimon up ${profile} --dry-run'`
+            : "define a group in daimon.config.json (groups: { name: [apps...] }) and run 'daimon up <group> --dry-run'",
+        );
       }
       const listRes = await call('/api/apps');
       const all: any[] = Array.isArray(listRes.body) ? listRes.body : [];

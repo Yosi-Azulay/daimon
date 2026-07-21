@@ -41,6 +41,7 @@ export const AUDIT_ROUTES: AuditRoute[] = [
   { url: '/timeline', note: 'Timeline' },
   { url: '/tests', note: 'Tests' },
   { url: '/sessions', note: 'Sessions' },
+  { url: '/graph', note: 'Depends-graph view (v1.15)' },
   { url: '/agents', note: 'Agents' },
   { url: '/regressions', note: 'Regressions' },
   { url: '/report', note: 'Report' },

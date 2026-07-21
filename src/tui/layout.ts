@@ -166,6 +166,12 @@ export interface StatusBarInput {
   nameFilter: string;
   tagFilter: string[];
   groupFilter: string | null;
+  /**
+   * Active workspace FILTER (M173, v1.15) — this TUI's own, client-side by
+   * design; never daemon state. Distinct from `workspace` (the selected app's
+   * label). Optional so pre-v1.15 callers/tests stay valid.
+   */
+  wsFilter?: string | null;
   mutedCount: number;
   stormCount: number;
   appCount: number;
@@ -187,6 +193,7 @@ export function statusSegments(i: StatusBarInput): Segment[] {
   if (i.nameFilter.trim()) filters.push(`/${i.nameFilter.trim()}`);
   if (i.tagFilter.length) filters.push(`tags:${i.tagFilter.join(',')}`);
   if (i.groupFilter) filters.push(`group:${i.groupFilter}`);
+  if (i.wsFilter) filters.push(`ws:${i.wsFilter}`);
   if (filters.length) {
     segs.push({ text: filters.join(' '), tone: 'accent' });
     segs.push({ text: `${i.visibleCount}/${i.appCount}`, tone: 'muted' });

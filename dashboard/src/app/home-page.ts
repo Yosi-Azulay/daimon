@@ -1,10 +1,21 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { DaimonApi } from './daimon-api';
 import { StatusPillComponent, EmptyStateComponent, MonoComponent } from './ui-primitives';
 import { FirstRunCardComponent } from './first-run-card';
 import { readFirstRunDismissed } from './first-run-helpers';
-import { computePassRate, passRateTone, statusSummary, type PassRate } from './home-page-helpers';
+import {
+  computePassRate,
+  filterByMemberSet,
+  passRateTone,
+  resourceTotalsFromApps,
+  statusSummary,
+  statusSummaryFromApps,
+  type PassRate,
+} from './home-page-helpers';
+import { filterAppsByWorkspace, workspaceMemberNames } from './workspace-helpers';
+
+const WS_KEY = 'daimon.workspace';
 
 // Overview home (M158, v1.12). `/` answers "how are things" before a click, by
 // COMPOSING existing endpoints only — status + needs-attention from
@@ -81,10 +92,10 @@ import { computePassRate, passRateTone, statusSummary, type PassRate } from './h
               <h2 id="w-errors">Needs attention</h2>
               <a routerLink="/errors" class="dm-widget-link">Errors →</a>
             </div>
-            @if (api.overview(); as ov) {
-              @if (ov.needsAttention.length) {
+            @if (attention(); as att) {
+              @if (att.length) {
                 <ul class="dm-attn-list">
-                  @for (a of ov.needsAttention.slice(0, 5); track a.name) {
+                  @for (a of att.slice(0, 5); track a.name) {
                     <li>
                       <a [routerLink]="['/apps', a.name]" [queryParams]="{ tab: 'errors' }" class="dm-attn-row">
                         <dm-status-pill [status]="$any(a.status)" health="unknown"></dm-status-pill>
@@ -195,7 +206,10 @@ import { computePassRate, passRateTone, statusSummary, type PassRate } from './h
     .dm-attn-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dm-color-fg-muted); font: 400 var(--dm-text-sm)/1.25rem var(--dm-font); }
     .dm-attn-count {
       flex-shrink: 0; padding: 1px 8px; border-radius: 999px;
-      background: color-mix(in oklch, var(--dm-color-error, #d33) 16%, transparent);
+      /* --dm-badge-tint (6%) is the AA-verified tint every other error badge
+         uses — the 16% this shipped with sank error-on-tint below 4.5:1
+         (caught by the axe gate the first time home rendered live errors). */
+      background: color-mix(in oklch, var(--dm-color-error, #d33) var(--dm-badge-tint, 6%), transparent);
       color: var(--dm-color-error, #d33); font: 600 var(--dm-text-xs)/1.125rem var(--dm-font);
     }
 
@@ -219,41 +233,82 @@ import { computePassRate, passRateTone, statusSummary, type PassRate } from './h
 })
 export class HomePageComponent implements OnInit, OnDestroy {
   readonly api = inject(DaimonApi);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly firstRunDismissed = signal(readFirstRunDismissed(localStorage));
+  readonly workspace = signal<string | null>(null);
 
-  private readonly testRuns = signal<{ passed: number | null; total: number | null }[] | null>(null);
+  // TestRun's `app` field is needed to scope the pass-rate widget to the
+  // active workspace — widened from the original { passed, total } shape.
+  private readonly testRuns = signal<{ app: string; passed: number | null; total: number | null }[] | null>(null);
   private readonly self = signal<any | null | undefined>(undefined);
   private timer?: ReturnType<typeof setInterval>;
 
-  readonly status = computed(() => statusSummary(this.api.overview()?.totals));
+  constructor() {
+    this.workspace.set(localStorage.getItem(WS_KEY));
+    const onWs = (e: Event) => this.workspace.set(((e as CustomEvent).detail as string | null) ?? null);
+    window.addEventListener('daimon:workspace', onWs);
+    this.destroyRef.onDestroy(() => window.removeEventListener('daimon:workspace', onWs));
+  }
 
-  // Fresh install: daemon reachable, but nothing to show anywhere yet.
+  @HostListener('window:storage', ['$event'])
+  onStorage(ev: StorageEvent): void {
+    if (ev.key === WS_KEY) this.workspace.set(ev.newValue);
+  }
+
+  // Status widget: server-composed overview.totals when unfiltered (cheapest
+  // path, matches every other page's default), recomputed client-side from
+  // the workspace-filtered app rows once a filter is active — the server
+  // total has no workspace dimension to slice by.
+  readonly status = computed(() => {
+    const ws = this.workspace();
+    return ws === null
+      ? statusSummary(this.api.overview()?.totals)
+      : statusSummaryFromApps(filterAppsByWorkspace(this.api.apps(), ws));
+  });
+
+  // Fresh install: daemon reachable, but nothing to show anywhere yet. Always
+  // unfiltered — a workspace filter that happens to match zero apps is "no
+  // apps here", not "no apps anywhere", so it must not trigger the walkthrough.
   readonly freshInstall = computed(() => {
     const ov = this.api.overview();
     if (!ov) return false; // not fresh — just not loaded; keep widgets (with notes)
     return (ov.totals?.apps ?? 0) === 0 && this.api.apps().length === 0;
   });
 
+  // Needs-attention rows are keyed by app name only (no workspaceLabel of
+  // their own), so membership is cross-referenced against the live registry.
+  readonly attention = computed(() => {
+    const ov = this.api.overview();
+    if (!ov) return null;
+    const members = workspaceMemberNames(this.api.apps(), this.workspace());
+    return filterByMemberSet(ov.needsAttention, members, a => a.name);
+  });
+
   readonly passRate = computed<PassRate | null>(() => {
     const runs = this.testRuns();
-    return runs === null ? null : computePassRate(runs);
+    if (runs === null) return null;
+    const members = workspaceMemberNames(this.api.apps(), this.workspace());
+    return computePassRate(filterByMemberSet(runs, members, r => r.app));
   });
   readonly passTone = computed(() => passRateTone(this.passRate()?.pct ?? null));
 
-  // Resource glance: app CPU/mem from the overview totals (already computed
-  // server-side) + daemon RSS from /api/self. Null → note.
+  // Resource glance: App CPU/mem scope to the workspace (recomputed from app
+  // rows once filtered, same split as `status` above) — Daemon RSS from
+  // /api/self stays daemon-global and is never filtered. Null → note.
   readonly resource = computed<{ cpuPct: string; memMb: string; rss: string } | null>(() => {
     const ov = this.api.overview();
     const s = this.self();
     if (s === undefined) return null; // not loaded yet
-    const cpu = ov?.totals?.totalCpuPct;
-    const mem = ov?.totals?.totalMemMb;
+    const ws = this.workspace();
+    const totals = ws === null
+      ? { cpuPct: ov?.totals?.totalCpuPct ?? null, memMb: ov?.totals?.totalMemMb ?? null }
+      : resourceTotalsFromApps(filterAppsByWorkspace(this.api.apps(), ws));
     const rss = s?.rssMB ?? s?.rss ?? s?.memory?.rssMB;
-    if (cpu == null && mem == null && rss == null) return null;
+    if (totals.cpuPct == null && totals.memMb == null && rss == null) return null;
     return {
-      cpuPct: cpu == null ? '—' : `${Math.round(cpu)}%`,
-      memMb: mem == null ? '—' : `${Math.round(mem)} MB`,
+      cpuPct: totals.cpuPct == null ? '—' : `${Math.round(totals.cpuPct)}%`,
+      memMb: totals.memMb == null ? '—' : `${Math.round(totals.memMb)} MB`,
       rss: rss == null ? '—' : `${Math.round(Number(rss))} MB`,
     };
   });

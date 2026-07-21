@@ -55,7 +55,7 @@ export type ChordId =
   // inspect (list + detail)
   | 'openUrl' | 'edit' | 'envFile' | 'editor' | 'logFocus'
   // filter (list + detail)
-  | 'filter' | 'tagFilter' | 'groupFilter' | 'viewHint'
+  | 'filter' | 'tagFilter' | 'groupFilter' | 'wsFilter' | 'viewHint'
   // log pane
   | 'levelCycle' | 'grep' | 'grepNext' | 'grepPrev'
   | 'logTop' | 'logBottom' | 'logScroll' | 'logPage'
@@ -134,6 +134,8 @@ export const CHORDS: readonly ChordDef[] = [
     group: 'filter', label: 'tags', desc: 'filter the app list by tags' },
   { id: 'groupFilter', key: 'G', triggers: [ch('G')], panes: ['list', 'detail'],
     group: 'filter', label: 'group', desc: 'cycle the group filter (v1.1)' },
+  { id: 'wsFilter', key: 'w', triggers: [ch('w')], panes: ['list', 'detail'],
+    group: 'filter', label: 'workspace', desc: 'cycle the workspace filter: none → each workspace → none (v1.15; this TUI only — another attached TUI keeps its own)' },
   { id: 'viewHint', key: 'g', triggers: [ch('g')], panes: ['list', 'detail'],
     group: 'filter', label: 'view', desc: 'view hints: g then a/e/v/s/n' },
 
@@ -207,7 +209,7 @@ export const MAIN_CHORD_IDS = [
   'move',
   'start', 'stop', 'restart', 'focus', 'tryFix', 'test', 'orchestrate',
   'openUrl', 'edit', 'envFile', 'editor', 'logFocus',
-  'filter', 'tagFilter', 'groupFilter', 'viewHint',
+  'filter', 'tagFilter', 'groupFilter', 'wsFilter', 'viewHint',
   'levelCycle', 'grep', 'grepNext', 'grepPrev',
   'logTop', 'logBottom', 'logScroll', 'logPage',
 ] as const;

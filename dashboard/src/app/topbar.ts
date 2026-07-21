@@ -46,7 +46,7 @@ type MenuKey = 'ws' | 'profile' | null;
         @if (openMenu() === 'ws') {
           <div class="dm-pop" role="menu">
             <button type="button" role="menuitem" (click)="setWorkspace(null)">All workspaces</button>
-            @for (w of api.workspaces(); track w) {
+            @for (w of api.workspaceOptions(); track w) {
               <button type="button" role="menuitem" (click)="setWorkspace(w)">{{ w }}</button>
             }
           </div>

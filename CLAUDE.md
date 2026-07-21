@@ -41,6 +41,15 @@ src/
                     # Groups READ the depends graph (topoLevels/transitiveClosure),
                     # never change it; they additively subsume the legacy profiles
                     # map (group wins name collisions, with a validate warning).
+  graph.ts          # READ-ONLY depends-graph view (M175, v1.15): buildGraphView
+                    # composes registry summaries + config.depends + v1.1 groups
+                    # into { nodes, edges, levels, cycles, unordered, groups } —
+                    # pure, never starts/stops anything (grep-gated by
+                    # test/graph.test.mjs). Owns the ONE workspace-matching rule
+                    # (effectiveWorkspaceLabel = label ?? basename(root)) every
+                    # ?workspace= surface + both switchers use. Group rows carry
+                    # the EXACT groupUpPlan `up` executes, so previews can't
+                    # drift. TTY tree renderer lives here too.
   tui/chords.ts     # The ONE chord map (M163, v1.13): every TUI chord as data
                     # (key, pane scope, description, group, legacy aliases).
                     # Dispatch + the `?` overlay + per-pane footers + the docs
@@ -183,7 +192,7 @@ scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIM
 scripts/platform-smoke.sh # (M143, v1.9) ~2-min PASS/FAIL probe for a REAL Mac/Linux box.
                     # POSIX sh, zero deps, throwaway DAIMON_HOME; --dry-run runs the
                     # plumbing on any host. The human runs it before publish.
-test/               # node --test suite. 1130 test cases (v1.14); files run in parallel child processes.
+test/               # node --test suite. 1180 test cases (v1.15); files run in parallel child processes.
                     # NEVER run a bench (npm run bench) and npm test at the same
                     # time — they contend and produce spurious failures.
                     # test/helpers/platformSkip.mjs + test/fixtures/platform/<tool>/ (M141-M142).
@@ -399,6 +408,32 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
 - **Daemon handoff is verify-then-adopt (M88).** `daimon daemon restart` leaves children RUNNING (registry handoff flag, 60s window); the incoming daemon re-adopts a child only when the handoff-recorded LISTENING pid is alive AND still the port's listener. Anything else → status `orphaned` + a per-case remedy, never a blind kill. The handoff file records the listener pid (findPortHolder at snapshot time), NOT the spawn/shell pid — on Windows the wrapper dies with the daemon's pipes.
 - **Config back-compat is unbreakable.** Unknown config keys warn (with a nearest-name suggestion) and are ignored — `daimon config validate` checks offline; loading NEVER fails on old or unknown keys.
 - **Error strings carry remedies (M90).** Every user-facing error says what to do next; `test/error-remedies.test.mjs` scans cli.ts/server.ts/main.ts and fails on bare errors. EADDRINUSE forensics is the model.
+- **The graph is READ-ONLY visualization, and the workspace preference is client-side (M173–M177, v1.15).**
+  Three binding rules. (1) The graph view (`/graph`), `daimon graph`, `GET
+  /api/graph`, and MCP `daimon_graph` RENDER what depends.ts/orchestrate.ts
+  already compute — no cascade changes, no auto-restart, no start/stop from the
+  graph, ever; `src/graph.ts` imports nothing that can touch a process and
+  `test/graph.test.mjs` greps to keep it that way. The `up <group>` start-order
+  preview (TTY chrome + `--dry-run` + the graph page's group panel) comes from
+  the SAME `groupUpPlan` call the verb executes, carried on `/api/graph` —
+  never recomputed client-side. (2) The dashboard graph page is **hand-rolled
+  SVG** — no chart/graph/layout library will ever be added for it; layout math
+  is pure in `dashboard/src/app/graph-page-helpers.ts`, columns ARE the topo
+  levels, and keyboard+aria are part of the page's contract (Tab walks nodes,
+  arrows walk edges, offscreen summary narrates the graph; axe gates it).
+  (3) The active workspace is CLIENT-SIDE state: dashboard localStorage
+  (`daimon.workspace` + the `daimon:workspace` CustomEvent bus), TUI process
+  state (`w` chord) — never a daemon key, never state.json; two clients may
+  watch two workspaces at once. Workspace matching everywhere is the ONE
+  effective-label rule (`label ?? basename(root)`, `src/graph.ts` /
+  `dashboard/src/app/workspace-helpers.ts`). Unknown labels 400 naming the
+  known ones on every surface whose param arrived in v1.15+
+  (errors/search/trends/graph/report) — but the FROZEN `/api/apps` and STABLE
+  `/api/overview` keep their pre-v1.15 200-with-empty response forever
+  (additive-only law; server.ts has both helpers: `resolveWorkspaceFilter`
+  400s, `resolveWorkspaceMembers` never errors). A new read surface taking
+  `?workspace=` goes through `resolveWorkspaceFilter` and gets a case in
+  `test/workspace-parity.test.mjs`, the per-surface parity gate.
 - **Groups subsume profiles additively (M93, v1.1).** The `groups` config key's shorthand form is exactly the legacy `profiles` shape; `profiles` keeps loading forever and its behavior is byte-identical. Precedence: groups resolve first on `up`/`down`; on the frozen `stop` verb an APP of the name always wins and the group resolves only where the verb previously errored. Name collisions warn ("group wins") in `daimon config validate`. Groups consume the depends graph via depends.ts — never add ordering logic outside src/groups.ts/orchestrate.ts. On `daimon errors`, bare `--group` keeps fingerprint grouping; `--group <name>` filters (value `fingerprint` reserved). Post-1.0 rule: every new surface declares a stability tier at its source of truth and ships `experimental`.
 
 - **Log-level classification is registry-declared and fail-soft (M99, v1.2).** A framework's level convention lives in its `FrameworkProfile.logLevelPatterns` row (ordered `{ pattern, level }`, first match wins, compiled once) — set ONLY where the framework documents its output format, fixture-gated like every registry field: a profile shipping patterns without covering `logLines` cases in its fixture fails `test/frameworks.test.mjs`, and so does a pattern no fixture line exercises. Profiles without documented conventions get NO patterns (the shared generic heuristic in logLevels.ts applies — never guess). Classification chains registry rows → generic heuristic → null and is FAIL-SOFT at ingest: any miss or throw stores the line with `level` null — a classifier bug may never drop or delay a log line. Storage is the additive nullable `level` column on `log_lines` (guarded ALTER; old rows read null). `--level` filters exclude unclassified lines by design.
@@ -550,7 +585,35 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   registry's `change`/`event` events, and `test/tui-render-budget.test.mjs`
   fails if a second interval or a 1s full-tree tick reappears.
 
-## v1.14 highlights (what landed this release)
+## v1.15 highlights (what landed this release)
+
+- **Atlas (M173–M178)**: workspaces and the depends graph become visible,
+  navigable surfaces. Zero new config keys, dependencies, or history
+  migrations; no frozen shape moved; every new surface `experimental`.
+  **Workspace surfacing (M173)**: the dashboard header pill is a real switcher
+  (configured searchRoots + "all"; unlabeled roots show as their basename;
+  localStorage-persisted; `?workspace=` deep-link wins over stored + cwd
+  auto-pick); TUI `w` chord cycles the filter, status bar shows `ws:<label>` —
+  both CLIENT-SIDE only. **Graph view (M174)**: `/graph` lazy chunk, hand-rolled
+  SVG, columns = topo levels, status via token color + glyph + border (never
+  color-only), full keyboard walk + offscreen narration, axe-gated both
+  viewports. **`daimon graph` (M175)**: verb + `GET /api/graph` + MCP
+  `daimon_graph` (35 tools) — nodes/edges/levels/cycles/unordered/groups; TTY
+  tree; unknown workspace labels 400 naming known ones. **Groups × graph
+  (M176)**: cluster hulls + the `up <group>` start-order preview (`--dry-run`,
+  TTY chrome, group panel) from the same groupUpPlan the verb runs; `up` piped
+  JSON byte-identical. **Workspace parity (M177)**: ONE effective-label rule
+  (`label ?? basename(root)`) + ONE unknown-label 400 across
+  apps/overview/errors/search/trends/report/graph; `?workspace=` added to
+  errors/search/trends; `errors --workspace` / `search --workspace`;
+  history.trends gained an additive `apps` set filter; dashboard
+  home/tests/timeline/trends/report follow the switcher
+  (sessions/agents/settings/doctor deliberately daemon-global). New tests:
+  `graph`, `workspace-parity`, `tui-workspace-chord`; dashboard
+  `graph-page-helpers.spec`, `workspace-helpers.spec`; Playwright `graph.spec`,
+  `workspace-switcher.spec`.
+
+## v1.14 highlights
 
 - **First Run (M168–M172)**: the onboarding release — from `npm i -g daimon` to
   a working setup in five minutes, without reading source. Zero new HTTP

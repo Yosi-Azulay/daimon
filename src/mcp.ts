@@ -51,6 +51,7 @@ export const MCP_TOOL_STABILITY: Record<string, import('./stability.js').Stabili
   daimon_audit: 'experimental', // v1.6 (M122/M125)
   daimon_agents: 'experimental', // v1.6 (M123/M125)
   daimon_sessions: 'experimental', // v1.8 (M134)
+  daimon_graph: 'experimental', // v1.15 (M175)
 };
 
 // MCP resource + prompt catalogs with stability tiers (M125, v1.6). Every MCP
@@ -500,6 +501,21 @@ export function buildServer(): McpServer {
     if (group) qs.set('group', group);
     const q = qs.toString();
     const r = await callJson('/api/report' + (q ? '?' + q : ''));
+    if (r.status === 0) return err(r.body?.error || 'unknown');
+    if (r.status === 400) return err(JSON.stringify(r.body));
+    return ok(r.body);
+  });
+
+  server.registerTool('daimon_graph', {
+    description: 'READ-ONLY dependency-graph view (M175, v1.15): nodes = apps with live status/health, effective workspace label, and v1.1 group membership; edges from config.depends restricted to known apps; topo levels (the start order orchestrate would use, dependencies first); cycles[] naming any dependency cycle (those apps cannot be ordered) and unordered[] for apps blocked downstream of one. Pass workspace to filter to one label (unknown labels error, naming the known ones). Pure visualization of what daimon already computes — it never starts, stops, or reorders anything.',
+    inputSchema: {
+      workspace: z.string().optional().describe('Filter to one workspace label (label, or the searchRoot folder basename when unlabeled)'),
+    },
+  }, async ({ workspace }) => {
+    const qs = new URLSearchParams();
+    if (workspace) qs.set('workspace', workspace);
+    const q = qs.toString();
+    const r = await callJson('/api/graph' + (q ? '?' + q : ''));
     if (r.status === 0) return err(r.body?.error || 'unknown');
     if (r.status === 400) return err(JSON.stringify(r.body));
     return ok(r.body);

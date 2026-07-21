@@ -127,3 +127,21 @@ export function parseKindsParam(raw: string | null | undefined, allKinds: string
 export function sessionWindow(detail: { start: number; end: number | null }, now = Date.now()): { from: number; to: number } {
   return { from: detail.start, to: detail.end ?? now };
 }
+
+// Workspace filtering (M177, v1.15), folded into the same filter pass as the
+// existing kind/brush narrowing. `members` is the Set-or-null shape from
+// workspace-helpers' workspaceMemberNames() (`null` = no filter). A row with
+// no app, or the `__daemon__` pseudo-app (daemon lifecycle events — start/
+// stop, not tied to any one workspace), always stays visible regardless of
+// the filter — daemon-wide context belongs on every workspace's timeline.
+export function filterTimelineRows<T extends TimelineRowLike>(
+  rows: T[],
+  opts: { kinds: Set<string>; brush: { from: number; to: number } | null; members: Set<string> | null },
+): T[] {
+  return rows.filter(r => {
+    if (!opts.kinds.has(r.kind)) return false;
+    if (opts.brush && !(r.ts >= opts.brush.from && r.ts <= opts.brush.to)) return false;
+    if (opts.members !== null && r.app && r.app !== '__daemon__' && !opts.members.has(r.app)) return false;
+    return true;
+  });
+}

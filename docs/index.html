@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.14.0 — docs</title>
+<title>daimon v1.15.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -63,7 +63,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.14.0</span></h1>
+<h1>daimon <span class="badge">v1.15.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -120,8 +120,8 @@ npx daimon init --yes</code></pre>
 <dd>Restart an app. --steal overrides another agent's soft-lock.</dd>
 <dt><code>daimon test &lt;name&gt; [--failed] [--timeout &lt;dur&gt;] [--steal] [--json]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Run the app's own test suite once: resolves the runner (vitest/jest/pytest/go/cargo/dotnet or overrides.&lt;app&gt;.testCommand), parses failures with file:line + coverage, records the run in history. Exit 0 all pass, 1 failures, 2 timeout.</dd>
-<dt><code>daimon up [&lt;group&gt;|&lt;profile&gt;] [--until serving|healthy] [--timeout 300s] [--steal]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>Start a group or profile (or autoStart). Groups resolve first: depends-aware topo order + a "3/4 healthy" readiness summary. Profiles behave as before.</dd>
+<dt><code>daimon up [&lt;group&gt;|&lt;profile&gt;] [--until serving|healthy] [--timeout 300s] [--steal] [--dry-run]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Start a group or profile (or autoStart). Groups resolve first: depends-aware topo order + a "3/4 healthy" readiness summary. Profiles behave as before. --dry-run previews a group's start order without acting.</dd>
 <dt><code>daimon down [&lt;group&gt;|&lt;profile&gt;]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Stop a group, a profile, or all apps. Groups resolve first and stop members in reverse depends order.</dd>
 <dt><code>daimon mute &lt;name&gt; [--for &lt;dur&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
@@ -141,13 +141,13 @@ npx daimon init --yes</code></pre>
 <dd>List apps. Compact by default; --full for v0.4 shape; --stream for NDJSON; --explain wraps with _meta (searchRoots, scanned, rejected, suggestion).</dd>
 <dt><code>daimon status &lt;name&gt; [--full|--compact] | --group &lt;group&gt;</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Get the current status of one app (compact by default), or of a whole group with --group.</dd>
-<dt><code>daimon errors &lt;name&gt; [--since 2m] [--since-last] [--client &lt;id&gt;] [--structured] [--full|--compact] | --group [&lt;group&gt;]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
-<dd>Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}). --group (no name) groups all apps' errors by stack fingerprint.</dd>
+<dt><code>daimon errors &lt;name&gt; [--since 2m] [--since-last] [--client &lt;id&gt;] [--structured] [--full|--compact] | --group [&lt;group&gt;] | --workspace &lt;label&gt;</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
+<dd>Get deduplicated errors for an app. Compact by default ({file,line,col,code,message}). --group (no name) groups all apps' errors by stack fingerprint; --workspace (no name) scopes to one workspace.</dd>
 <dt><code>daimon events [--since 1h] [--app &lt;name&gt;] [--stream]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Get the event log. --stream emits NDJSON until SIGINT.</dd>
 <dt><code>daimon logs &lt;name&gt; [--tail N] [--since 30s] [--level &lt;lvl&gt;] [--grep &lt;regex&gt;] [--stream] | --group &lt;group&gt;</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Recent log lines for an app. --level filters by classified level; --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON; --group merges a group's tails.</dd>
-<dt><code>daimon search &lt;query&gt; [--app &lt;a&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dt><code>daimon search &lt;query&gt; [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Full-text search over everything daimon has seen: log lines, errors, and events. Compact JSON hits {kind,app,ts,snippet,ref}.</dd>
 <dt><code>daimon test-history &lt;name&gt; [--flaky] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Recent test runs for an app (totals, exit codes, gitHead, failures). --flaky lists tests that flipped pass↔fail ≥3× at the same gitHead.</dd>
@@ -191,6 +191,8 @@ npx daimon init --yes</code></pre>
 <dd>One-way carry-out bundle: events, error groups, test runs, compiles, crashes (bounded tails), and the report in one versioned envelope (schemaVersion 1). JSON canonical; --format md paste-ready; --format csv flat rows.</dd>
 <dt><code>daimon sessions [--since 7d] [--json] | show &lt;id&gt; [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Walk history by daemon-uptime slice. Each session is DERIVED from the daemon-start/daemon-stop lifecycle: id (s-&lt;startMs&gt;), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. `show &lt;id&gt;` expands one slice into a digest (apps started/stopped, error groups, test runs, compiles p50/p95, crashes, env changes) — each block degrades to a note.</dd>
+<dt><code>daimon graph [--json] [--workspace &lt;label&gt;] [--all]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>READ-ONLY view of the depends graph: nodes (status/health/workspace/groups), edges from config.depends, topo levels, and any cycles. A terminal tree on a TTY; the /api/graph JSON when piped or with --json.</dd>
 <dt><code>daimon env &lt;name&gt; [--use &lt;file&gt;] | diff &lt;name&gt; [--from &lt;ts&gt;] [--to &lt;ts&gt;]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Env-file awareness: convention files (found/missing), key names, snapshot age; `env diff` shows files/keys added/removed/changed between spawns. --use sets the active env file (pre-v0.13 behavior). Values are NEVER shown.</dd>
 <dt><code>daimon why &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -281,6 +283,7 @@ npx daimon init --yes</code></pre>
 <tr><td><code>/</code></td><td>filter the app list by name</td><td>list, detail</td></tr>
 <tr><td><code>t</code></td><td>filter the app list by tags</td><td>list, detail</td></tr>
 <tr><td><code>G</code></td><td>cycle the group filter (v1.1)</td><td>list, detail</td></tr>
+<tr><td><code>w</code></td><td>cycle the workspace filter: none → each workspace → none (v1.15; this TUI only — another attached TUI keeps its own)</td><td>list, detail</td></tr>
 <tr><td><code>g</code></td><td>view hints: g then a/e/v/s/n</td><td>list, detail</td></tr>
 <tr class="chord-group-header"><td colspan="3"><strong>Log pane</strong></td></tr>
 <tr><td><code>l</code></td><td>cycle level filter: all → error → warn → info</td><td>log</td></tr>
@@ -386,11 +389,11 @@ npx daimon init --yes</code></pre>
 <dt><code>POST /api/orchestrate</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Whole-profile bring-up with one try-fix round (?profile=, ?goal=).</dd>
 <dt><code>GET /api/errors</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>All apps' errors (?group=fingerprint to fold by stack fingerprint; any other ?group= value filters to that named group's members — v1.1, experimental; ?level=).</dd>
+<dd>All apps' errors (?group=fingerprint to fold by stack fingerprint; any other ?group= value filters to that named group's members — v1.1, experimental; ?level=; ?workspace= — v1.15, experimental).</dd>
 <dt><code>GET /api/context/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Agent context pack (?budget= drops sections).</dd>
 <dt><code>GET /api/search</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=).</dd>
+<dd>FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=, ?workspace= — v1.15, experimental param).</dd>
 <dt><code>GET /api/why/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>One-shot crash forensics composition.</dd>
 <dt><code>GET /api/tests</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -410,7 +413,7 @@ npx daimon init --yes</code></pre>
 <dt><code>GET /api/history/bundles</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Bundle-size rows.</dd>
 <dt><code>GET /api/history/trends</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>Bucketed trends (?metric=|?metrics=, ?since=24h|7d|30d).</dd>
+<dd>Bucketed trends (?metric=|?metrics=, ?since=24h|7d|30d, ?workspace= — v1.15, experimental param).</dd>
 <dt><code>GET /api/history/summary/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Summary metrics for one app.</dd>
 <dt><code>GET /api/history/why/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -479,6 +482,8 @@ npx daimon init --yes</code></pre>
 <dd>Timestamp-merged log tail across members, each line carrying its app (?tail=, ?since=, ?grep=, ?level=).</dd>
 <dt><code>POST /api/apps/:name/unmute</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Lift a notification mute.</dd>
+<dt><code>GET /api/graph</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>READ-ONLY depends-graph view (?workspace=, ?cwd=): nodes (status, health, effective workspace label, group membership), edges from config.depends, topo levels, cycles[], and cycle-blocked apps. Renders what orchestrate already computes — never a cascade-behavior surface.</dd>
 </dl>
 
 <h2 id="mcp">MCP reference</h2>
@@ -518,6 +523,7 @@ npx daimon init --yes</code></pre>
 <dt><code>daimon_audit</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Queryable audit trail (v1.6): who did what, when. Derives { ts, agent, action, app, changedKeys, remote } rows from audit.log + audit.log.1 via the verb:&lt;app&gt; convention. Filters (agent/app/since/limit) compose; fail-soft skipped count. Identity is advisory (self-declared header, unverified).</dd>
 <dt><code>daimon_agents</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Agent roster (v1.6): per-agent id, last-seen, action counts, held soft-locks, contention (waits/steals) + contention hotspots. Derived at query time from the audit log + live registry + lock manager. (unknown) aggregates undeclared callers. Identity is advisory.</dd>
 <dt><code>daimon_sessions</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>Walk history by work session (v1.8): DERIVED daemon-uptime slices bounded by daemon-start/daemon-stop — id (s-&lt;startMs&gt;, stable), start/end, duration, endedCleanly, current, apps touched, error/test/compile counts. Pass id to expand one slice into a digest (apps, error groups, tests, compiles p50/p95, crashes, env changes — key names only); each block degrades to a note. No sessions table; pure composition over history.</dd>
+<dt><code>daimon_graph</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>READ-ONLY depends-graph view (v1.15): nodes = apps with live status/health, effective workspace label, and group membership; edges from config.depends; topo levels (the order orchestrate would use); cycles[] named, cycle-blocked apps in unordered[]. Optional workspace filter (unknown labels error naming the known ones). Pure visualization — never starts, stops, or reorders anything.</dd>
 </dl>
 <h3>Resources</h3><dl class="cli-grid">
 <dt><code>daimon://report</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt><dd>The digest (GET /api/report) as a read-only JSON resource.</dd>

@@ -58,9 +58,9 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'POST', path: '/api/profiles/:profile/ensure-up', stability: 'stable', summary: 'Cascade-start a profile and wait (?until=, ?timeoutMs=).' },
   { method: 'GET', path: '/api/profiles/suggest', stability: 'stable', summary: 'Suggest profiles from recurring co-starts.' },
   { method: 'POST', path: '/api/orchestrate', stability: 'stable', summary: 'Whole-profile bring-up with one try-fix round (?profile=, ?goal=).' },
-  { method: 'GET', path: '/api/errors', stability: 'stable', summary: 'All apps\' errors (?group=fingerprint to fold by stack fingerprint; any other ?group= value filters to that named group\'s members — v1.1, experimental; ?level=).' },
+  { method: 'GET', path: '/api/errors', stability: 'stable', summary: 'All apps\' errors (?group=fingerprint to fold by stack fingerprint; any other ?group= value filters to that named group\'s members — v1.1, experimental; ?level=; ?workspace= — v1.15, experimental).' },
   { method: 'GET', path: '/api/context/:name', stability: 'stable', summary: 'Agent context pack (?budget= drops sections).' },
-  { method: 'GET', path: '/api/search', stability: 'stable', summary: 'FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=).' },
+  { method: 'GET', path: '/api/search', stability: 'stable', summary: 'FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=, ?workspace= — v1.15, experimental param).' },
   { method: 'GET', path: '/api/why/:name', stability: 'stable', summary: 'One-shot crash forensics composition.' },
   { method: 'GET', path: '/api/tests', stability: 'stable', summary: 'Recorded test runs (?app=, ?since=, ?limit=).' },
   { method: 'GET', path: '/api/tests/flaky', stability: 'stable', summary: 'Flaky tests derived from run history (?app=).' },
@@ -70,7 +70,7 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/api/history/tasks', stability: 'stable', summary: 'Task runs.' },
   { method: 'GET', path: '/api/history/timeline', stability: 'stable', summary: 'Unified chronological timeline (?kinds=).' },
   { method: 'GET', path: '/api/history/bundles', stability: 'stable', summary: 'Bundle-size rows.' },
-  { method: 'GET', path: '/api/history/trends', stability: 'stable', summary: 'Bucketed trends (?metric=|?metrics=, ?since=24h|7d|30d).' },
+  { method: 'GET', path: '/api/history/trends', stability: 'stable', summary: 'Bucketed trends (?metric=|?metrics=, ?since=24h|7d|30d, ?workspace= — v1.15, experimental param).' },
   { method: 'GET', path: '/api/history/summary/:name', stability: 'stable', summary: 'Summary metrics for one app.' },
   { method: 'GET', path: '/api/history/why/:name', stability: 'stable', summary: 'History-derived why summary (predates /api/why).' },
   { method: 'GET', path: '/api/workspaces', stability: 'stable', summary: 'Registered searchRoots with app counts.' },
@@ -116,4 +116,7 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'GET', path: '/api/groups/:name/status', stability: 'experimental', summary: 'Per-member compact statuses + "3/4 healthy" summary.' },
   { method: 'GET', path: '/api/groups/:name/logs', stability: 'experimental', summary: 'Timestamp-merged log tail across members, each line carrying its app (?tail=, ?since=, ?grep=, ?level=).' },
   { method: 'POST', path: '/api/apps/:name/unmute', stability: 'experimental', summary: 'Lift a notification mute.' },
+
+  // ── experimental: v1.15 atlas (M175) ──────────────────────────────────────
+  { method: 'GET', path: '/api/graph', stability: 'experimental', summary: 'READ-ONLY depends-graph view (?workspace=, ?cwd=): nodes (status, health, effective workspace label, group membership), edges from config.depends, topo levels, cycles[], and cycle-blocked apps. Renders what orchestrate already computes — never a cascade-behavior surface.' },
 ];

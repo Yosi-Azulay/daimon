@@ -43,6 +43,9 @@ test('`>` forces search-only mode (no nav commands)', async ({ page }) => {
 test('recents show on reopen after a navigation selection', async ({ page }) => {
   await openPalette(page);
   await page.locator('.dm-palette-search input').fill('trends');
+  // Wait for the ranked row before Enter (same guard every sibling test has)
+  // — otherwise Enter races the re-rank and picks the default first row.
+  await expect(page.locator('.dm-palette-item').first()).toContainText(/Trends/i, { timeout: 5_000 });
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/trends$/, { timeout: 10_000 });
 

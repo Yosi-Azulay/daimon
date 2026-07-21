@@ -60,3 +60,42 @@ export function statusSummary(totals: Partial<StatusTotals> | null | undefined):
     stopped: totals?.stopped ?? 0,
   };
 }
+
+// Workspace filtering (M177, v1.15): when a workspace filter is active the
+// Status widget can't use the server's daemon-wide overview.totals anymore,
+// so it recomputes the same counts client-side from the (already
+// workspace-filtered) app rows. Mirrors apps-list's status-chip counting
+// (serving/errors/stopped), so the two surfaces never disagree.
+export function statusSummaryFromApps(apps: { status: string; errorCount: number }[]): StatusTotals {
+  let serving = 0, errors = 0, stopped = 0;
+  for (const a of apps) {
+    if (a.status === 'serving') serving++;
+    if (a.status === 'error' || (a.errorCount ?? 0) > 0) errors++;
+    if (a.status === 'stopped') stopped++;
+  }
+  return { apps: apps.length, serving, errors, stopped };
+}
+
+export interface ResourceTotals {
+  cpuPct: number | null;
+  memMb: number | null;
+}
+
+// The per-app-aggregate half of the Resources widget (App CPU / App memory),
+// recomputed from workspace-filtered app rows the same way statusSummaryFromApps
+// recomputes Status — Daemon RSS stays server-global and is never filtered.
+export function resourceTotalsFromApps(apps: { cpu?: number | null; memMB?: number | null }[]): ResourceTotals {
+  let cpuSum = 0, cpuCount = 0, memSum = 0, memCount = 0;
+  for (const a of apps) {
+    if (typeof a.cpu === 'number') { cpuSum += a.cpu; cpuCount++; }
+    if (typeof a.memMB === 'number') { memSum += a.memMB; memCount++; }
+  }
+  return { cpuPct: cpuCount > 0 ? cpuSum : null, memMb: memCount > 0 ? memSum : null };
+}
+
+// Rows keyed by app name (needs-attention items) or by `.app` (test runs)
+// share the same membership-Set-or-null shape from workspace-helpers'
+// workspaceMemberNames() — this just applies it, `null` meaning "no filter".
+export function filterByMemberSet<T>(items: T[], members: Set<string> | null, key: (item: T) => string): T[] {
+  return members === null ? items : items.filter(i => members.has(key(i)));
+}

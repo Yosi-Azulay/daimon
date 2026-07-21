@@ -113,7 +113,7 @@ export class KeyboardShortcutsService {
       // `g a` → /apps since v1.12 (the apps list moved off `/`, which is now
       // the overview). `g c` stays a config alias. Every other chord is
       // unchanged from v1.11 — same key, same destination page.
-      const map: Record<string, string> = { a: '/apps', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', t: '/trends', x: '/tests', n: '/sessions', g: '/agents', r: '/regressions', c: '/config', i: '/timeline', p: '/report' };
+      const map: Record<string, string> = { a: '/apps', e: '/errors', l: '/logs', s: '/config', d: '/doctor', v: '/events', h: '/history', t: '/trends', x: '/tests', n: '/sessions', g: '/agents', r: '/regressions', c: '/config', i: '/timeline', p: '/report', y: '/graph' };
       const route = map[e.key.toLowerCase()];
       if (route) { e.preventDefault(); void this.router.navigateByUrl(route); }
       return;

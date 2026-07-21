@@ -2,7 +2,9 @@
   AfterViewInit,
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
+  HostListener,
   OnDestroy,
   OnInit,
   ViewChild,
@@ -22,10 +24,12 @@ import {
   fmtBucketLabel, unionLabels, alignSeries, alignSeriesNullable, TREND_METRICS,
   type Window, type Series, type SeriesPoint, type TrendMetric,
 } from './trends-page-helpers';
+import { filterAppsByWorkspace } from './workspace-helpers';
 
 Chart.register(...registerables);
 
 type Metric = TrendMetric;
+const WS_KEY = 'daimon.workspace';
 
 function readToken(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -194,10 +198,12 @@ export class TrendChartComponent implements AfterViewInit, OnDestroy {
 })
 export class TrendsPageComponent implements OnInit, OnDestroy {
   readonly api = inject(DaimonApi);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly window = signal<Window>('7d');
   readonly appFilter = signal<string>('__all__');
   readonly showSelf = signal<boolean>(false);
+  readonly workspace = signal<string | null>(null);
 
   @ViewChild('compileChart') compileChart?: TrendChartComponent;
   @ViewChild('bundleChart') bundleChart?: TrendChartComponent;
@@ -211,6 +217,21 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
   @ViewChild('selfChart') selfChart?: TrendChartComponent;
 
   private timer?: ReturnType<typeof setInterval>;
+
+  constructor() {
+    this.workspace.set(localStorage.getItem(WS_KEY));
+    const onWs = (e: Event) => {
+      this.workspace.set(((e as CustomEvent).detail as string | null) ?? null);
+      void this.loadAll();
+    };
+    window.addEventListener('daimon:workspace', onWs);
+    this.destroyRef.onDestroy(() => window.removeEventListener('daimon:workspace', onWs));
+  }
+
+  @HostListener('window:storage', ['$event'])
+  onStorage(ev: StorageEvent): void {
+    if (ev.key === WS_KEY) { this.workspace.set(ev.newValue); void this.loadAll(); }
+  }
 
   async ngOnInit(): Promise<void> {
     await this.api.refresh();
@@ -229,7 +250,13 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
   private async loadAll(silent = false): Promise<void> {
     const win = this.window();
     const appScope = this.appFilter();
-    const apps = appScope === '__all__' ? this.api.apps().map(a => a.name) : [appScope];
+    const ws = this.workspace();
+    // "All apps" scopes to the active workspace's members (fewer, cheaper
+    // per-app round-trips too); an explicit single-app pick is the user's own
+    // override and is never second-guessed by the workspace filter.
+    const apps = appScope === '__all__'
+      ? filterAppsByWorkspace(this.api.apps(), ws).map(a => a.name)
+      : [appScope];
     if (!silent) {
       this.compileChart?.setLoading();
       this.bundleChart?.setLoading();
@@ -256,10 +283,12 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
 
     // One batched round-trip per app returns all four metrics â€” cuts the Trends
     // page from 4N parallel calls down to N. With three apps that's 3 round-
-    // trips instead of 12.
+    // trips instead of 12. Goes through getTrendsMultiWs (not
+    // api.getTrendsMulti) so the request can carry `&workspace=` — the apps
+    // list above is already workspace-scoped, so this is a belt-and-braces
+    // server-side filter, not the primary one.
     const perApp = await Promise.all(apps.map(app =>
-      this.api.getTrendsMulti({ app, metrics: [...TREND_METRICS], since: win })
-        .then(r => ({ app, r })),
+      this.getTrendsMultiWs(app, win, ws).then(r => ({ app, r })),
     ));
     const collect = (m: TrendMetric): Series[] =>
       perApp
@@ -499,6 +528,14 @@ export class TrendsPageComponent implements OnInit, OnDestroy {
         yLabel: 'MB / ms',
       });
     }
+  }
+
+  private async getTrendsMultiWs(
+    app: string,
+    since: Window,
+    ws: string | null,
+  ): Promise<{ metrics: Record<string, { points: SeriesPoint[]; count: number }> } | null> {
+    return this.api.getTrendsMulti({ app, workspace: ws, metrics: [...TREND_METRICS], since });
   }
 
   private async fetchSeries(apps: string[], metric: Metric, win: Window): Promise<Series[]> {

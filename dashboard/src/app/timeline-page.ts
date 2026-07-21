@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, Input, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, Input, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { DaimonApi } from './daimon-api';
@@ -7,12 +7,16 @@ import {
   announceRow,
   bucketizeTimeline,
   brushToRange,
+  filterTimelineRows,
   parseKindsParam,
   moveFocusIndex,
   rangeToPct,
   sessionWindow,
   type NavKey,
 } from './timeline-page-helpers';
+import { workspaceMemberNames } from './workspace-helpers';
+
+const WS_KEY = 'daimon.workspace';
 
 interface TimelineRow {
   ts: number;
@@ -269,6 +273,7 @@ export class TimelinePageComponent implements OnInit {
   @Input() session?: string;
 
   readonly api = inject(DaimonApi);
+  private readonly destroyRef = inject(DestroyRef);
   readonly allKinds = ALL_KINDS;
   readonly kindLabel = KIND_LABEL;
   readonly sinceOpts = SINCE_OPTS;
@@ -284,6 +289,7 @@ export class TimelinePageComponent implements OnInit {
   readonly selected = signal<TimelineRow | null>(null);
   readonly anchoredTs = signal<number | null>(null);
   readonly sessionLabel = signal<string | null>(null);
+  readonly workspace = signal<string | null>(null);
 
   // Client-side brush window (M137) — narrows `filtered()` without
   // re-fetching. Set either by dragging the density strip or by a
@@ -312,9 +318,8 @@ export class TimelinePageComponent implements OnInit {
   private lastTrigger: HTMLElement | null = null;
 
   readonly filtered = computed(() => {
-    const ks = this.kinds();
-    const br = this.brushRange();
-    return this.rows().filter(r => ks.has(r.kind) && (!br || (r.ts >= br.from && r.ts <= br.to)));
+    const members = workspaceMemberNames(this.api.apps(), this.workspace());
+    return filterTimelineRows(this.rows(), { kinds: this.kinds(), brush: this.brushRange(), members });
   });
 
   readonly densityModel = computed(() => bucketizeTimeline(this.rows(), DENSITY_BUCKETS));
@@ -334,6 +339,18 @@ export class TimelinePageComponent implements OnInit {
     if (!br || dm.domainMax <= dm.domainMin) return null;
     return rangeToPct(br, dm.domainMin, dm.domainMax);
   });
+
+  constructor() {
+    this.workspace.set(localStorage.getItem(WS_KEY));
+    const onWs = (e: Event) => this.workspace.set(((e as CustomEvent).detail as string | null) ?? null);
+    window.addEventListener('daimon:workspace', onWs);
+    this.destroyRef.onDestroy(() => window.removeEventListener('daimon:workspace', onWs));
+  }
+
+  @HostListener('window:storage', ['$event'])
+  onStorage(ev: StorageEvent): void {
+    if (ev.key === WS_KEY) this.workspace.set(ev.newValue);
+  }
 
   ngOnInit(): void {
     const anchorRaw = this.ts ?? this.at;

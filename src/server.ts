@@ -21,6 +21,7 @@ import { parsePortPool } from './ports.js';
 import { findPortHolder, scanListeningPorts } from './portDiag.js';
 import { diffEnvSnapshots, resolveEnvFilePath } from './envFiles.js';
 import { isLogLevel, type LogLevel } from './frameworks.js';
+import { buildGraphView, matchesWorkspace, workspaceLabels } from './graph.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -335,6 +336,45 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return false;
       };
 
+      // `?workspace=` read filter (M177, v1.15): ONE matching rule for every
+      // read surface — the effective label (label ?? basename(root), the same
+      // rule /api/graph and both switchers use). An unknown label sends the
+      // 400 naming the known ones (M90) and returns null; callers bail.
+      // Returns undefined when no filter was requested, else the matching
+      // app-name set.
+      //
+      // ONLY for surfaces where the param is NEW in v1.15 (graph, errors,
+      // search, trends — the params themselves are experimental). The frozen
+      // /api/apps and stable /api/overview accepted ?workspace= long before
+      // v1.15 and returned 200 [] for an unknown label — that behavior is
+      // additive-only forever (STABILITY law; a review pass caught the 400
+      // leaking onto them), so they use resolveWorkspaceMembers below, which
+      // never errors.
+      const resolveWorkspaceFilter = (raw: string | null): Set<string> | null | undefined => {
+        if (!raw) return undefined;
+        const cfg = opts.getConfig?.() ?? registry.getConfig();
+        const matching = registry.list().filter(a => matchesWorkspace(a, raw));
+        const known = workspaceLabels(cfg);
+        if (!known.includes(raw) && matching.length === 0) {
+          sendJson(res, 400, {
+            error: `unknown workspace: ${raw}`,
+            known,
+            hint: known.length
+              ? `known workspaces: ${known.join(', ')}`
+              : "no searchRoots configured — run 'daimon init --yes' from a workspace folder",
+          });
+          return null;
+        }
+        return new Set(matching.map(a => a.name));
+      };
+      // Legacy-behavior variant for the pre-v1.15 params: same effective-label
+      // matching, but an unknown label just matches nothing (200 [] / zero
+      // totals, exactly as every prior version behaved).
+      const resolveWorkspaceMembers = (raw: string | null): Set<string> | undefined => {
+        if (!raw) return undefined;
+        return new Set(registry.list().filter(a => matchesWorkspace(a, raw)).map(a => a.name));
+      };
+
       if (method === 'POST' && url.pathname === '/api/shutdown') {
         if (!requireAuth()) return;
         sendJson(res, 200, { ok: true });
@@ -634,6 +674,24 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         return;
       }
 
+      // Depends-graph view (M175, v1.15 — experimental): READ-ONLY composition
+      // over the existing depends graph + registry summaries + v1.1 groups.
+      // ?workspace= filters by effective label (label ?? basename(root));
+      // ?cwd= scopes like /api/apps does. Renders what orchestrate already
+      // computes — never a cascade behavior surface.
+      if (url.pathname === '/api/graph' && method === 'GET') {
+        const cfg = opts.getConfig?.() ?? registry.getConfig();
+        let apps = registry.list();
+        const cwdParam = url.searchParams.get('cwd');
+        if (cwdParam) {
+          apps = apps.filter(a => !!a.workspaceRoot && (isPathUnder(a.workspaceRoot, cwdParam) || isPathUnder(cwdParam, a.workspaceRoot)));
+        }
+        const ws = url.searchParams.get('workspace');
+        if (ws && resolveWorkspaceFilter(ws) === null) return; // 400 already sent
+        sendJson(res, 200, buildGraphView(apps, cfg, ws, registry.names()));
+        return;
+      }
+
       if (method === 'GET' && url.pathname === '/metrics' && opts.metricsEnabled) {
         const body = exportMetrics(registry);
         res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'content-length': Buffer.byteLength(body) });
@@ -787,6 +845,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           const windows: Record<string, number> = { '24h': 24 * 3600 * 1000, '7d': 7 * 86400 * 1000, '30d': 30 * 86400 * 1000 };
           const sinceMsTrend = windows[sinceLabel] ?? windows['24h'];
           const bucketMs = sinceLabel === '24h' ? 3600 * 1000 : 86400 * 1000;
+          // ?workspace= (M177, v1.15 — experimental param): restrict every
+          // series to the workspace's apps; absent → byte-identical output.
+          const wsTrend = resolveWorkspaceFilter(url.searchParams.get('workspace'));
+          if (wsTrend === null) return; // 400 already sent
           // `metrics=compile,bundle,errors,restarts` (v0.9) returns all metrics
           // in one round-trip, sharing the queryEvents() scan between errors
           // and restarts. `metric=<single>` continues to work for back-compat.
@@ -800,7 +862,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             if (!filtered.length) { sendJson(res, 400, { error: 'metrics must include at least one of compile|bundle|errors|restarts|rss|cpu' }); return; }
             const out: Record<string, { points: { t: number; v: number; v2?: number }[]; count: number }> = {};
             for (const m of filtered) {
-              const r = h.trends({ app, metric: m, sinceMs: sinceMsTrend, bucketMs });
+              const r = h.trends({ app, apps: wsTrend ?? undefined, metric: m, sinceMs: sinceMsTrend, bucketMs });
               out[m] = { points: r.points, count: r.count };
             }
             sendJson(res, 200, { app: app ?? null, since: sinceLabel, metrics: out, _meta: { aggregation: sinceLabel === '24h' ? 'hour' : 'day' } });
@@ -811,7 +873,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
             sendJson(res, 400, { error: 'metric must be compile|bundle|errors|restarts|rss|cpu' });
             return;
           }
-          const { points, count } = h.trends({ app, metric, sinceMs: sinceMsTrend, bucketMs });
+          const { points, count } = h.trends({ app, apps: wsTrend ?? undefined, metric, sinceMs: sinceMsTrend, bucketMs });
           sendJson(res, 200, { app: app ?? null, metric, since: sinceLabel, points, _meta: { aggregation: sinceLabel === '24h' ? 'hour' : 'day', count } });
           return;
         }
@@ -1222,6 +1284,11 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           if (members === null) return; // 400 already sent
           if (members) scope = scope.filter(s => inGroup(members, s));
         }
+        // ?workspace= (M177, v1.15 — experimental param): same additive
+        // discipline as ?group=; absent param → byte-identical output.
+        const wsScope = resolveWorkspaceFilter(url.searchParams.get('workspace'));
+        if (wsScope === null) return; // 400 already sent
+        if (wsScope) scope = scope.filter(s => wsScope.has(s.name));
         const perApp = scope.map(s => ({
           app: s.name,
           errors: (registry.errors(s.name) ?? []).filter(matchesLevel),
@@ -1358,6 +1425,10 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const reportGroup = url.searchParams.get('group');
         const reportMembers = resolveGroupFilter(reportGroup);
         if (reportMembers === null) return; // 400 already sent
+        // ?workspace= consistency (M177): unknown label → the same 400 every
+        // other surface sends; matching inside buildReport uses the shared
+        // effective-label rule.
+        if (resolveWorkspaceFilter(url.searchParams.get('workspace')) === null) return;
         const { buildReport, renderReportMd } = await import('./report.js');
         const { readAuditEntries: readAuditR, deriveAuditRow: deriveR } = await import('./auditQuery.js');
         const report = buildReport({
@@ -1456,13 +1527,23 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const sinceP = parseSinceParam(url.searchParams.get('since'));
         const since = sinceP.sinceTs ?? (sinceP.sinceMs != null ? Date.now() - sinceP.sinceMs : undefined);
         const limitRaw = Number(url.searchParams.get('limit') || 50);
+        const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
+        // ?workspace= (M177, v1.15 — experimental param): hits restricted to
+        // the workspace's apps. Post-filtered over a widened fetch so the
+        // result stays CORRECT (never a foreign-workspace hit); it may return
+        // fewer than `limit` — honest, never wrong.
+        const wsHits = resolveWorkspaceFilter(url.searchParams.get('workspace'));
+        if (wsHits === null) return; // 400 already sent
         const r = h.search({
           q,
           app: url.searchParams.get('app') || undefined,
           since,
           kind: (kindRaw || undefined) as any,
-          limit: Number.isFinite(limitRaw) ? limitRaw : 50,
+          limit: wsHits ? Math.min(500, Math.max(limit * 4, limit)) : limit,
         });
+        if (wsHits) {
+          r.hits = r.hits.filter((hit: any) => !hit.app || wsHits.has(hit.app)).slice(0, limit);
+        }
         sendJson(res, 200, r);
         return;
       }
@@ -1732,7 +1813,11 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const workspace = url.searchParams.get('workspace');
         const profile = url.searchParams.get('profile');
         let filtered = all;
-        if (workspace) filtered = filtered.filter(a => a.workspaceLabel === workspace);
+        // v1.15 (M177): shared effective-label matching. The param predates
+        // v1.15 on this stable surface — unknown labels keep their historical
+        // zero-totals response, never the new surfaces' 400.
+        const wsMembers = resolveWorkspaceMembers(workspace);
+        if (wsMembers) filtered = filtered.filter(a => wsMembers.has(a.name));
         if (profile) {
           const list = cfg?.profiles?.[profile] ?? null;
           if (list) filtered = filtered.filter(a => list.includes(a.name));
@@ -1858,8 +1943,12 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         // full summaries live, keeps the output shape independent of filters.
         const tagFilters = url.searchParams.getAll('tag').filter(Boolean);
         if (tagFilters.length) all = all.filter(s => tagFilters.every(t => (s.tags ?? []).includes(t)));
-        const wsFilter = url.searchParams.get('workspace');
-        if (wsFilter) all = all.filter(s => s.workspaceLabel === wsFilter);
+        // v1.15 (M177): matching moved to the shared effective-label rule so an
+        // unlabeled searchRoot's basename filters here exactly like everywhere
+        // else. This param predates v1.15 on a FROZEN surface, so an unknown
+        // label keeps its historical 200 [] (never the new surfaces' 400).
+        const wsMembers = resolveWorkspaceMembers(url.searchParams.get('workspace'));
+        if (wsMembers) all = all.filter(s => wsMembers.has(s.name));
         // ?group= (M95): filter to a named group's members. Same server-side
         // discipline as ?tag=/?workspace= — the output shape never changes
         // with the filter.
