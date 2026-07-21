@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -38,7 +39,7 @@ const SPARK_MAX = 30;
   selector: 'dm-tests-page',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CommonModule, MatExpansionModule, MatIconModule, MatTooltipModule, EmptyStateComponent, SkeletonComponent, MonoComponent],
+  imports: [CommonModule, RouterLink, MatExpansionModule, MatIconModule, MatTooltipModule, EmptyStateComponent, SkeletonComponent, MonoComponent],
   template: `
     <div class="dm-page-header">
       <div>
@@ -52,6 +53,13 @@ const SPARK_MAX = 30;
 
     @if (loading() && cards().length === 0) {
       <dm-skeleton height="14rem"></dm-skeleton>
+    } @else if (cards().length === 0 && api.apps().length === 0) {
+      <dm-empty icon="apps" title="No apps yet"
+                hint="Test history appears here once you have an app configured and have run daimon test against it.">
+        <a routerLink="/apps" class="dm-link-btn">
+          <mat-icon fontSet="material-symbols-outlined">apps</mat-icon>Go to apps
+        </a>
+      </dm-empty>
     } @else if (cards().length === 0) {
       <dm-empty icon="science" title="No test runs recorded yet" hint="Run daimon test &lt;app&gt; (or let an agent do it) to populate this page."></dm-empty>
     } @else {
@@ -198,6 +206,9 @@ const SPARK_MAX = 30;
     @keyframes dm-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 
+    .dm-link-btn { display: inline-flex; align-items: center; gap: .375rem; margin-top: .75rem; padding: 6px 14px; border-radius: var(--dm-radius-md); background: var(--dm-color-primary); color: var(--dm-color-on-primary); text-decoration: none; font: 500 var(--dm-text-sm)/1.25rem Roboto; }
+    .dm-link-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
+
     .dm-grid { display: grid; gap: .75rem; }
     .dm-card { background: var(--dm-color-surface) !important; border: 1px solid var(--dm-color-border); border-radius: var(--dm-radius-xl) !important; box-shadow: none !important; overflow: hidden; }
     .dm-app { margin-left: .75rem; }
@@ -273,7 +284,7 @@ const SPARK_MAX = 30;
   `],
 })
 export class TestsPageComponent implements OnInit {
-  private readonly api = inject(DaimonApi);
+  readonly api = inject(DaimonApi);
 
   readonly loading = signal<boolean>(true);
   readonly cards = signal<AppCard[]>([]);

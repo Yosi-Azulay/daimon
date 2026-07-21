@@ -82,7 +82,7 @@ _daimon_complete() {
     free-port) flags="--force --help --no-color --no-spawn" ;;
     handoff) flags="--help --no-color --no-spawn" ;;
     history) flags="--help --no-color --no-spawn" ;;
-    init) flags="--force --auto --help --no-color --no-spawn" ;;
+    init) flags="--yes --force --auto --help --no-color --no-spawn" ;;
     list) flags="--tag --workspace --group --full --compact --stream --explain --help --no-color --no-spawn" ;;
     logs) flags="--tail --since --level --grep --stream --group --help --no-color --no-spawn" ;;
     mute) flags="--for --help --no-color --no-spawn" ;;

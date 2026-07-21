@@ -845,7 +845,7 @@ async function main() {
     const { local, user } = configLookupPaths();
     const target = explicit ?? (fsMod.existsSync(local) ? local : user);
     if (!fsMod.existsSync(target)) {
-      out({ path: target, ok: false, errors: [`no config file at ${target}`], warnings: [], hint: "run 'daimon init --auto' to create one" });
+      out({ path: target, ok: false, errors: [`no config file at ${target}`], warnings: [], hint: "run 'daimon init --yes' to create one" });
       process.exit(1);
     }
     let raw: unknown;
@@ -881,7 +881,7 @@ async function main() {
   }
   if (cmd === 'export-config') {
     const cfgR = loadConfig();
-    if (cfgR.kind !== 'loaded') failHint('no config loaded', "run 'daimon init --auto' in your workspace to create one");
+    if (cfgR.kind !== 'loaded') failHint('no config loaded', "run 'daimon init --yes' in your workspace to create one");
     const fParsed = parseFlags(rest);
     const cfg: any = JSON.parse(JSON.stringify(cfgR.config));
     if (fParsed.redacted) {
@@ -914,65 +914,38 @@ async function main() {
     return;
   }
   if (cmd === 'init') {
-    const { runInit } = await import('./init.js');
+    // init writes exactly one file (daimon.config.json in cwd) and starts
+    // nothing (M168, v1.14): the closing lines POINT at `daimon daemon start`
+    // and `daimon claude install` rather than running them.
+    const { runInit, explainEmpty } = await import('./init.js');
     const fParsed = parseFlags(rest);
     try {
-      const r = await runInit({ force: !!fParsed.force, auto: !!fParsed.auto });
-      out({ path: r.path, installClaude: r.installClaude, auto: r.auto });
-      if (r.installClaude) {
-        const apiPort = readApiPort();
-        const { install: claudeInstall, defaultClaudeDir } = await import('./claude.js');
-        const inst = claudeInstall({
-          skill: true, commands: false, agent: true, dir: defaultClaudeDir(), apiPort,
-          onMigrationEvent: ev => {
-            if (ev.kind === 'removed') out({ removed: ev.file });
-            else out({ warning: `${ev.file} was modified; backing up to ${ev.file}.bak` });
-          },
-        });
-        out({ claudeInstalled: inst.installed });
+      const r = await runInit({ force: !!fParsed.force, auto: !!fParsed.auto, yes: !!fParsed.yes });
+      if (r.cancelled) {
+        out({ path: r.path, cancelled: true, written: false });
+        return;
       }
-      // A running daemon was spawned with a different cwd / config path; without this
-      // restart, the just-written config has no effect and `daimon list` returns [].
+      // Legacy --auto shape preserved verbatim; --yes adds the accepted proposal.
+      const base: any = { path: r.path, installClaude: r.installClaude, auto: r.auto };
+      if (r.yes && r.proposal) {
+        base.yes = true;
+        base.proposal = {
+          searchRoots: r.proposal.searchRoots,
+          apps: r.proposal.apps,
+          portRange: r.proposal.portRange,
+          apiPort: r.proposal.apiPort,
+        };
+      }
+      out(base);
+      if (r.proposal && r.proposal.apps.length === 0) {
+        out({ warning: 'discovery found 0 apps in this directory', reasons: explainEmpty(r.proposal) });
+      }
       const lock = readLock();
       if (lock) {
-        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/snapshot-state`, { method: 'POST', headers: authHeaders() }); } catch {}
-        try { await fetch(`http://127.0.0.1:${lock.apiPort}/api/shutdown`, { method: 'POST', headers: authHeaders() }); } catch {}
-        await waitForExit(lock.pid, 5000);
-        removeLock();
-        try {
-          const port = process.env.DAIMON_PORT ? Number(process.env.DAIMON_PORT) : undefined;
-          const info = await spawnDetached({ port: Number.isFinite(port as number) && (port as number) > 0 ? (port as number) : undefined });
-          out({ daemonRestarted: true, pid: info.pid, port: info.apiPort });
-        } catch (err: any) {
-          out({ daemonRestarted: false, error: err?.message || String(err) });
-        }
+        out({ hint: "a daimon daemon is already running with the previous config — run 'daimon daemon restart' to pick this one up" });
+      } else {
+        out({ hint: "next: run 'daimon daemon start', then 'daimon list'" });
       }
-      // F59 smoke test: ask the (now-current) daemon to run a discovery pass and report counts.
-      try {
-        await ensureDaemon();
-        const explainR = await fetch(getBaseUrl() + '/api/discovery/explain', { headers: authHeaders() });
-        if (explainR.ok) {
-          const exp: any = await explainR.json();
-          const byKind: Record<string, number> = {};
-          try {
-            const lr = await fetch(getBaseUrl() + '/api/apps?format=full', { headers: authHeaders() });
-            const arr = await lr.json();
-            if (Array.isArray(arr)) {
-              for (const a of arr) {
-                const kind = a.workspaceType ?? 'unknown';
-                byKind[kind] = (byKind[kind] ?? 0) + 1;
-              }
-            }
-          } catch {}
-          const apps = exp.appsFound ?? 0;
-          const smoke: any = { init: 'ok', configPath: r.path, discovered: { apps, byKind } };
-          if (apps === 0) {
-            smoke._meta = { searchRoots: exp.searchRoots, scanned: exp.scanned, rejected: exp.rejected, suggestion: exp.suggestion };
-            smoke.warning = 'discovery found 0 apps; see _meta.suggestion';
-          }
-          out(smoke);
-        }
-      } catch {}
     } catch (err: any) {
       fail(JSON.stringify({ error: err?.message || String(err) }));
     }
@@ -1500,7 +1473,7 @@ async function main() {
     }
     case 'doctor': {
       const cfgR = loadConfig();
-      if (cfgR.kind !== 'loaded') failHint('no config loaded', "run 'daimon init --auto' in your workspace to create one");
+      if (cfgR.kind !== 'loaded') failHint('no config loaded', "run 'daimon init --yes' in your workspace to create one");
       if (f.self) {
         await ensureDaemon();
         const r = await call('/api/self');
@@ -1527,10 +1500,11 @@ async function main() {
         return;
       }
       const warnings: string[] = [];
+      const discoveryStats = { scanned: 0, rejected: {} as Record<string, number> };
       const { discoverApps } = await import('./discovery.js');
       const { runDoctor } = await import('./doctor.js');
-      const apps = discoverApps(cfgR.config, { warnings });
-      const result = await runDoctor(cfgR.config, apps);
+      const apps = discoverApps(cfgR.config, { warnings, stats: discoveryStats });
+      const result = await runDoctor(cfgR.config, apps, { configPath: cfgR.path, discoveryStats });
       for (const w of warnings) {
         result.checks.unshift({ name: `discovery: ${w}`, ok: false, detail: w });
       }

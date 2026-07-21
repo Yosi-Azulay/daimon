@@ -87,14 +87,17 @@
 <h2 id="install">Install</h2>
 <pre><code>npm install -g daimon
 # or
-npx daimon init --auto</code></pre>
+npx daimon init --yes</code></pre>
 
 <h2 id="quickstart">Quickstart (3 min)</h2>
+<p>The full five-minute walkthrough — including the three-line hand-written config — is
+<a href="https://github.com/Yosi-Azulay/daimon/blob/main/QUICKSTART.md">QUICKSTART.md</a>, and every command on that page is executed by a test on a clean state directory. The short version:</p>
 <ol>
-  <li>Run <code>daimon init --auto</code> in a workspace with any supported framework marker — <code>nx.json</code>, <code>angular.json</code>, <code>next.config.*</code>, <code>vite.config.*</code>, <code>manage.py</code>, <code>Gemfile</code>, a <code>*.csproj</code>, <code>pubspec.yaml</code>, or just a <code>package.json</code> with a <code>dev</code> script. Run <code>daimon frameworks</code> to see the full registry.</li>
+  <li>Run <code>daimon init --yes</code> in a workspace with any supported framework marker — <code>nx.json</code>, <code>angular.json</code>, <code>next.config.*</code>, <code>vite.config.*</code>, <code>manage.py</code>, <code>Gemfile</code>, a <code>*.csproj</code>, <code>pubspec.yaml</code>, or just a <code>package.json</code> with a <code>dev</code> script. It runs the same discovery scan the daemon runs and writes <code>daimon.config.json</code> in that folder — that one file, nothing else. Run <code>daimon frameworks</code> to see the full registry.</li>
   <li>Run <code>daimon list</code> to see discovered apps.</li>
   <li>Run <code>daimon start &lt;app&gt;</code> (or <code>daimon up &lt;profile&gt;</code> for the whole stack).</li>
   <li>Open the dashboard: <code>daimon dashboard</code>.</li>
+  <li>When something looks wrong: <code>daimon doctor</code>.</li>
 </ol>
 
 <h2 id="stability">Stability tiers</h2>
@@ -229,8 +232,8 @@ npx daimon init --auto</code></pre>
 <dd>Validate a daimon config against the known-key schema: unknown keys warn with the nearest valid name; malformed values listed; group checks (unknown apps, autoStart overlap, profile collisions). Exit 0 with warnings, 1 on errors.</dd>
 <dt><code>daimon export-config [--redacted]</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Emit the active config to stdout. --redacted replaces apiToken with "&lt;redacted&gt;" and rewrites home paths to ~/...</dd>
-<dt><code>daimon init [--force] [--auto]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>Create a daimon config in cwd; --auto picks safe defaults (no prompts) for workspaces with nx/angular/vite markers.</dd>
+<dt><code>daimon init [--yes] [--force] [--auto]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dd>Create daimon.config.json in cwd from a real discovery scan of this folder; --yes accepts the proposal without prompts.</dd>
 <dt><code>daimon completion &lt;bash|zsh|fish|powershell&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Emit a shell completion script for the given shell.</dd>
 <dt><code>daimon workspaces list|add [path] [--label &lt;name&gt;] | rm &lt;path&gt; | show [path]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -640,6 +643,10 @@ npx daimon init --auto</code></pre>
 <tr><td>Child unverifiable after a daemon handoff</td><td><span class="cov cov-gap">by design: no rule</span></td><td>No auto-fix by design (verify-then-kill: daimon never kills what it cannot positively identify). The app surfaces as status <code>orphaned</code> with a per-case remedy in <code>daimon list</code> / <code>daimon why</code> (M88).</td></tr>
 <tr><td>CLI and daemon running different versions</td><td><span class="cov cov-built-in">built-in</span></td><td>Every CLI call compares versions via the x-daimon-version header and warns on stderr with the remedy (<code>daimon daemon restart</code>) — never a hard fail (M88).</td></tr>
 <tr><td>Plugin failed to load, or was disabled after a hook threw</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>plugin-load-error: &lt;file&gt;</code> (M118, v1.5) — advise-only: names the captured error and the remedy (fix or remove the file, then <code>daimon daemon restart</code>). Doctor never deletes or edits plugin files; a hook throw disables the plugin for the session with one <code>plugin-error</code> self-event (M117 crash isolation), never a daemon-down. <code>daimon plugins</code> is the detail view.</td></tr>
+<tr><td>Ran daimon from the wrong directory (config lives in a parent, or only the global ~/.daimon/config.json was found)</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>config-wrong-directory</code> (M171, v1.14) — suggest-only: names the config file daimon actually found and how to use it (cd there, copy it here, or rely on the global fallback on purpose). Only fires when the caller tells doctor which path it loaded (<code>daimon doctor</code> does); never invents a --config flag that does not exist.</td></tr>
+<tr><td>Config present but the daemon was never started</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>daemon-not-started</code> (M171, v1.14) — suggest-only: fires only when nothing at all answers on apiPort (distinct from <code>port-holder-no-lock</code>, which owns the case where something ELSE holds it); remedy is <code>daimon daemon start</code>.</td></tr>
+<tr><td>Config loads but discovery found zero apps</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>no-apps-detected</code> (M171, v1.14) — suggest-only: surfaces the single likeliest cause from discovery's own <code>stats.rejected</code> tally (no searchRoots configured, a missing path, no serve target, a fallback superseded by a named profile, no dev/serve/start script, or no framework markers at all) with the matching remedy — never a generic guess.</td></tr>
+<tr><td>Detected apps support per-app ports but no ports.pool is configured</td><td><span class="cov cov-rule">doctor rule</span></td><td><code>port-pool-absent</code> (M171, v1.14) — suggest-only: fires when at least one discovered app's framework profile declares <code>portFlag</code>/<code>portEnv</code> (see src/frameworks.ts) and <code>ports.pool</code> is unset; proposes the key with a concrete example range. Never writes config.</td></tr>
 </tbody></table>
 
 <h2 id="platforms">Platform support</h2>

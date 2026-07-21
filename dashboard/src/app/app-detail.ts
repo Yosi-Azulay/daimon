@@ -1188,7 +1188,17 @@ export class AppDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     el.scrollIntoView({ behavior: smooth && !reduced ? 'smooth' : 'auto', block: 'start' });
     this.activeSection.set(id);
     // Keep the deep-link honest without adding a history entry per click.
-    try { history.replaceState(history.state, '', '#' + id); } catch {}
+    //
+    // The URL must be ABSOLUTE-ish: `replaceState` resolves a relative URL
+    // against the document's BASE url, and index.html sets `<base href="/">`,
+    // so a bare '#errors' rewrote the address to `/#errors` and threw the
+    // `/apps/<name>` path away. That silently broke every legacy `?tab=`
+    // deep-link (M85) — they landed on the overview home — and corrupted the
+    // address bar on any section scroll. Deep-link back-compat is a hard rule;
+    // keep the path and query, change only the fragment.
+    try {
+      history.replaceState(history.state, '', location.pathname + location.search + '#' + id);
+    } catch {}
   }
 
   ngOnDestroy(): void {

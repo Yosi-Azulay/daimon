@@ -18,6 +18,10 @@ export interface PersistedState {
   // the away summary has been dismissed. Refines the gap baseline so a dismissed
   // summary never re-nags on re-attach. Additive; absent = never acknowledged.
   awayAck?: number;
+  // First-attach TUI hint (M170, v1.14): the ts at which the "press ? for
+  // help" line was shown. Present = shown once already, never show it again.
+  // Additive; absent = this machine has never attached the TUI.
+  tuiHintSeen?: number;
 }
 
 // What the last loadPersistedState() had to do to produce a usable state
@@ -47,6 +51,7 @@ function parseState(raw: string): PersistedState | null {
       ...(parsed.digests && typeof parsed.digests === 'object' ? { digests: parsed.digests } : {}),
       ...(parsed.quarantineFirstSeen && typeof parsed.quarantineFirstSeen === 'object' ? { quarantineFirstSeen: parsed.quarantineFirstSeen } : {}),
       ...(typeof parsed.awayAck === 'number' ? { awayAck: parsed.awayAck } : {}),
+      ...(typeof parsed.tuiHintSeen === 'number' ? { tuiHintSeen: parsed.tuiHintSeen } : {}),
     };
   }
   return null;

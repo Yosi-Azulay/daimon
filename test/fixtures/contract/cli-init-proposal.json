@@ -1,0 +1,31 @@
+{
+  "surface": "daimon init --yes",
+  "note": "Golden shape (key sets + types, never values). Regenerate with UPDATE_CONTRACT_SNAPSHOTS=1 and hand-review: keys may be ADDED, never removed or retyped.",
+  "cases": {
+    "default": {
+      "installClaude": "boolean",
+      "path": "string",
+      "proposal": {
+        "apiPort": "number",
+        "apps": {
+          "$array": {
+            "command": "string",
+            "name": "string",
+            "profile": "string",
+            "workspaceRoot": "string"
+          }
+        },
+        "portRange": {
+          "$array": "number"
+        },
+        "searchRoots": {
+          "$array": {
+            "label": "string",
+            "path": "string"
+          }
+        }
+      },
+      "yes": "boolean"
+    }
+  }
+}

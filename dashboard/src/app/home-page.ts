@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject
 import { RouterLink } from '@angular/router';
 import { DaimonApi } from './daimon-api';
 import { StatusPillComponent, EmptyStateComponent, MonoComponent } from './ui-primitives';
+import { FirstRunCardComponent } from './first-run-card';
+import { readFirstRunDismissed } from './first-run-helpers';
 import { computePassRate, passRateTone, statusSummary, type PassRate } from './home-page-helpers';
 
 // Overview home (M158, v1.12). `/` answers "how are things" before a click, by
@@ -16,7 +18,7 @@ import { computePassRate, passRateTone, statusSummary, type PassRate } from './h
   selector: 'dm-home-page',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, StatusPillComponent, EmptyStateComponent, MonoComponent],
+  imports: [RouterLink, StatusPillComponent, EmptyStateComponent, MonoComponent, FirstRunCardComponent],
   template: `
     <div class="dm-home">
       <header class="dm-home-head">
@@ -25,13 +27,22 @@ import { computePassRate, passRateTone, statusSummary, type PassRate } from './h
       </header>
 
       @if (freshInstall()) {
-        <!-- Guided fresh-install state (M158/M160): no apps, no history yet. -->
-        <dm-empty
-          icon="rocket_launch"
-          title="No apps yet"
-          hint="daimon watches the dev servers in your workspaces. Open a workspace folder and run your framework's dev command, or start one from the apps list — it'll show up here.">
-          <a class="dm-home-cta" routerLink="/apps">Go to apps</a>
-        </dm-empty>
+        <!-- Guided fresh-install state (M158/M160, walkthrough card added
+             M169): no apps, no history yet. The rich walkthrough shows once
+             per browser; dismissing it falls back to the plain M160 state
+             below rather than an empty page. -->
+        @if (!firstRunDismissed()) {
+          <dm-first-run-card (dismissed)="firstRunDismissed.set(true)">
+            <a class="dm-home-cta" routerLink="/apps">Go to apps</a>
+          </dm-first-run-card>
+        } @else {
+          <dm-empty
+            icon="rocket_launch"
+            title="No apps yet"
+            hint="daimon watches the dev servers in your workspaces. Open a workspace folder and run your framework's dev command, or start one from the apps list — it'll show up here.">
+            <a class="dm-home-cta" routerLink="/apps">Go to apps</a>
+          </dm-empty>
+        }
       } @else {
         <div class="dm-home-grid">
           <!-- Status summary ────────────────────────────────────────────── -->
@@ -208,6 +219,8 @@ import { computePassRate, passRateTone, statusSummary, type PassRate } from './h
 })
 export class HomePageComponent implements OnInit, OnDestroy {
   readonly api = inject(DaimonApi);
+
+  readonly firstRunDismissed = signal(readFirstRunDismissed(localStorage));
 
   private readonly testRuns = signal<{ passed: number | null; total: number | null }[] | null>(null);
   private readonly self = signal<any | null | undefined>(undefined);

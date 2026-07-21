@@ -168,6 +168,10 @@ src/
   autoFix.ts        # Doctor's --auto-fix repairs.
   discovery.ts      # Workspace scan — a loop over the frameworks.ts registry (M65).
                     # Handles enumerators (nx/angular/pnpm/turbo), fallback precedence, overrides.
+  init.ts           # `daimon init` (M168, v1.14): a UI over discoverApps(), NOT a
+                    # second detector — buildProposal() runs the real scan with cwd
+                    # as the proposed searchRoot. Writes EXACTLY ONE file
+                    # (daimon.config.json in cwd) and starts nothing.
   mcp.ts            # MCP server. Wraps the HTTP API and forwards X-Daimon-Agent.
   ...
 dashboard/          # Angular 20 SPA bundled into dist/dashboard/.
@@ -179,7 +183,7 @@ scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIM
 scripts/platform-smoke.sh # (M143, v1.9) ~2-min PASS/FAIL probe for a REAL Mac/Linux box.
                     # POSIX sh, zero deps, throwaway DAIMON_HOME; --dry-run runs the
                     # plumbing on any host. The human runs it before publish.
-test/               # node --test suite. 1102 test cases (v1.13); files run in parallel child processes.
+test/               # node --test suite. 1130 test cases (v1.14); files run in parallel child processes.
                     # NEVER run a bench (npm run bench) and npm test at the same
                     # time — they contend and produce spurious failures.
                     # test/helpers/platformSkip.mjs + test/fixtures/platform/<tool>/ (M141-M142).
@@ -322,6 +326,52 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   still holds) and merely slower. That distinction is the rule — **a
   wrong-but-fast answer is worse than a slow one**; never cache or truncate a
   result to hit a budget.
+- **`daimon init` is a UI over discovery, and it writes ONE file (M168, v1.14).**
+  init must never carry its own detection logic — `buildProposal()` calls
+  `discoverApps()` with cwd as the proposed searchRoot, so a new
+  `FrameworkProfile` row reaches the wizard for free and init can never
+  disagree with `daimon list` about what is in the folder. The forked
+  four-marker `MARKERS` list was deleted in v1.14; do not reintroduce one. init
+  writes **exactly `daimon.config.json` in cwd** — no `~/.daimon` write, no
+  second file, no source edit, no `.env` read beyond discovery's own, no daemon
+  start (the closing lines POINT at `daimon daemon start` / `daimon claude
+  install`). A filesystem-sentinel test in `test/init-wizard.test.mjs` asserts
+  the one-file rule. **Overwrite safety is absolute**: `--yes` refuses when a
+  config exists, interactive asks and leaves the file byte-identical on
+  decline, `--force` is the only silent overwrite — all three tested.
+- **Documentation that claims a command is TESTED as a command (M170, v1.14).**
+  `QUICKSTART.md` is executed by `test/quickstart.test.mjs`: every fenced
+  `bash` block runs, in page order, against a clean `DAIMON_HOME` in a temp
+  workspace. A block is exempt only via `<!-- quickstart:skip <reason> -->`,
+  the reason is asserted non-empty, and the exemption count is capped — so the
+  page cannot quietly stop being true. Markers: `quickstart:config` (the one
+  json block, validated by the daemon's own loader and written as the
+  fixture's config), `quickstart:fresh` (runs in a pristine copy — the `daimon
+  init` alternative path), `quickstart:exit 0,1 <why>` (allowed exit codes).
+  This gate starts a REAL daemon: it must use a fresh random port per run and
+  verify-then-kill its own daemon in `finally`, or an orphan squats the port
+  forever once its DAIMON_HOME is deleted. It also runs **alone** — the `test`
+  script is `node --test <parallel files> && node --test test/quickstart.test.mjs`
+  — because a real daemon plus a real dev server inside the 40-way parallel
+  suite made `plugin-isolation` and `resource-sampling` flake. When a heavy
+  integration test destabilises neighbours, isolate the load; **never loosen
+  the neighbour's budget** to absorb it.
+- **One terminal is ONE agent (v1.14).** `generateAgentId()` derives identity
+  from the PARENT process, not a per-invocation random: a fresh id per CLI
+  process made `daimon start web` and the `daimon stop web` typed a second
+  later look like two competing agents, so the 30s soft lock denied the second
+  command — the first thing a stranger tries. Never restore a per-process
+  random. Identity stays ADVISORY (unauthenticated header, never an
+  authorization decision), an explicit `DAIMON_AGENT_ID` still wins, and a
+  second terminal / editor / Claude Code session still gets its own identity.
+- **First-run doctor rules are suggest-only (M171, v1.14).**
+  `config-wrong-directory`, `daemon-not-started`, `no-apps-detected`, and
+  `port-pool-absent` catch the mistakes strangers actually make. None gets an
+  auto-fix — nothing here meets the verify-then-kill bar. `no-apps-detected`
+  names the likeliest cause from discovery's own `stats.rejected` tally, never
+  a generic guess, and `config-wrong-directory` fires only when the CALLER
+  passes the path it actually loaded (doctor never re-resolves config itself,
+  and never invents a `--config` flag daimon does not have).
 - **State paths go through `daimonDir()`** (`src/daemon.ts`) — never `os.homedir() + '.daimon'` directly. `DAIMON_HOME` relocates the whole state dir; tests isolate with it instead of overriding HOME/USERPROFILE.
 - **Every platform branch is inventoried, fixture-tested, and honestly labeled (M140–M143, v1.9).** The dev box is Windows; POSIX behavior is proven via recorded-output fixtures + injectable seams (the `platform`/`CmdRunner` parameter pattern), NEVER by pretending to run on Linux. Three binding rules: (1) **a `process.platform`/`os.platform()` fork needs a row in `src/platformInventory.ts`** — `test/platform-inventory.test.mjs` greps `dist/` and fails if any token escapes the table (the docs "Platform support" page renders from that same data). (2) **A parser/branch with a Windows fixture gets a POSIX one** in `test/fixtures/platform/<tool>/` with a provenance note, fed through the production parse path via the injectable runner (no test-only fork) — deleting a fixture fails the suite. (3) **Platform-conditional tests SKIP LOUDLY** via `platformSkip(t, plat, note)` (`test/helpers/platformSkip.mjs`) — a bare `if (isWin)` or `process.platform … return` is a defect; `test/platform-skips.test.mjs` asserts the skip set against a committed expectation and fails on a silent gate. Support-matrix statuses are earned: `verified` (real test on that OS), `fixture-verified` (recorded-output test), `best-effort` (only `scripts/platform-smoke.sh` on real hardware) — never asserted. User-facing OS commands route through `src/platformRemedy.ts` (taskkill vs kill), never a per-callsite `process.platform ===`.
 - **History migrations are additive** — `CREATE TABLE IF NOT EXISTS`, plus (since v1.2) a guarded nullable `ALTER TABLE … ADD COLUMN` (check `PRAGMA table_info` first; column must be nullable; every INSERT names its columns so an older daimon keeps writing the same table). Never a rename, drop, retype, or NOT NULL addition — a v0.11 DB must open cleanly under v1.2 and vice versa.
@@ -481,7 +531,31 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   registry's `change`/`event` events, and `test/tui-render-budget.test.mjs`
   fails if a second interval or a 1s full-tree tick reappears.
 
-## v1.13 highlights (what landed this release)
+## v1.14 highlights (what landed this release)
+
+- **First Run (M168–M172)**: the onboarding release — from `npm i -g daimon` to
+  a working setup in five minutes, without reading source. Zero new HTTP
+  endpoint, config key, dependency, or history migration; no frozen shape
+  moved; `init` keeps its `stable` tier and `--auto`/`--force` semantics, and
+  every new surface ships `experimental`. **init rebuilt (M168)**: a UI over
+  `discoverApps()`, its forked four-marker list deleted, one-file write,
+  overwrite safety tested from both directions, `--yes` for scripts/agents with
+  a contract-pinned proposal JSON. **Dashboard first-run (M169)**: walkthrough
+  card on `/` and `/apps` at zero apps, guided empty states elsewhere,
+  dismissal in localStorage only — no telemetry, loopback-only requests.
+  **QUICKSTART.md (M170)**: executable documentation (every fenced command run
+  by `test/quickstart.test.mjs` on a clean `DAIMON_HOME`), README restructured
+  to lead with it, TUI first-attach hint rendered from the chord map.
+  **Doctor onboarding rules (M171)**: `config-wrong-directory`,
+  `daemon-not-started`, `no-apps-detected`, `port-pool-absent` — all
+  suggest-only. **Two bugs the docs gate found**: `daimon daemon start` runs in
+  the FOREGROUND (the page now says `--detach`), and — the real one — the CLI
+  minted a fresh agent identity per invocation, so `daimon start web` soft-
+  locked the `daimon stop web` typed a second later out. Backend suite **1130
+  tests**, dashboard vitest 140. New tests: `init-wizard`, `quickstart`,
+  `tui-first-run`, `doctor-onboarding`.
+
+## v1.13 highlights
 
 - **Terminal Native (M162–M167)**: part 3 of the UI redesign trilogy — the TUI
   catches up with the v1.11 design language and every chord becomes

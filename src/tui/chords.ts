@@ -280,3 +280,14 @@ export function overlayGroups(pane: Pane): ChordGroupView[] {
   }
   return views;
 }
+
+// First-attach hint (M170, v1.14). Shown once, on a stranger's first TUI
+// attach, and never again — the dismissal is persisted in ~/.daimon/state.json
+// (`tuiHintSeen`, merge-written like every other key there). The key it names
+// is READ FROM THE MAP: if the help chord is ever remapped, this line follows,
+// because a hint that points at the wrong key is worse than no hint.
+export function firstRunHintText(): string {
+  const help = CHORDS.find(c => c.id === 'help');
+  const key = help ? help.key : '?';
+  return `New here? Press [${key}] for every key this TUI understands.`;
+}

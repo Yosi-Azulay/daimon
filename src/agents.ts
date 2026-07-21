@@ -58,13 +58,28 @@ export interface LockAnalytics {
 
 // Stable, per-session agent id: <short-hostname>-<pid>-<4hex>. Kept in env so a
 // child process forks pick the same value rather than minting their own.
+//
+// The SESSION is the terminal, not the process (v1.14 first-run fix). Minting
+// a fresh random id per CLI invocation made two consecutive commands from one
+// shell look like two competing agents: `daimon start web` took a 30s soft
+// lock, and the `daimon stop web` typed a second later was DENIED by it —
+// the first thing a stranger tries, refused by daimon's own coordination.
+// So the identity is derived from the parent process (the shell) instead:
+// same terminal → same agent across invocations, while a second terminal, an
+// editor, or a Claude Code session each still get their own identity and the
+// multi-agent soft-lock protection that exists for them. Shape is unchanged
+// (<host>-<n>-<4hex>) and identity remains ADVISORY — an unauthenticated
+// header, never an authorization decision.
 export function generateAgentId(): string {
   const cached = process.env.DAIMON_AGENT_ID;
   if (cached && cached.trim()) return cached.trim();
   const host = (os.hostname() || 'unknown').split('.')[0].toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 24) || 'host';
-  const pid = process.pid;
-  const rand = crypto.randomBytes(2).toString('hex');
-  const id = `${host}-${pid}-${rand}`;
+  const ppid = typeof process.ppid === 'number' && process.ppid > 0 ? process.ppid : null;
+  // Deterministic 4-hex from the session key so the id is reproducible for the
+  // same shell; random only when there is no parent to key off.
+  const id = ppid !== null
+    ? `${host}-${ppid}-${crypto.createHash('sha256').update(`${host}:${ppid}`).digest('hex').slice(0, 4)}`
+    : `${host}-${process.pid}-${crypto.randomBytes(2).toString('hex')}`;
   process.env.DAIMON_AGENT_ID = id;
   return id;
 }

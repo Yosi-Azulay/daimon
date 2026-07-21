@@ -26,7 +26,19 @@ test.describe('deep-link back-compat: every audited URL resolves', () => {
 
   for (const route of AUDIT_ROUTES) {
     test(`resolves: ${route.url}`, async ({ page }) => {
-      test.skip(route.needsApp && !appName, 'no registered app to substitute for :name');
+      // A gate that skips itself is not a gate. When no app is registered, the
+      // `needsApp` shapes used to skip SILENTLY — which is exactly how the
+      // v1.12 `?tab=` deep-link break shipped unnoticed through two releases.
+      // Fail loudly instead: the drive's job is to run against a daemon that
+      // has apps (see e2e/seed.ts), and an environment without them is a
+      // broken harness, not a passing run.
+      if (route.needsApp && !appName) {
+        throw new Error(
+          `cannot verify ${route.url}: no app is registered on the daemon under test. ` +
+          'Point the drive at a daemon whose searchRoots contain at least one discoverable app — ' +
+          'skipping these routes would hide a deep-link regression.',
+        );
+      }
       const url = appName ? route.url.split(':name').join(encodeURIComponent(appName)) : route.url;
       const expectedPath = (route.resolvesTo ?? route.url.split('?')[0].split('#')[0])
         .split(':name').join(encodeURIComponent(appName ?? ''));

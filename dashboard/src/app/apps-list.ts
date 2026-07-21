@@ -24,6 +24,8 @@ import { AppRow, DaimonApi, LockSnapshot } from './daimon-api';
 import { SkeletonComponent, EmptyStateComponent, MonoComponent, StatusPillComponent, FrameworkBadgeComponent, SparklineComponent } from './ui-primitives';
 import { workspaceTone } from './workspace-tone';
 import { filterByGroup, groupChips, groupSections, sectionOffsets, type GroupSection } from './groups-helpers';
+import { FirstRunCardComponent } from './first-run-card';
+import { readFirstRunDismissed, newlyAppearedApps } from './first-run-helpers';
 
 type ViewMode = 'cards' | 'list';
 type StatusFilter = 'all' | 'serving' | 'errors' | 'stopped';
@@ -44,6 +46,7 @@ const TAGS_KEY = 'daimon.apps.tags';
         <article
           class="c"
           [class.f]="i === focusedIndex"
+          [class.new]="highlight.has(a.name)"
           [style.--dm-tone]="tone(a.workspaceLabel)"
           (click)="open.emit(a.name)"
           (mouseenter)="focus.emit(i)">
@@ -131,6 +134,13 @@ const TAGS_KEY = 'daimon.apps.tags';
     .c{position:relative;display:flex;flex-direction:column;background:var(--dm-color-surface);border:1px solid var(--dm-color-border);border-radius:14px;overflow:hidden;cursor:pointer;transition:box-shadow var(--dm-motion-short) var(--dm-motion-easing),transform var(--dm-motion-short) var(--dm-motion-easing),border-color var(--dm-motion-short) var(--dm-motion-easing)}
     .c:hover{box-shadow:var(--dm-elev-2);transform:translateY(-1px)}
     .c.f{border-color:var(--dm-color-primary);box-shadow:0 0 0 2px color-mix(in oklch,var(--dm-color-primary) 25%,transparent)}
+    /* One-shot "it worked" highlight (M169) for a card that just appeared
+       after daimon init + daemon start — plays once, box-shadow reverts to
+       whatever .f/.c would otherwise draw (fill-mode stays the default
+       'none'), never a permanent visual change. */
+    .c.new{animation:dm-card-new 2.2s ease-out}
+    @keyframes dm-card-new{0%{box-shadow:0 0 0 3px color-mix(in oklch,var(--dm-color-primary) 55%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
+    @media (prefers-reduced-motion:reduce){.c.new{animation:none;box-shadow:0 0 0 2px var(--dm-color-primary)}}
     .ac{height:4px;background:var(--dm-tone,var(--dm-color-surface-2))}
     .sp{padding:2px var(--dm-space-3) 0;background:var(--dm-color-surface)}
     .h{display:flex;align-items:center;justify-content:space-between;padding:.75rem .875rem 0}
@@ -171,6 +181,7 @@ export class AppsCardsViewComponent {
   @Input() items: AppRow[] = [];
   @Input() focusedIndex = 0;
   @Input() busy: Record<string, Record<string, boolean>> = {};
+  @Input() highlight: Set<string> = new Set();
   @Output() open = new EventEmitter<string>();
   @Output() focus = new EventEmitter<number>();
   @Output() act = new EventEmitter<{ name: string; kind: ActionKind }>();
@@ -243,6 +254,7 @@ export class AppsCardsViewComponent {
       @for (a of items; track a.name; let i = $index) {
         <div class="rw" role="row"
           [class.f]="i === focusedIndex"
+          [class.new]="highlight.has(a.name)"
           [style.--dm-tone]="tone(a.workspaceLabel)"
           (click)="open.emit(a.name)" (mouseenter)="focus.emit(i)">
           <div class="stc">
@@ -302,6 +314,9 @@ export class AppsCardsViewComponent {
     .rw:hover{background:var(--dm-color-surface-2)}
     .rw.f{background:color-mix(in oklch,var(--dm-color-primary) 8%,transparent)}
     .rw.f::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--dm-color-primary)}
+    .rw.new{animation:dm-row-new 2.2s ease-out}
+    @keyframes dm-row-new{0%{background:color-mix(in oklch,var(--dm-color-primary) 18%,transparent)}100%{background:transparent}}
+    @media (prefers-reduced-motion:reduce){.rw.new{animation:none;background:color-mix(in oklch,var(--dm-color-primary) 10%,transparent)}}
     .rh{min-height:30px;background:var(--dm-color-surface-2);cursor:default;font:500 .6875rem/1rem Roboto;text-transform:uppercase;letter-spacing:.04rem;color:var(--dm-color-fg-muted)}
     .rh:hover{background:var(--dm-color-surface-2)}
     .stc{display:flex;align-items:center;gap:.35rem;min-width:0}
@@ -328,6 +343,7 @@ export class AppsListViewComponent {
   @Input() items: AppRow[] = [];
   @Input() focusedIndex = 0;
   @Input() busy: Record<string, Record<string, boolean>> = {};
+  @Input() highlight: Set<string> = new Set();
   @Output() open = new EventEmitter<string>();
   @Output() focus = new EventEmitter<number>();
   @Output() act = new EventEmitter<{ name: string; kind: ActionKind }>();
@@ -366,6 +382,7 @@ export class AppsListViewComponent {
     MonoComponent,
     AppsCardsViewComponent,
     AppsListViewComponent,
+    FirstRunCardComponent,
   ],
   template: `
     <div class="dm-page">
@@ -492,14 +509,24 @@ export class AppsListViewComponent {
           }
         </div>
       } @else if (api.apps().length === 0) {
-        <dm-empty icon="rocket_launch" title="No apps discovered yet"
-                  hint="Run daimon init --auto in your workspace to discover apps, or run /discover. The doctor page can help diagnose missing apps.">
-          <div class="dm-empty-actions">
+        <!-- Walkthrough card (M169) shows once per browser; dismissing it
+             falls back to the plain M160 empty state below. -->
+        @if (!firstRunDismissed()) {
+          <dm-first-run-card (dismissed)="firstRunDismissed.set(true)">
             <a routerLink="/doctor" class="dm-link-btn">
               <span class="material-symbols-outlined">stethoscope</span>Open Doctor
             </a>
-          </div>
-        </dm-empty>
+          </dm-first-run-card>
+        } @else {
+          <dm-empty icon="rocket_launch" title="No apps discovered yet"
+                    hint="Run daimon init --auto in your workspace to discover apps, or run /discover. The doctor page can help diagnose missing apps.">
+            <div class="dm-empty-actions">
+              <a routerLink="/doctor" class="dm-link-btn">
+                <span class="material-symbols-outlined">stethoscope</span>Open Doctor
+              </a>
+            </div>
+          </dm-empty>
+        }
       } @else if (filtered().length === 0) {
         <dm-empty icon="search_off" title="No matches"
                   hint="No apps match the current filters. Clear them or try a different query."></dm-empty>
@@ -513,12 +540,12 @@ export class AppsListViewComponent {
               </h2>
               @if (view() === 'cards') {
                 <dm-apps-cards
-                  [items]="sec.apps" [focusedIndex]="focusedIndex() - sectionOffsetsList()[si]" [busy]="busyMap()"
+                  [items]="sec.apps" [focusedIndex]="focusedIndex() - sectionOffsetsList()[si]" [busy]="busyMap()" [highlight]="highlightNew()"
                   (open)="open($event)" (focus)="onSectionFocus(si, $event)" (act)="act($event.name, $event.kind)">
                 </dm-apps-cards>
               } @else {
                 <dm-apps-list-view
-                  [items]="sec.apps" [focusedIndex]="focusedIndex() - sectionOffsetsList()[si]" [busy]="busyMap()"
+                  [items]="sec.apps" [focusedIndex]="focusedIndex() - sectionOffsetsList()[si]" [busy]="busyMap()" [highlight]="highlightNew()"
                   (open)="open($event)" (focus)="onSectionFocus(si, $event)" (act)="act($event.name, $event.kind)">
                 </dm-apps-list-view>
               }
@@ -527,12 +554,12 @@ export class AppsListViewComponent {
         </div>
       } @else if (view() === 'cards') {
         <dm-apps-cards
-          [items]="filtered()" [focusedIndex]="focusedIndex()" [busy]="busyMap()"
+          [items]="filtered()" [focusedIndex]="focusedIndex()" [busy]="busyMap()" [highlight]="highlightNew()"
           (open)="open($event)" (focus)="focusedIndex.set($event)" (act)="act($event.name, $event.kind)">
         </dm-apps-cards>
       } @else {
         <dm-apps-list-view
-          [items]="filtered()" [focusedIndex]="focusedIndex()" [busy]="busyMap()"
+          [items]="filtered()" [focusedIndex]="focusedIndex()" [busy]="busyMap()" [highlight]="highlightNew()"
           (open)="open($event)" (focus)="focusedIndex.set($event)" (act)="act($event.name, $event.kind)">
         </dm-apps-list-view>
       }
@@ -621,6 +648,13 @@ export class AppsListComponent implements OnInit, AfterViewInit {
   readonly busyMap = signal<Record<string, Record<string, boolean>>>({});
   readonly selectedTags = signal<Set<string>>(new Set<string>());
   readonly activeGroup = signal<string | null>(null);
+  readonly firstRunDismissed = signal(readFirstRunDismissed(localStorage));
+  // Add-app success state (M169): names to give a one-shot "it worked"
+  // highlight, per newlyAppearedApps() in first-run-helpers.ts.
+  readonly highlightNew = signal<Set<string>>(new Set());
+  private observedEmptyReady = false;
+  private highlightArmed = false;
+  private prevAppNames: string[] = [];
 
   readonly allTags = computed<string[]>(() => {
     const seen = new Set<string>();
@@ -693,6 +727,28 @@ export class AppsListComponent implements OnInit, AfterViewInit {
     effect(() => {
       const max = this.displayOrder().length;
       if (this.focusedIndex() >= max) this.focusedIndex.set(Math.max(0, max - 1));
+    });
+
+    // Fires exactly once: only after a CONFIRMED empty apps list (daemon
+    // reachable, zero apps) is later followed by a non-empty one — never on
+    // an ordinary reload where apps() simply hasn't loaded yet. That is the
+    // "daimon init + daemon start worked" moment the walkthrough promises.
+    effect(() => {
+      if (!this.api.ready()) return;
+      const cur = this.api.apps().map(a => a.name);
+      if (cur.length === 0) {
+        this.observedEmptyReady = true;
+        this.prevAppNames = cur;
+        return;
+      }
+      if (this.observedEmptyReady && !this.highlightArmed) {
+        this.highlightArmed = true;
+        const fresh = newlyAppearedApps(this.prevAppNames, cur);
+        this.highlightNew.set(new Set(fresh));
+        const t = setTimeout(() => this.highlightNew.set(new Set()), 2600);
+        this.destroyRef.onDestroy(() => clearTimeout(t));
+      }
+      this.prevAppNames = cur;
     });
 
     this.bindWindow('daimon:toggle-density', () => this.setView(this.view() === 'cards' ? 'list' : 'cards'));

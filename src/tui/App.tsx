@@ -16,7 +16,7 @@ import { cycleGroupFilter, filterByGroup, computeGroupHealth, formatGroupHeader 
 import { renderAwayLine, type AwaySummary } from '../away.js';
 import TimelinePane from './TimelinePane.js';
 import {
-  resolveChord, footerChords, MAIN_CHORD_IDS,
+  resolveChord, footerChords, MAIN_CHORD_IDS, firstRunHintText,
   type Pane, type MainChordId, type KeyState,
 } from './chords.js';
 import { makeTheme, statusRole, healthRole, type Theme } from './theme.js';
@@ -56,6 +56,11 @@ interface Props {
   // dismissibly in the header. onAckAway persists the dismissal to state.json.
   initialAway?: AwaySummary | null;
   onAckAway?: () => void;
+  // First-attach hint (M170, v1.14): true only when this machine has never
+  // attached the TUI. Acknowledged immediately on mount so it shows exactly
+  // once, ever; Esc clears it from view.
+  firstRunHint?: boolean;
+  onAckFirstRunHint?: () => void;
 }
 
 function fmtUptime(ms: number | null): string {
@@ -79,7 +84,7 @@ const TONE_ROLE = {
 // keys (j/k, ↑/↓, PgUp/PgDn) without splitting into two map rows.
 type ChordHandler = (input: string, key: KeyState) => void;
 
-export default function App({ registry, apiPort, onQuit, initialAway, onAckAway }: Props) {
+export default function App({ registry, apiPort, onQuit, initialAway, onAckAway, firstRunHint, onAckFirstRunHint }: Props) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const theme = useMemo<Theme>(() => makeTheme(), []);
@@ -102,6 +107,7 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway 
   const [events, setEvents] = useState<AppEvent[]>(registry.events({ sinceMs: 60 * 60 * 1000 }));
   const [testRuns, setTestRuns] = useState<Record<string, { running: boolean; summary: string | null }>>({});
   const [away, setAway] = useState<AwaySummary | null>(initialAway ?? null);
+  const [showFirstRunHint, setShowFirstRunHint] = useState(!!firstRunHint);
   const [timelineOpen, setTimelineOpen] = useState(false);
 
   // ── v1.13 pane / focus model (M162) ─────────────────────────────────────────
@@ -124,6 +130,13 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway 
   // Terminal size as STATE so a resize re-layouts on the resize signal itself,
   // not on the next tick (M162).
   const [size, setSize] = useState(() => ({ cols: stdout.columns || 100, rows: stdout.rows || 30 }));
+  // Acknowledge the first-attach hint the moment it is shown: "once, ever" is
+  // a promise about the state file, not about how long the pane stays up, so
+  // it must survive a crash between attach and quit.
+  useEffect(() => {
+    if (firstRunHint) onAckFirstRunHint?.();
+  }, [firstRunHint, onAckFirstRunHint]);
+
   useEffect(() => {
     const onResize = () => setSize({ cols: stdout.columns || 100, rows: stdout.rows || 30 });
     stdout.on('resize', onResize);
@@ -505,6 +518,10 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway 
     //    re-nags. Before app navigation so it works with zero apps.
     if (away && key.escape) { setAway(null); onAckAway?.(); return; }
 
+    // 5b. The first-attach hint (M170) clears on Esc too — it is already
+    //     acknowledged on mount, so this only takes it off the screen.
+    if (showFirstRunHint && key.escape) { setShowFirstRunHint(false); return; }
+
     // 6. Esc from a focused log pane returns to the list.
     if (!maximized && focusedPane === 'log' && key.escape) { setFocusedPane('list'); return; }
 
@@ -761,6 +778,13 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway 
       {away ? (
         <Box paddingX={1}>
           <Text {...theme.style('warning')}>↩ {renderAwayLine(away)}</Text>
+          <Text {...theme.style('muted')}>  [esc to dismiss]</Text>
+        </Box>
+      ) : null}
+
+      {showFirstRunHint ? (
+        <Box paddingX={1}>
+          <Text {...theme.style('accent')}>{firstRunHintText()}</Text>
           <Text {...theme.style('muted')}>  [esc to dismiss]</Text>
         </Box>
       ) : null}

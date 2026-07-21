@@ -141,3 +141,28 @@ test('analytics: a non-contended acquire produces no waits or steals', () => {
   assert.equal(a.stealsLive, 0);
   assert.equal(a.stealsAfterExpiry, 0);
 });
+
+// v1.14 first-run fix: one terminal is ONE agent. Two consecutive CLI
+// invocations from the same shell used to mint two identities, so the 30s soft
+// lock taken by `daimon start web` denied the `daimon stop web` typed right
+// after it.
+test('two processes with the same parent derive the same agent id', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const script = "import('./dist/agents.js').then(m=>process.stdout.write(m.generateAgentId()))";
+  const env = { ...process.env };
+  delete env.DAIMON_AGENT_ID;
+  const run = () => execFileSync(process.execPath, ['-e', script], { env, encoding: 'utf8' }).trim();
+  const a = run();
+  const b = run();
+  assert.equal(a, b, 'consecutive CLI runs from one shell must share an identity');
+  assert.match(a, /^[a-z0-9-]+-\d+-[0-9a-f]{4}$/, `shape preserved: ${a}`);
+});
+
+test('an explicit DAIMON_AGENT_ID still wins', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const script = "import('./dist/agents.js').then(m=>process.stdout.write(m.generateAgentId()))";
+  const out = execFileSync(process.execPath, ['-e', script], {
+    env: { ...process.env, DAIMON_AGENT_ID: 'pinned-agent-1' }, encoding: 'utf8',
+  }).trim();
+  assert.equal(out, 'pinned-agent-1');
+});

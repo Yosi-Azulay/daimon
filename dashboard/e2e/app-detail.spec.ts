@@ -71,3 +71,24 @@ test('Test action fires POST /api/apps/:name/test', async ({ page, request }) =>
   await bar.getByText('Test').click();
   await waitTest;
 });
+
+// v1.14 regression guard. `scrollToSection` rewrites the fragment with
+// history.replaceState; a BARE '#id' resolves against `<base href="/">` and
+// threw the /apps/<name> path away, so the address bar (and anything copied
+// from it) pointed at the home page. Every legacy `?tab=` link landed there
+// too. The path and query must survive a section change.
+test('scrolling to a section keeps the app path in the URL', async ({ page, request }) => {
+  const app = await firstApp(request);
+  test.skip(!app, 'no registered app');
+  const base = `/apps/${encodeURIComponent(app!)}`;
+  await page.goto(base);
+  await expect(page.locator('#overview')).toBeVisible({ timeout: 10_000 });
+
+  await page.locator('.dm-section-link', { hasText: 'Errors' }).click();
+  await expect(page.locator('.dm-section-link', { hasText: 'Errors' }))
+    .toHaveAttribute('aria-current', 'true', { timeout: 10_000 });
+
+  const url = new URL(page.url());
+  expect(url.pathname, 'the app path must survive a section scroll').toBe(base);
+  expect(url.hash).toBe('#errors');
+});

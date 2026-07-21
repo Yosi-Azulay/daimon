@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AppmanConfig, DiscoveredApp } from './types.js';
+import type { DiscoveryStats } from './discovery.js';
 import { findCycle } from './depends.js';
 import { isPortFree } from './ports.js';
 import { History } from './history.js';
@@ -51,12 +52,28 @@ export const DOCTOR_COVERAGE: DoctorCoverageRow[] = [
   { failure: 'Child unverifiable after a daemon handoff', kind: 'gap', coverage: 'No auto-fix by design (verify-then-kill: daimon never kills what it cannot positively identify). The app surfaces as status `orphaned` with a per-case remedy in `daimon list` / `daimon why` (M88).' },
   { failure: 'CLI and daemon running different versions', kind: 'built-in', coverage: 'Every CLI call compares versions via the x-daimon-version header and warns on stderr with the remedy (`daimon daemon restart`) — never a hard fail (M88).' },
   { failure: 'Plugin failed to load, or was disabled after a hook threw', kind: 'rule', coverage: '`plugin-load-error: <file>` (M118, v1.5) — advise-only: names the captured error and the remedy (fix or remove the file, then `daimon daemon restart`). Doctor never deletes or edits plugin files; a hook throw disables the plugin for the session with one `plugin-error` self-event (M117 crash isolation), never a daemon-down. `daimon plugins` is the detail view.' },
+  { failure: 'Ran daimon from the wrong directory (config lives in a parent, or only the global ~/.daimon/config.json was found)', kind: 'rule', coverage: '`config-wrong-directory` (M171, v1.14) — suggest-only: names the config file daimon actually found and how to use it (cd there, copy it here, or rely on the global fallback on purpose). Only fires when the caller tells doctor which path it loaded (`daimon doctor` does); never invents a --config flag that does not exist.' },
+  { failure: 'Config present but the daemon was never started', kind: 'rule', coverage: '`daemon-not-started` (M171, v1.14) — suggest-only: fires only when nothing at all answers on apiPort (distinct from `port-holder-no-lock`, which owns the case where something ELSE holds it); remedy is `daimon daemon start`.' },
+  { failure: 'Config loads but discovery found zero apps', kind: 'rule', coverage: '`no-apps-detected` (M171, v1.14) — suggest-only: surfaces the single likeliest cause from discovery\'s own `stats.rejected` tally (no searchRoots configured, a missing path, no serve target, a fallback superseded by a named profile, no dev/serve/start script, or no framework markers at all) with the matching remedy — never a generic guess.' },
+  { failure: 'Detected apps support per-app ports but no ports.pool is configured', kind: 'rule', coverage: '`port-pool-absent` (M171, v1.14) — suggest-only: fires when at least one discovered app\'s framework profile declares `portFlag`/`portEnv` (see src/frameworks.ts) and `ports.pool` is unset; proposes the key with a concrete example range. Never writes config.' },
 ];
 
 export async function runDoctor(
   config: AppmanConfig,
   apps: DiscoveredApp[],
-  opts?: { plugins?: boolean; historyHealth?: boolean },
+  opts?: {
+    plugins?: boolean;
+    historyHealth?: boolean;
+    // The file path the CALLER actually loaded the config from (cfgR.path from
+    // config.ts's loadConfig() — `daimon doctor` passes it). Doctor never
+    // re-resolves config itself: without this, config-wrong-directory simply
+    // stays silent rather than guessing (M171, v1.14).
+    configPath?: string;
+    // Rejection tally from the discoverApps() call the caller already made
+    // (M171, v1.14). Without it, no-apps-detected still fires on an empty
+    // `apps` array — it just can't name a likeliest cause.
+    discoveryStats?: DiscoveryStats;
+  },
 ): Promise<{ ok: boolean; checks: Check[] }> {
   const checks: Check[] = [];
   const appNames = new Set(apps.map(a => a.name));
@@ -90,6 +107,53 @@ export async function runDoctor(
     detail: `${daimonDir()}${process.env.DAIMON_HOME ? ' (from DAIMON_HOME)' : ''}`,
   });
 
+  // config-wrong-directory (M171, v1.14): the classic "ran daimon from the
+  // wrong folder" mistake. Only runs when the caller names the file it
+  // actually loaded (`opts.configPath`, e.g. cfgR.path from loadConfig()) —
+  // doctor never re-resolves config itself, so a request path that omits this
+  // (like `why`) simply skips the rule rather than guessing. Config
+  // resolution per configLookupPaths() is exactly two candidates: cwd, then
+  // daimonDir()/config.json — there is no --config flag, so the remedy never
+  // invents one.
+  if (opts?.configPath) {
+    const cwd = process.cwd();
+    const localCfgPath = path.join(cwd, 'daimon.config.json');
+    if (path.resolve(opts.configPath) !== path.resolve(localCfgPath)) {
+      // loadConfig() never walks up — so a daimon.config.json in any
+      // ancestor directory is DEFINITELY not the one that loaded, a fact we
+      // can state outright rather than infer. The home directory itself is
+      // excluded from the walk: a stray daimon.config.json sitting directly
+      // in $HOME (as opposed to inside a project a few levels down) is not
+      // "a parent project you forgot to cd into" — that's the global-fallback
+      // case below (~/.daimon/config.json), and treating an unrelated $HOME
+      // file as a project config would be noise, not a finding.
+      const home = path.resolve(os.homedir());
+      let foundParent: string | null = null;
+      let dir = path.dirname(cwd);
+      let prev = cwd;
+      for (let i = 0; i < 24 && dir !== prev; i++) {
+        const candidate = path.join(dir, 'daimon.config.json');
+        if (path.resolve(dir) !== home && fs.existsSync(candidate)) { foundParent = candidate; break; }
+        prev = dir;
+        dir = path.dirname(dir);
+      }
+      const userCfgPath = path.join(daimonDir(), 'config.json');
+      if (foundParent) {
+        checks.push({
+          name: 'config-wrong-directory',
+          ok: true,
+          detail: `no daimon.config.json in ${cwd} — found one at ${foundParent} instead. cd there to use it, or copy/move it into this folder (daimon has no --config flag; it only checks cwd, then ${userCfgPath})`,
+        });
+      } else if (path.resolve(opts.configPath) === path.resolve(userCfgPath)) {
+        checks.push({
+          name: 'config-wrong-directory',
+          ok: true,
+          detail: `no daimon.config.json in ${cwd} — daimon fell back to the global config at ${opts.configPath}. If that wasn't intentional, add a daimon.config.json here (or run 'daimon init')`,
+        });
+      }
+    }
+  }
+
   // Field-level validation problems collected when this process loaded the
   // config (M55 malformed-config softening — broken fields ran on defaults).
   const cfgWarnings = configValidationWarnings();
@@ -114,6 +178,16 @@ export async function runDoctor(
     const rootFs = new RootFs(abs);
     const hasMarker = allProfiles(config.frameworks).some(p => matchDetect(p.detect, rootFs));
     checks.push({ name: `searchRoot has marker: ${abs}`, ok: hasMarker, detail: hasMarker ? undefined : 'no framework markers (see `daimon frameworks` for the registry)' });
+  }
+
+  // no-apps-detected (M171, v1.14): config loaded fine, but discovery came
+  // back empty — a distinct failure class from config-wrong-directory (that
+  // one is about the config FILE; this one is about the workspace it points
+  // at). Surfaces the single likeliest rejection reason from discovery's own
+  // stats.rejected tally — never a generic guess — so the remedy matches what
+  // actually happened.
+  if (apps.length === 0) {
+    checks.push({ name: 'no-apps-detected', ok: false, detail: noAppsDetectedDetail(config, opts?.discoveryStats) });
   }
 
   for (const [name, ov] of Object.entries(config.overrides ?? {})) {
@@ -175,6 +249,16 @@ export async function runDoctor(
   if (apiFree) {
     checks.push({ name: `apiPort ${config.apiPort}`, ok: true });
     checks.push({ name: 'port-holder-no-lock', ok: true });
+    // daemon-not-started (M171, v1.14): nobody at all is listening — the
+    // first-run gap where a stranger writes a config and never runs
+    // `daimon daemon start`. Distinct from port-holder-no-lock, which only
+    // fires when something ELSE holds the port; this is precisely the case
+    // where nothing does.
+    checks.push({
+      name: 'daemon-not-started',
+      ok: false,
+      detail: `no daimon is listening on apiPort ${config.apiPort} — run 'daimon daemon start'`,
+    });
   } else {
     const lock = readLock();
     if (lock && lock.apiPort === config.apiPort) {
@@ -433,6 +517,27 @@ export async function runDoctor(
     }
   }
 
+  // port-pool-absent (M171, v1.14): at least one detected app's framework
+  // profile documents a port-injection mechanism (portFlag/portEnv —
+  // registry-declared, never guessed; M81), but no ports.pool is configured —
+  // the first-run gap where every such app fights over the same hard-coded
+  // default port. Suggest-only: doctor proposes the key, never writes it.
+  if (!config.ports?.pool) {
+    const profileMap = new Map(allProfiles(config.frameworks).map(p => [p.id, p]));
+    const injectable = apps.filter(a => {
+      const p = a.serverProfile ? profileMap.get(a.serverProfile) : undefined;
+      return !!(p?.portFlag || p?.portEnv);
+    });
+    if (injectable.length > 0) {
+      const profileNames = [...new Set(injectable.map(a => a.serverProfile))].join(', ');
+      checks.push({
+        name: 'port-pool-absent',
+        ok: true,
+        detail: `${injectable.length} detected app${injectable.length === 1 ? '' : 's'} (${profileNames}) can take a per-app port (portFlag/portEnv) but no "ports" pool is configured — add "ports": { "pool": "4200-4299" } to daimon.config.json so each gets its own port instead of colliding on the framework's default`,
+      });
+    }
+  }
+
   // Plugin API v1 (M118): surface files that failed to load or validate, and
   // run plugin-contributed doctor rules. Advise-only both ways — doctor never
   // deletes or edits a user's plugin files (never-edit-user-source rule).
@@ -485,6 +590,33 @@ export async function runDoctor(
 
   const ok = checks.every(c => c.ok);
   return { ok, checks };
+}
+
+// Reason -> remedy for no-apps-detected (M171, v1.14). Keys are the exact
+// strings discovery.ts already bumps into stats.rejected — never invented
+// here, so a remedy can only ever match a cause discovery itself recorded.
+const NO_APPS_REMEDIES: Record<string, string> = {
+  'searchRoot missing': "the configured searchRoot doesn't exist on disk — fix the path in daimon.config.json's searchRoots, or 'daimon workspaces rm' it",
+  'no serve target': 'the nx/angular project(s) found have no serve target — add one, or point searchRoots at a different folder',
+  'fallback superseded by named profile': 'a named framework profile matched the folder but produced no app (name collision or unsafe name) — run `daimon discover` for the per-folder detail',
+  'package.json has no dev/serve/start script': "package.json was found but has no dev/serve/start script — add one, or run 'daimon frameworks' to see what each profile looks for",
+  'no project markers': 'no framework markers matched at all — run `daimon frameworks` to see the registry, or check that searchRoots points at the right folder',
+};
+
+// Picks the single likeliest cause of an empty apps[] from discovery's own
+// rejection tally, never a generic guess (M171, v1.14).
+function noAppsDetectedDetail(config: AppmanConfig, stats?: DiscoveryStats): string {
+  if (config.searchRoots.length === 0) {
+    return "no searchRoots configured — run 'daimon init' in your workspace, or 'daimon workspaces add <path>'";
+  }
+  const rejected = stats?.rejected ?? {};
+  const top = Object.entries(rejected).sort((a, b) => b[1] - a[1])[0];
+  if (!top) {
+    return `0 apps found across ${config.searchRoots.length} searchRoot${config.searchRoots.length === 1 ? '' : 's'} — run 'daimon discover' for the per-folder rejection breakdown, or 'daimon frameworks' for the registry`;
+  }
+  const [reason, count] = top;
+  const remedy = NO_APPS_REMEDIES[reason] ?? "run 'daimon discover' for the full per-folder breakdown, or 'daimon frameworks' for the registry";
+  return `0 apps found — likeliest cause: "${reason}" (${count}×). ${remedy}`;
 }
 
 // Pure system-directory membership check (M140): takes an already-normalized,

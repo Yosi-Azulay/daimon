@@ -62,7 +62,14 @@ type SectionKey = keyof Report['sections'];
         </mat-button-toggle-group>
       </div>
 
-      @if (loading() && !report()) {
+      @if (api.apps().length === 0 && !loading()) {
+        <dm-empty icon="apps" title="No apps yet"
+                  hint="The report summarizes uptime, errors, tests, compiles, crashes, agents and env changes across your apps — add one to see it populate.">
+          <a routerLink="/apps" class="dm-link-btn">
+            <span class="material-symbols-outlined">apps</span>Go to apps
+          </a>
+        </dm-empty>
+      } @else if (loading() && !report()) {
         <dm-skeleton height="20rem"></dm-skeleton>
       } @else if (!report()) {
         <dm-empty icon="summarize" title="Report unavailable" hint="The daemon couldn't be reached. Try refreshing."></dm-empty>
@@ -237,6 +244,9 @@ type SectionKey = keyof Report['sections'];
       width: 10rem;
     }
     .dm-custom-hint { color: var(--dm-color-danger); font: 500 var(--dm-text-xs)/1rem Roboto; }
+
+    .dm-link-btn { display: inline-flex; align-items: center; gap: .375rem; margin-top: .75rem; padding: 6px 14px; border-radius: var(--dm-radius-md); background: var(--dm-color-primary); color: var(--dm-color-on-primary); text-decoration: none; font: 500 var(--dm-text-sm)/1.25rem Roboto; }
+    .dm-link-btn .material-symbols-outlined { font-size: 18px; }
 
     .dm-meta { color: var(--dm-color-fg-muted); font-size: var(--dm-text-sm); }
 

@@ -481,7 +481,16 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   })();
   const onAckAway = () => { try { savePersistedState({ awayAck: Date.now() }); } catch {} };
 
-  const inst = render(React.createElement(App, { registry, apiPort, onQuit: () => void shutdown(), initialAway, onAckAway }));
+  // First-attach hint (M170, v1.14): one line pointing at the `?` overlay, on
+  // the first TUI attach this machine has ever had. Merge-written ack, so the
+  // second attach is clean.
+  const firstRunHint = persisted.tuiHintSeen == null;
+  const onAckFirstRunHint = () => { try { savePersistedState({ tuiHintSeen: Date.now() }); } catch {} };
+
+  const inst = render(React.createElement(App, {
+    registry, apiPort, onQuit: () => void shutdown(),
+    initialAway, onAckAway, firstRunHint, onAckFirstRunHint,
+  }));
   await inst.waitUntilExit();
   await shutdown();
 }

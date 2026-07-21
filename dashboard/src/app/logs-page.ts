@@ -115,7 +115,9 @@ function escapeRegex(s: string): string {
       <div class="dm-picker">
         <h3>Pick an app to tail</h3>
         @if (api.apps().length === 0) {
-          <dm-empty icon="apps" title="No apps registered" hint="Add apps to your daimon config to see logs"></dm-empty>
+          <dm-empty icon="apps" title="No apps yet" hint="Logs stream here once an app is configured and running. Run daimon init in your workspace to get started.">
+            <button type="button" mat-stroked-button (click)="router.navigateByUrl('/apps')">Go to apps</button>
+          </dm-empty>
         } @else {
           <mat-form-field appearance="outline" class="dm-picker-field">
             <mat-label>Application</mat-label>
@@ -334,7 +336,7 @@ export class LogsPageComponent implements OnChanges, OnDestroy {
   // live buffer isn't hidden behind a stale filter from a previous visit.
   @Input() from?: string;
   readonly api = inject(DaimonApi);
-  private readonly router = inject(Router);
+  readonly router = inject(Router);
 
   readonly levels = LOG_LEVELS;
 

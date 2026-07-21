@@ -1163,7 +1163,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           apps: annotatedApps,
           suggestion: apps.length === 0
             ? (roots.length === 0
-              ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder."
+              ? "no searchRoots configured. Run 'daimon init --yes' from a workspace folder."
               : "discovery returned no apps. Check that searchRoots contain a framework marker (nx.json / angular.json / next.config.* / vite.config.* / manage.py / *.csproj / pubspec.yaml / a package.json dev script, …) — run 'daimon frameworks' for the full registry.")
             : `${apps.length} apps discovered${polyglotHint}`,
         });
@@ -1785,7 +1785,7 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const qSummary = registry.quarantineSummary();
         if (qSummary.count > 0) out.quarantine = { count: qSummary.count, oldestSince: qSummary.oldestSince };
         if (totals.apps === 0) {
-          out._meta = { suggestion: "no apps registered. run 'daimon doctor' for recommended next step, or 'daimon init --auto' from a workspace folder." };
+          out._meta = { suggestion: "no apps registered. run 'daimon doctor' for recommended next step, or 'daimon init --yes' from a workspace folder." };
         }
         const budgetRaw = url.searchParams.get('budget');
         const budgetTokens = budgetRaw ? Math.max(64, Number(budgetRaw) | 0) : null;
@@ -1891,9 +1891,9 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
               ...(cwd ? { cwdScope: cwd } : {}),
               suggestion: rows.length === 0
                 ? (roots.length === 0
-                  ? "no searchRoots configured. Run 'daimon init --auto' from a workspace folder to add the current cwd."
+                  ? "no searchRoots configured. Run 'daimon init --yes' from a workspace folder to add the current cwd."
                   : cwd
-                    ? `no apps under cwd '${cwd}'. Run 'daimon list --all' to see apps from other workspaces, or 'daimon init --auto' to register this dir.`
+                    ? `no apps under cwd '${cwd}'. Run 'daimon list --all' to see apps from other workspaces, or 'daimon init --yes' to register this dir.`
                     : "discovery returned no apps. Check that searchRoots contain a framework marker (run 'daimon frameworks' for the registry), then run 'daimon doctor'.")
                 : 'apps discovered; _meta is informational.',
             };

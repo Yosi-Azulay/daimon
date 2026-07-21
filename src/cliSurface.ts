@@ -817,11 +817,12 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'init',
-    args: '[--force] [--auto]',
-    summary: 'Create a daimon config in cwd; --auto picks safe defaults (no prompts) for workspaces with nx/angular/vite markers.',
-    description: 'Create a daimon config in cwd. --auto picks safe defaults for known workspace markers.',
-    example: 'daimon init --auto',
+    args: '[--yes] [--force] [--auto]',
+    summary: 'Create daimon.config.json in cwd from a real discovery scan of this folder; --yes accepts the proposal without prompts.',
+    description: 'Scan cwd with the framework registry (the same scan the daemon runs), show the apps it found, and write daimon.config.json in cwd after you confirm. Writes that one file and nothing else — it never starts the daemon and never edits your source. An existing config is never replaced without explicit confirmation: --yes refuses, --force overwrites.',
+    example: 'daimon init --yes',
     options: [
+      { flag: '--yes', description: 'Accept the scanned proposal exactly; no prompts. Refuses if a config already exists.' },
       { flag: '--force', description: 'Overwrite an existing daimon.config.json.' },
       { flag: '--auto', description: 'Skip prompts; pick safe defaults.' },
     ],

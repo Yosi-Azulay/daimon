@@ -532,6 +532,45 @@ if (!lockPath().startsWith(fakeHome)) {
     }
   });
 
+  // ── init proposal (M168, v1.14) ────────────────────────────────────────────
+  //
+  // `daimon init` is tier `stable`, but the PROPOSAL json it prints under
+  // --yes is a new experimental shape that agents and scripts will read, so it
+  // gets pinned here too. Runs in its own temp workspace: init writes a config
+  // in cwd, and dropping one into fakeHome would change config resolution for
+  // every other case in this file.
+  test('cli contract: init --yes proposal', async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'daimon-contract-init-'));
+    fs.writeFileSync(
+      path.join(ws, 'package.json'),
+      JSON.stringify({ name: 'contract-app', scripts: { dev: 'vite' } }, null, 2),
+    );
+    fs.writeFileSync(path.join(ws, 'vite.config.ts'), 'export default {};\n');
+    try {
+      const r = await new Promise(resolve => {
+        const child = spawn(process.execPath, [cliJs, 'init', '--yes'], {
+          cwd: ws,
+          env: { ...process.env, DAIMON_PORT: String(PORT), DAIMON_NO_SPAWN: '1', DAIMON_HOME: fakeHome, NO_COLOR: '1' },
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', d => { stdout += d; });
+        child.stderr.on('data', d => { stderr += d; });
+        child.on('close', code => resolve({ status: code, stdout, stderr }));
+      });
+      assert.equal(r.status, 0, r.stderr);
+      const line = r.stdout.split('\n').map(s => s.trim()).filter(Boolean)
+        .map(s => { try { return JSON.parse(s); } catch { return null; } })
+        .find(o => o && o.proposal);
+      assert.ok(line, `init --yes must print the proposal it accepted:\n${r.stdout}`);
+      assert.equal(line.yes, true);
+      assert.equal(line.proposal.apps.length, 1, 'the fixture workspace has one app');
+      checkCase('cli-init-proposal.json', 'daimon init --yes', 'default', line);
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   // ── shutdown endpoint last (harmless: onShutdown is a noop here) ──────────
 
   test('http contract: POST /api/shutdown', async () => {

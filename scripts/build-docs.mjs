@@ -334,14 +334,17 @@ const html = `<!doctype html>
 <h2 id="install">Install</h2>
 <pre><code>npm install -g daimon
 # or
-npx daimon init --auto</code></pre>
+npx daimon init --yes</code></pre>
 
 <h2 id="quickstart">Quickstart (3 min)</h2>
+<p>The full five-minute walkthrough — including the three-line hand-written config — is
+<a href="https://github.com/Yosi-Azulay/daimon/blob/main/QUICKSTART.md">QUICKSTART.md</a>, and every command on that page is executed by a test on a clean state directory. The short version:</p>
 <ol>
-  <li>Run <code>daimon init --auto</code> in a workspace with any supported framework marker — <code>nx.json</code>, <code>angular.json</code>, <code>next.config.*</code>, <code>vite.config.*</code>, <code>manage.py</code>, <code>Gemfile</code>, a <code>*.csproj</code>, <code>pubspec.yaml</code>, or just a <code>package.json</code> with a <code>dev</code> script. Run <code>daimon frameworks</code> to see the full registry.</li>
+  <li>Run <code>daimon init --yes</code> in a workspace with any supported framework marker — <code>nx.json</code>, <code>angular.json</code>, <code>next.config.*</code>, <code>vite.config.*</code>, <code>manage.py</code>, <code>Gemfile</code>, a <code>*.csproj</code>, <code>pubspec.yaml</code>, or just a <code>package.json</code> with a <code>dev</code> script. It runs the same discovery scan the daemon runs and writes <code>daimon.config.json</code> in that folder — that one file, nothing else. Run <code>daimon frameworks</code> to see the full registry.</li>
   <li>Run <code>daimon list</code> to see discovered apps.</li>
   <li>Run <code>daimon start &lt;app&gt;</code> (or <code>daimon up &lt;profile&gt;</code> for the whole stack).</li>
   <li>Open the dashboard: <code>daimon dashboard</code>.</li>
+  <li>When something looks wrong: <code>daimon doctor</code>.</li>
 </ol>
 
 <h2 id="stability">Stability tiers</h2>

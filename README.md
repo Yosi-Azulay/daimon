@@ -14,26 +14,21 @@ Loopback only. Single user. No cloud. **No telemetry, ever** — the full postur
 
 **Docs site:** <https://yosi-azulay.github.io/daimon/> (generated from the live CLI surface — also in [`docs/`](docs/)).
 
-## Install
+## Start here
 
 ```bash
-npm i -g daimon
-```
-
-Requires Node ≥ 20. After install, `daimon` is on your PATH globally.
-
-## The first 15 minutes
-
-```bash
+npm i -g daimon         # requires Node ≥ 20
 cd your-workspace       # anywhere with nx.json / angular.json / vite.config.* / manage.py /
                         # a *.csproj / pubspec.yaml / or just a package.json with a dev script
-daimon init --auto      # writes ./daimon.config.json with safe defaults, no prompts
+daimon init --yes       # scans this folder and writes ./daimon.config.json — that one file, nothing else
 daimon list             # discovers your apps; auto-spawns the daemon on first call
 daimon start <name>     # or: daimon ensure <name> — start if needed AND wait until healthy
 daimon dashboard        # opens the web dashboard scoped to this workspace
 ```
 
-What just happened: `init --auto` registered this folder as a search root; the daemon scanned it against the framework registry (`daimon frameworks` shows the whole registry and what matched); `start` spawned the app's own dev command with a port daimon assigned, and began parsing its output for errors. From here, `daimon status <name>`, `daimon errors <name>`, and `daimon logs <name>` are the everyday verbs — every one prints compact JSON, so they compose with scripts and agents.
+**→ [QUICKSTART.md](QUICKSTART.md) is the five-minute walkthrough**, with the hand-written config (it is three lines — the wizard is optional), what each step does, and where to go when something breaks. Every command on that page is executed by a test on a clean state directory, so it cannot rot.
+
+What just happened: `init` ran the same discovery scan the daemon runs and registered this folder as a search root; the daemon matched it against the framework registry (`daimon frameworks` shows the whole registry and what matched); `start` spawned the app's own dev command with a port daimon assigned, and began parsing its output for errors. From here, `daimon status <name>`, `daimon errors <name>`, and `daimon logs <name>` are the everyday verbs — every one prints compact JSON, so they compose with scripts and agents.
 
 ### When it breaks
 
