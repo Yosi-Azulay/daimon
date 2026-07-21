@@ -41,6 +41,17 @@ src/
                     # Groups READ the depends graph (topoLevels/transitiveClosure),
                     # never change it; they additively subsume the legacy profiles
                     # map (group wins name collisions, with a validate warning).
+  tui/chords.ts     # The ONE chord map (M163, v1.13): every TUI chord as data
+                    # (key, pane scope, description, group, legacy aliases).
+                    # Dispatch + the `?` overlay + per-pane footers + the docs
+                    # cheat sheet + the README table ALL render from it. Chords
+                    # are PANE-SCOPED — `l`/`/`/`g`/`G` each mean one thing in
+                    # the app list and another in the log pane.
+  tui/theme.ts      # The ONE terminal palette (M165, v1.13): DESIGN.md's roles
+                    # with a truecolor → 16-color → NO_COLOR ladder. A
+                    # hard-coded color in a TUI component is a DEFECT.
+  tui/layout.ts     # Pure pane geometry, narrow-terminal column priority, list
+                    # windowing, status-bar segments (M162/M166, v1.13).
   logLevels.ts      # Log-level classification (M99, v1.2): registry patterns first
                     # (first match wins) chained to a conservative generic heuristic;
                     # FAIL-SOFT — any miss/throw stores level null, never drops a line.
@@ -168,7 +179,7 @@ scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIM
 scripts/platform-smoke.sh # (M143, v1.9) ~2-min PASS/FAIL probe for a REAL Mac/Linux box.
                     # POSIX sh, zero deps, throwaway DAIMON_HOME; --dry-run runs the
                     # plumbing on any host. The human runs it before publish.
-test/               # node --test suite. 1007 test cases (v1.10); files run in parallel child processes.
+test/               # node --test suite. 1102 test cases (v1.13); files run in parallel child processes.
                     # NEVER run a bench (npm run bench) and npm test at the same
                     # time — they contend and produce spurious failures.
                     # test/helpers/platformSkip.mjs + test/fixtures/platform/<tool>/ (M141-M142).
@@ -425,7 +436,83 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   (`httpSurface.ts`, `MCP_TOOL_STABILITY` / `MCP_RESOURCE_STABILITY` /
   `MCP_PROMPT_STABILITY`).
 
-## v1.12 highlights (what landed this release)
+- **The TUI chord map is the single source of truth, and muscle memory is sacred (M162–M167, v1.13).**
+  Every TUI chord is a row in `src/tui/chords.ts` — key, pane scope,
+  description, group, legacy aliases. **Adding a chord = adding a map row**;
+  dispatch, the `?` overlay, the per-pane footer hints, the generated docs cheat
+  sheet, and the README table all render from it, and NOTHING may hand-list a
+  chord (`test/tui-chords.test.mjs` greps the compiled TUI for a `[key] label`
+  ribbon and fails on one). Two enforcement layers: App's handler table is
+  `Record<MainChordId, Handler>`, so a map row with no handler fails **tsc**;
+  the drift test covers the display surfaces. Chords are **PANE-SCOPED** — the
+  same physical key legitimately means two things in two panes (`l` focuses the
+  log pane / cycles the log level; `/` filters apps / greps; `g`/`G` are
+  view-hint+group-filter / scroll-top+scroll-bottom), and a test asserts no two
+  chords in ONE pane ever claim the same key. **Muscle memory is sacred**: every
+  chord that shipped keeps working, same key, same meaning — a remap is allowed
+  ONLY with a permanent legacy alias recorded in the chord's `legacy` field and
+  the release notes (v1.13 has none). The v1.12 chord inventory is frozen in the
+  test as the regression contract. When a label and the code disagree, **the
+  code wins and the label is fixed** (that is how the v1.12 `[g/G] bottom/top`
+  footer bug was resolved). README/docs regen: `npm run build &&
+  npm run build:readme-chords && npm run build:docs`.
+- **Terminal color lives in ONE module, and every rung keeps every feature (M165, v1.13).**
+  `src/tui/theme.ts` is the terminal's token layer — DESIGN.md's palette as
+  semantic roles, with a truecolor → 16-color → `NO_COLOR` ladder. A hard-coded
+  color in a TUI component is a **defect**, not a style choice (the dashboard's
+  DESIGN.md §9 rule, carried to the terminal, and grep-gated by
+  `test/tui-theme.test.mjs` — which also fails a re-introduced `STATUS_COLORS`
+  or `HEALTH_COLORS` map). The 16-color rung is **hand-picked**, never an auto
+  quantization of the hex. **No feature may REQUIRE mouse or truecolor** — they
+  may enhance; `NO_COLOR` and 16-color terminals get the full feature set with a
+  degraded palette, and a real render asserts `NO_COLOR` emits zero SGR color
+  codes. Detection is a pure function of the environment (no chalk import, no
+  new dep) and must NOT become a `process.platform` fork — the platform
+  inventory gate (M140) will catch it.
+- **TUI tests are pure-module, plus ONE real render (v1.13).** Chord/theme/
+  layout/log/budget logic lives in side-effect-free modules that unit-test
+  without ink or a terminal (the `ribbon.ts`/`testChord.ts` pattern) — that is
+  why no ink test harness is a dependency. `test/tui-render-smoke.test.mjs` is
+  the deliberate exception: it mounts the REAL `App` with ink against a fake
+  stdout + a synthetic registry (no daemon — tests never start one) to catch
+  what pure modules cannot: a component that throws on mount, a prop ink
+  rejects, an empty pane, a row overflowing 80 columns, or a `NO_COLOR` leak.
+  The TUI keeps **exactly one interval** — updates are change-driven off the
+  registry's `change`/`event` events, and `test/tui-render-budget.test.mjs`
+  fails if a second interval or a 1s full-tree tick reappears.
+
+## v1.13 highlights (what landed this release)
+
+- **Terminal Native (M162–M167)**: part 3 of the UI redesign trilogy — the TUI
+  catches up with the v1.11 design language and every chord becomes
+  discoverable. Lives **entirely under `src/tui/`**: zero daemon/CLI/HTTP/MCP
+  change, no config key, no history migration, no new dependency, no frozen
+  shape moved. **Chord changes: NONE** — every v1.12 chord works identically, so
+  no legacy aliases exist. **Pane system + focus model (M162)**: app list /
+  detail / log as first-class panes, `Tab` cycles, focused pane marked,
+  `Shift+L` maximizes (and `q` there returns to the list, as the old
+  full-screen log pane did); persistent status bar (daemon+port, workspace,
+  filters with `visible/total`, muted count, live storms, flash folded in);
+  resize re-layouts on the resize signal, not the next tick. **Discoverability
+  (M163)**: `src/tui/chords.ts` + a `?` overlay grouped by pane (focused pane
+  first) + per-pane footers + a generated docs cheat sheet + a generated README
+  table, with a drift test and `Record<MainChordId, Handler>` tsc
+  exhaustiveness. `src/tui/keys.ts` deleted. **Fixed a shipped bug**: the log
+  pane's footer said `[g/G] bottom/top` while the code did the opposite — code
+  won. **Log pane 2.0 (M164)**: v1.2 level tints (null-level lines stay plain —
+  never guess), explicit follow indicator (`[following]`/`[paused]`, `G`
+  resumes), grep keeps its v1.2 narrowing default with `Tab` → highlight mode +
+  `n`/`N` match walking, and a v1.2 storm marker. **Theming (M165)**:
+  `src/tui/theme.ts` dedupes the two duplicated color maps and adds the
+  truecolor → 16-color → `NO_COLOR` ladder (truecolor values converted from
+  DESIGN.md's OKLCH land byte-identical on four `--dm-chart-*` dark hex).
+  **Robustness + perf (M166)**: priority column hiding, single-pane mode below
+  60 columns, windowed app list with a position indicator, and idle re-renders
+  cut 60/min → 12/min by going change-driven. Backend suite **1102 tests**. New
+  tests: `tui-chords`, `tui-theme`, `tui-layout`, `tui-log-pane`,
+  `tui-render-budget`, `tui-render-smoke`.
+
+## v1.12 highlights
 
 - **Wayfinding (M156–M161)**: part 2 of the UI redesign trilogy — an
   **information architecture** on top of v1.11's visual language. Dashboard-only

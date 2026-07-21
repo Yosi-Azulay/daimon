@@ -3,24 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Box, render, Text, useApp, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
-import type { AppHealth, AppStatus, AppSummary } from '../types.js';
+import type { AppSummary } from '../types.js';
 import { generateAgentId } from '../agents.js';
 import { daimonDir } from '../daemon.js';
+import { makeTheme, statusRole, healthRole } from './theme.js';
+import { footerChords } from './chords.js';
 
-const STATUS_COLORS: Record<AppStatus, string> = {
-  stopped: 'gray',
-  starting: 'yellow',
-  compiling: 'yellow',
-  serving: 'green',
-  error: 'red',
-  orphaned: 'magenta',
-};
-
-const HEALTH_COLORS: Record<AppHealth, string> = {
-  healthy: 'green',
-  unhealthy: 'red',
-  unknown: 'gray',
-};
+// STATUS_COLORS / HEALTH_COLORS used to be duplicated verbatim here and in
+// App.tsx. Both now come from the one theme module (M165), so a palette change
+// lands in a single place and the attach TUI degrades down the same
+// truecolor → 16-color → NO_COLOR ladder as the main one.
+const theme = makeTheme();
 
 function fmtUptime(ms: number | null): string {
   if (ms == null) return '';
@@ -139,7 +132,7 @@ function AttachApp({ port, onExit }: AttachProps) {
   if (promptingToken) {
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Text color="yellow">daemon requires a bearer token. Enter token (Esc to cancel):</Text>
+        <Text {...theme.style('warning')}>daemon requires a bearer token. Enter token (Esc to cancel):</Text>
         <TextInput
           value={tokenInput}
           onChange={setTokenInput}
@@ -163,43 +156,47 @@ function AttachApp({ port, onExit }: AttachProps) {
 
   return (
     <Box flexDirection="column" width={cols}>
-      <Box borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text bold color="cyan">daimon attach</Text>
-        <Text dimColor>  •  http://127.0.0.1:{port}  •  HTTP-client TUI (q detaches, daemon keeps running)</Text>
+      <Box borderStyle="round" borderColor={theme.color('primary')} paddingX={1}>
+        <Text bold color={theme.color('primary')}>daimon attach</Text>
+        <Text {...theme.style('muted')}>  •  http://127.0.0.1:{port}  •  HTTP-client TUI (q detaches, daemon keeps running)</Text>
       </Box>
 
-      {error ? <Text color="red">{error}</Text> : null}
+      {error ? <Text {...theme.style('danger')}>{error}</Text> : null}
 
-      <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+      <Box flexDirection="column" borderStyle="single" borderColor={theme.color('blurBorder')} paddingX={1}>
         <Text bold>Apps ({apps.length})</Text>
-        {apps.length === 0 ? <Text dimColor>(no apps)</Text> : apps.map((a, i) => {
+        {apps.length === 0 ? <Text {...theme.style('muted')}>(no apps)</Text> : apps.map((a, i) => {
           const sel = i === selected;
           return (
             <Box key={a.name}>
-              <Text color={sel ? 'cyan' : undefined}>{sel ? '▸ ' : '  '}</Text>
-              <Text color={sel ? 'cyan' : undefined}>{a.name.padEnd(20).slice(0, 20)}</Text>
-              <Text color={STATUS_COLORS[a.status]}> {a.status.padEnd(9)}</Text>
-              <Text color={HEALTH_COLORS[a.health]}>{a.status === 'serving' ? '●' : ' '}</Text>
-              <Text dimColor>{a.port ? ` :${a.port}` : ''}</Text>
-              <Text dimColor>  errs={a.errorCount}  up={fmtUptime(a.uptimeMs)}</Text>
+              <Text {...(sel ? theme.style('selection') : {})}>{sel ? '▸ ' : '  '}</Text>
+              <Text {...(sel ? theme.style('selection') : {})}>{a.name.padEnd(20).slice(0, 20)}</Text>
+              <Text {...theme.style(statusRole(a.status))}> {a.status.padEnd(9)}</Text>
+              <Text {...theme.style(healthRole(a.health))}>{a.status === 'serving' ? '●' : ' '}</Text>
+              <Text {...theme.style('muted')}>{a.port ? ` :${a.port}` : ''}</Text>
+              <Text {...theme.style('muted')}>  errs={a.errorCount}  up={fmtUptime(a.uptimeMs)}</Text>
             </Box>
           );
         })}
       </Box>
 
       {current ? (
-        <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+        <Box flexDirection="column" borderStyle="single" borderColor={theme.color('blurBorder')} paddingX={1}>
           <Text>Selected: <Text bold>{current.name}</Text></Text>
           <Text>URL: {current.url ?? '-'}</Text>
-          {current.lastHealthError ? <Text color="red">HealthErr: {current.lastHealthError}</Text> : null}
-          <Text dimColor>──── recent log (Enter/Space toggles) ────</Text>
+          {current.lastHealthError ? <Text {...theme.style('danger')}>HealthErr: {current.lastHealthError}</Text> : null}
+          <Text {...theme.style('muted')}>──── recent log (Enter/Space toggles) ────</Text>
           {expanded ? (
-            logs.length === 0 ? <Text dimColor>(loading…)</Text> : logs.map((l, i) => <Text key={i} wrap="truncate-end">{l}</Text>)
-          ) : <Text dimColor>(press Enter to fetch logs)</Text>}
+            logs.length === 0 ? <Text {...theme.style('muted')}>(loading…)</Text> : logs.map((l, i) => <Text key={i} wrap="truncate-end">{l}</Text>)
+          ) : <Text {...theme.style('muted')}>(press Enter to fetch logs)</Text>}
         </Box>
       ) : null}
 
-      <Text dimColor>[s] start  [x] stop  [r] restart  [Enter] toggle log  [q] detach (daemon keeps running)</Text>
+      {/* Rendered from the chord map (M163) — the attach footer used to be a
+          hand-written string here and a second one in keys.ts's KEY_HELP. */}
+      <Text {...theme.style('muted')}>
+        {footerChords('attach').map(c => `[${c.key}] ${c.label}`).join('  ')}
+      </Text>
     </Box>
   );
 }

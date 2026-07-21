@@ -601,6 +601,179 @@ The app-detail page is now readable anchored sections —
 fragment ids are a permanent deep-link contract) — with a consistent
 start/stop/restart/mute/test action row.
 
+## Terminal Native (v1.13)
+
+Part 3 of the UI redesign trilogy, and the one the oldest surface was owed.
+v1.11 gave the dashboard a visual language, v1.12 gave it an information
+architecture — v1.13 brings both to the TUI, and makes every chord
+**discoverable**. Zero daemon, CLI, or API change: this release lives entirely
+under `src/tui/`. No config key, no history migration, no new dependency.
+
+**Muscle memory is sacred.** Every chord that worked in v1.12 works in v1.13,
+same key, same meaning. Nothing was remapped, so there are no legacy aliases to
+learn.
+
+### Press `?`
+
+The TUI had nineteen chords you could only find by reading the source or
+squinting at a one-line footer. Now `?` opens a full keyboard reference,
+grouped by pane, with the pane you are focused on listed first.
+
+That help overlay, the per-pane footer hints, the docs cheat sheet, and the
+table below all render from **one data module** (`src/tui/chords.ts`). They
+cannot drift, because a test fails if any of them hand-lists a chord. That is
+not hypothetical: through v1.12 the log pane's own footer said `[g/G]
+bottom/top` while its code did the exact opposite. Code won; the labels are
+fixed.
+
+### A real pane system
+
+The app list, the detail view, and the log are three first-class panes with a
+**visible focus model** — `Tab` cycles them, the focused pane is marked, and
+chords are *pane-scoped*, which is how the same key can mean two things without
+colliding:
+
+| Key | In the app list | In the log pane |
+| --- | --- | --- |
+| `l` | focus the log pane | cycle the level filter |
+| `/` | filter apps by name | grep the log |
+| `g` / `G` | view hints / group filter | top / bottom (and resume follow) |
+
+A **persistent status bar** always shows the daemon and its port, the
+workspace, any active filters (with a `visible/total` count), the muted-app
+count, and live log storms. Resizing the terminal re-layouts immediately
+instead of waiting for a tick.
+
+### The log pane finally says what it knows
+
+daimon has classified log levels since v1.2 and detected log storms since v1.2,
+and the TUI showed neither. Now error/warn/info lines are tinted — and a line
+whose level is `null` stays **plain**, because daimon never guesses a level
+client-side. Follow mode stopped being implicit: the header reads `[following]`
+or `[paused]`, scrolling up pauses it, `G` resumes. Grep keeps narrowing the
+stream by default (exactly as it did in v1.2), with `Tab` switching to a
+highlight mode where `n`/`N` walk the matches, and a storm marker appears while
+an app is storming.
+
+### Plain terminals and SSH are first-class
+
+No feature requires a mouse or truecolor. DESIGN.md's palette became one
+semantic theme module with a degradation ladder: truecolor terminals get the
+design language's own OKLCH colors (converted to sRGB — four of them land
+byte-identical on the dashboard's `--dm-chart-*` values), 16-color terminals
+get a **hand-picked** ANSI fallback rather than auto-quantized mud, and
+`NO_COLOR` renders zero color codes while every feature still works, semantics
+carried on bold/dim/inverse. `STATUS_COLORS`/`HEALTH_COLORS`, previously
+duplicated verbatim in two components, now exist once.
+
+### Robust at 80 columns and 100 apps
+
+Columns hide in priority order as the terminal narrows (cpu/mem first, exactly
+the cutoff daimon always used), and below 60 columns the layout drops to a
+single pane rather than corrupting two — nothing wraps into garbage. The app
+list is windowed, so a 100-app registry renders one viewport with a `3/40`
+position indicator instead of 100 rows. And the unconditional 1-second
+full-tree re-render is gone: updates are driven by registry events, leaving one
+slow tick for clock values — a 5× cut in idle renders, pinned by a budget test.
+
+### Every chord
+
+Generated from the chord map, grouped by scope. `Shift+L` maximizes the log
+pane; `q` there returns to the list, exactly as the full-screen log pane always
+behaved.
+
+<!-- chords:start (generated from src/tui/chords.ts — npm run build:readme-chords) -->
+
+**Global — every pane**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `?` | open this help overlay | list, detail, log |
+| `Tab` | cycle focus: list → detail → log | list, detail, log |
+| `Shift+L` | maximize / restore the log pane full-screen | list, detail, log |
+| `i` | open the history timeline | list, detail |
+| `q` | quit the TUI (the daemon keeps running) | list, detail, log |
+
+**Navigation**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `j/k · ↑/↓` | move the selection | list, detail |
+
+**Lifecycle — acts on the selected app**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `s` | start the selected app | list, detail |
+| `S` | stop the selected app | list, detail |
+| `r` | restart the selected app (confirm y/n) | list, detail |
+| `f` | watch the app until it is stable | list, detail |
+| `x` | run permitted auto-fixes, restart, wait | list, detail |
+| `T` | run the app's own test suite once | list, detail |
+| `O` | bring up a whole profile / group | list, detail |
+
+**Inspect**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `o` | open the app's URL in a browser | list, detail |
+| `e` | edit command / port / env (session-only) | list, detail |
+| `E` | cycle the active env file | list, detail |
+| `V` | edit the session override in $EDITOR | list, detail |
+| `l` | focus the log pane | list, detail |
+
+**Filter**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `/` | filter the app list by name | list, detail |
+| `t` | filter the app list by tags | list, detail |
+| `G` | cycle the group filter (v1.1) | list, detail |
+| `g` | view hints: g then a/e/v/s/n | list, detail |
+
+**Log pane**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `l` | cycle level filter: all → error → warn → info | log |
+| `/` | grep / live-filter the log (Esc restores) | log |
+| `n` | jump to the next grep match | log |
+| `N` | jump to the previous grep match | log |
+| `g` | scroll to the top (oldest lines) | log |
+| `G` | scroll to the bottom (newest) and resume follow | log |
+| `↑/↓` | scroll one line (scrolling up pauses follow) | log |
+| `PgUp/PgDn` | page the log up / down | list, detail, log |
+
+**Timeline (`i`)**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `←/→ · h/l` | move between time buckets | timeline |
+| `g/G` | jump to oldest / newest bucket | timeline |
+| `Enter` | drill a day into hours (Esc back to days) | timeline |
+| `n/p` | jump to the app’s next / prev state change | timeline |
+| `q/Esc` | exit the timeline (Esc steps hours → days first) | timeline |
+
+**grep**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `Tab` | toggle grep between narrowing and highlighting | grep |
+| `Enter` | keep the grep pattern and close the input | grep |
+| `Esc` | clear the grep pattern and restore the full stream | grep |
+
+**`daimon attach` (HTTP-client TUI)**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `↑/↓` | move the selection | attach |
+| `Enter` | toggle the log for the selected app | attach |
+| `s` | start the selected app | attach |
+| `x` | stop the selected app | attach |
+| `r` | restart the selected app | attach |
+| `q` | detach (the daemon keeps running) | attach |
+<!-- chords:end -->
+
 ## Multi-agent on one machine (v0.9 + v0.10)
 
 A single daimon daemon on `127.0.0.1:4999` serves every workspace on your machine. Two agents (e.g. two Claude Code sessions in different repos) can use the same daemon without stepping on each other:
@@ -963,7 +1136,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-715 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
+1102 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 

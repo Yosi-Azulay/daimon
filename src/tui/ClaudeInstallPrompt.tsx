@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { Box, render, Text, useApp, useInput } from 'ink';
+import { makeTheme } from './theme.js';
+
+const theme = makeTheme();
 
 interface Selection {
   skill: boolean;
@@ -35,11 +38,11 @@ function Prompt({ onDone }: PromptProps) {
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Text bold color="cyan">Install Claude Code integration artifacts</Text>
-      <Text dimColor>Space toggles · Enter confirms · Esc cancels</Text>
+      <Text bold color={theme.color('primary')}>Install Claude Code integration artifacts</Text>
+      <Text {...theme.style('muted')}>Space toggles · Enter confirms · Esc cancels</Text>
       {items.map((it, i) => (
         <Box key={it.key}>
-          <Text color={i === cursor ? 'cyan' : undefined}>{i === cursor ? '▸ ' : '  '}</Text>
+          <Text {...(i === cursor ? theme.style('selection') : {})}>{i === cursor ? '▸ ' : '  '}</Text>
           <Text>[{sel[it.key] ? 'x' : ' '}] {it.label}</Text>
         </Box>
       ))}

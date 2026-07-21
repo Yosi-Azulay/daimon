@@ -21,6 +21,7 @@ const { CONFIG_KEY_STABILITY } = await import(dist('config.js'));
 const { EVENT_KIND_STABILITY } = await import(dist('types.js'));
 const { DOCTOR_COVERAGE } = await import(dist('doctor.js'));
 const { PLATFORM_BRANCHES } = await import(dist('platformInventory.js'));
+const { CHORDS } = await import(dist('tui/chords.js'));
 
 function esc(s = '') {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -60,6 +61,45 @@ function renderHttp() {
     out.push(`<dd>${esc(e.summary)}</dd>`);
   }
   out.push('</dl>');
+  return out.join('\n');
+}
+
+// TUI chords (v1.13) — rendered from the CHORDS data module so the docs
+// can't drift from the dispatch source or the overlay.
+function renderChords() {
+  const GROUP_TITLES = {
+    global: 'Global', nav: 'Navigation', lifecycle: 'Lifecycle', inspect: 'Inspect',
+    filter: 'Filter', log: 'Log pane', timeline: 'Timeline', attach: 'Attach',
+  };
+
+  // Preserve chord order, collecting unique groups as they appear
+  const seen = new Set();
+  const groupOrder = [];
+  for (const chord of CHORDS) {
+    if (!seen.has(chord.group)) {
+      seen.add(chord.group);
+      groupOrder.push(chord.group);
+    }
+  }
+
+  const out = ['<table class="chords"><thead><tr><th>Key</th><th>Description</th><th>Panes</th></tr></thead><tbody>'];
+
+  for (const group of groupOrder) {
+    const groupChords = CHORDS.filter(c => c.group === group);
+    if (!groupChords.length) continue;
+
+    out.push(`<tr class="chord-group-header"><td colspan="3"><strong>${esc(GROUP_TITLES[group] || group)}</strong></td></tr>`);
+
+    for (const chord of groupChords) {
+      out.push(
+        `<tr><td><code>${esc(chord.key)}</code></td>` +
+        `<td>${esc(chord.desc)}</td>` +
+        `<td>${esc(chord.panes.join(', '))}</td></tr>`
+      );
+    }
+  }
+
+  out.push('</tbody></table>');
   return out.join('\n');
 }
 
@@ -261,6 +301,11 @@ const html = `<!doctype html>
   .pf-fixture { color: var(--tier-frozen-fg); }
   .pf-untestable-locally { color: var(--tier-exp-fg); }
   .pf-bug { color: var(--tier-stable-fg); }
+  table.chords { border-collapse: collapse; width: 100%; font-size: 0.92em; }
+  table.chords th, table.chords td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--hr); vertical-align: top; }
+  table.chords th { font-weight: 600; }
+  .chord-group-header { background: var(--code-bg); }
+  .chord-group-header td { font-weight: 600; padding: 8px 10px; }
 </style>
 </head>
 <body>
@@ -275,6 +320,7 @@ const html = `<!doctype html>
     <li><a href="#quickstart">Quickstart (3 min)</a></li>
     <li><a href="#stability">Stability tiers</a></li>
     <li><a href="#cli">CLI reference</a></li>
+    <li><a href="#chords">TUI chords</a></li>
     <li><a href="#http">HTTP API reference</a></li>
     <li><a href="#mcp">MCP reference</a></li>
     <li><a href="#config">Config reference</a></li>
@@ -309,6 +355,10 @@ npx daimon init --auto</code></pre>
 
 <h2 id="cli">CLI reference</h2>
 ${renderCli()}
+
+<h2 id="chords">TUI chords</h2>
+<p>The TUI's chords are pane-scoped: the same key can mean different things in different panes. This table is generated from the same data module that powers the TUI's dispatch and the <code>?</code> overlay.</p>
+${renderChords()}
 
 <h2 id="http">HTTP API reference</h2>
 <p>Loopback only — the daemon binds <code>127.0.0.1:&lt;apiPort&gt;</code> (default 4999) and rejects cross-origin mutation. <code>:name</code> takes an app name (add <code>?cwd=</code> to disambiguate across workspaces).</p>

@@ -1,130 +1,156 @@
-import React, { useMemo, useEffect, useState } from 'react';
-import { Box, Text, useInput, useStdout } from 'ink';
+import React from 'react';
+import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
-import type { Registry } from '../registry.js';
+import type { LogLevel } from '../frameworks.js';
 import {
-  LEVEL_CHORD_KEY,
-  LEVEL_CHORD_HELP,
-  GREP_CHORD_KEY,
-  GREP_CHORD_HELP,
   type LevelFilter,
-  nextLevelFilter,
+  type GrepMode,
   formatLevelIndicator,
-  filterLogLines,
+  formatFollowIndicator,
+  formatStormIndicator,
+  formatGrepIndicator,
+  compileGrep,
 } from './logFilterChord.js';
+import { levelRole, type Theme } from './theme.js';
+import { footerChords } from './chords.js';
+
+export interface LogEntryLike { line: string; level?: LogLevel | null }
 
 interface Props {
-  registry: Registry;
-  appName: string;
-  onExit: () => void;
+  appName: string | null;
+  /** Already level/grep filtered by the caller — this component only paints. */
+  entries: LogEntryLike[];
+  totalCount: number;
+  matchCount: number;
+  level: LevelFilter;
+  grepQuery: string;
+  grepMode: GrepMode;
+  grepOpen: boolean;
+  onGrepChange: (v: string) => void;
+  onGrepSubmit: () => void;
+  following: boolean;
+  storming: boolean;
+  /** Lines scrolled back from the newest line. 0 = at the bottom. */
+  scroll: number;
+  focused: boolean;
+  maximized: boolean;
+  rows: number;
+  cols: number;
+  theme: Theme;
+  /** Index (into `entries`) of the current n/N match, highlighted in the gutter. */
+  cursorIdx: number | null;
 }
 
-export default function LogPane({ registry, appName, onExit }: Props) {
-  const { stdout } = useStdout();
-  const [tick, setTick] = useState(0);
-  const [levelFilter, setLevelFilter] = useState<LevelFilter>('all');
-  const [grepOpen, setGrepOpen] = useState(false);
-  const [grepQuery, setGrepQuery] = useState('');
-  const [scroll, setScroll] = useState(0);
+// The log pane (v1.13, M164). Presentational: App owns every piece of log state
+// and the single useInput that mutates it, so the inline pane and the
+// maximized (Shift+L) pane are the same component with the same state — your
+// grep, level, and scroll position survive maximizing.
+//
+// Three things this pane finally says out loud:
+//   * LEVEL — v1.2 classified every line; until now the TUI painted them all
+//     the same. A line whose level is null stays PLAIN. daimon never guesses a
+//     level client-side (the v1.2 fail-soft rule), and neither does this.
+//   * FOLLOW — the old pane tailed the log whenever scroll happened to be 0.
+//     Now it is named: [following] / [paused].
+//   * STORM — v1.2's log-storm detector already knew; the pane never showed it.
+export default function LogPane(props: Props) {
+  const {
+    appName, entries, totalCount, matchCount, level, grepQuery, grepMode, grepOpen,
+    onGrepChange, onGrepSubmit, following, storming, scroll, focused, maximized,
+    rows, cols, theme, cursorIdx,
+  } = props;
 
-  useEffect(() => {
-    const onChange = () => setTick(t => t + 1);
-    registry.on('change', onChange);
-    const i = setInterval(() => setTick(t => t + 1), 500);
-    return () => { registry.off('change', onChange); clearInterval(i); };
-  }, [registry]);
+  const lineRows = Math.max(1, rows - (grepOpen ? 2 : 1));
+  const maxScroll = Math.max(0, entries.length - lineRows);
+  const effScroll = Math.min(Math.max(0, scroll), maxScroll);
+  const sliceEnd = entries.length - effScroll;
+  const sliceStart = Math.max(0, sliceEnd - lineRows);
+  const view = entries.slice(sliceStart, sliceEnd);
 
-  const state = registry.getState(appName);
-  const allEntries = state?.logBuffer ?? [];
-  const rows = (stdout.rows || 30) - 4;
+  const grepMatch = grepQuery ? compileGrep(grepQuery) : null;
 
-  // Level AND grep, both must pass — recomputed every keystroke/tick so
-  // typing narrows the visible lines live (M102).
-  const entries = useMemo(
-    () => filterLogLines(allEntries, levelFilter, grepQuery),
-    [allEntries, levelFilter, grepQuery, tick],
-  );
-  const lines = entries.map(e => e.line);
-
-  useInput((input, key) => {
-    if (grepOpen) {
-      // Escape clears the filter and closes the input; any other key (incl.
-      // Enter, handled by TextInput's onSubmit below) falls through to it.
-      if (key.escape) { setGrepOpen(false); setGrepQuery(''); }
-      return;
-    }
-    if (input === 'q' || key.escape) { onExit(); return; }
-    if (input === GREP_CHORD_KEY) { setGrepOpen(true); return; }
-    if (input === LEVEL_CHORD_KEY) { setLevelFilter(f => nextLevelFilter(f)); return; }
-    if (input === 'g') { setScroll(Math.max(0, lines.length - rows)); return; }
-    if (input === 'G') { setScroll(0); return; }
-    if (key.pageUp) { setScroll(s => Math.min(Math.max(0, lines.length - rows), s + rows)); return; }
-    if (key.pageDown) { setScroll(s => Math.max(0, s - rows)); return; }
-    if (key.upArrow) { setScroll(s => Math.min(Math.max(0, lines.length - rows), s + 1)); return; }
-    if (key.downArrow) { setScroll(s => Math.max(0, s - 1)); return; }
-  });
-
-  // Enter keeps the filter applied and closes the input.
-  const submit = () => { setGrepOpen(false); };
-
-  // Clamp against the render's up-to-date filtered length — the level/grep
-  // filter can shrink the list out from under a `scroll` set against a
-  // longer, unfiltered view.
-  const maxScroll = Math.max(0, lines.length - rows);
-  const effScroll = Math.min(scroll, maxScroll);
-  const sliceEnd = lines.length - effScroll;
-  const sliceStart = Math.max(0, sliceEnd - rows);
-  const view = lines.slice(sliceStart, sliceEnd);
-
-  const renderLine = (text: string, idx: number) => {
-    if (!grepQuery) {
-      return <Text key={idx}><Text dimColor>{String(idx + 1).padStart(5)} </Text>{text}</Text>;
-    }
-    // Best-effort literal highlight — grep may be a regex under the hood, so
-    // a match with no literal substring hit just renders unhighlighted.
+  // Highlight grep hits inside a line. Best-effort literal segmentation: grep
+  // may be a regex, so a line that matches with no literal substring hit simply
+  // renders untinted rather than lying about where the match was.
+  const renderText = (text: string, style: React.ComponentProps<typeof Text>) => {
+    if (!grepQuery) return <Text {...style}>{text}</Text>;
     const lower = text.toLowerCase();
-    const qLower = grepQuery.toLowerCase();
+    const needle = grepQuery.toLowerCase();
+    if (!lower.includes(needle)) return <Text {...style}>{text}</Text>;
     const segs: React.ReactNode[] = [];
     let i = 0, k = 0;
     while (i < text.length) {
-      const at = lower.indexOf(qLower, i);
-      if (at < 0) { segs.push(<Text key={k++}>{text.slice(i)}</Text>); break; }
-      if (at > i) segs.push(<Text key={k++}>{text.slice(i, at)}</Text>);
-      segs.push(<Text key={k++} backgroundColor="yellow" color="black">{text.slice(at, at + grepQuery.length)}</Text>);
+      const at = lower.indexOf(needle, i);
+      if (at < 0) { segs.push(<Text key={k++} {...style}>{text.slice(i)}</Text>); break; }
+      if (at > i) segs.push(<Text key={k++} {...style}>{text.slice(i, at)}</Text>);
+      segs.push(
+        <Text key={k++} backgroundColor={theme.color('warning')} color={theme.level === 'none' ? undefined : 'black'} inverse={theme.level === 'none'}>
+          {text.slice(at, at + grepQuery.length)}
+        </Text>,
+      );
       i = at + grepQuery.length;
     }
-    return (
-      <Text key={idx}>
-        <Text dimColor>{String(idx + 1).padStart(5)} </Text>
-        {segs}
-      </Text>
-    );
+    return <>{segs}</>;
   };
 
-  const levelIndicator = formatLevelIndicator(levelFilter);
+  const title = maximized ? 'log (full)' : 'log';
+  const borderColor = focused || maximized ? theme.color('focusBorder') : theme.color('blurBorder');
+  const levelInd = formatLevelIndicator(level);
+  const grepInd = formatGrepIndicator(grepQuery, grepMode, matchCount);
+  const stormInd = formatStormIndicator(storming);
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={cols} borderStyle="single" borderColor={borderColor} paddingX={1}>
       <Box>
-        <Text bold>full log: <Text color="cyan">{appName}</Text></Text>
-        {levelIndicator ? <Text color="yellow"> {levelIndicator}</Text> : null}
-        <Text dimColor>
-          {'  '}({lines.length}{lines.length !== allEntries.length ? `/${allEntries.length}` : ''} lines
-          {grepQuery ? `, grep "${grepQuery}"` : ''}, scroll={effScroll})
+        <Text bold color={focused || maximized ? theme.color('primary') : undefined}>
+          {focused || maximized ? '▸ ' : '  '}{title}
+        </Text>
+        {appName ? <Text color={theme.color('accent')}>{' '}{appName}</Text> : null}
+        {stormInd ? <Text {...theme.style('storm')}>{'  '}{stormInd}</Text> : null}
+        {levelInd ? <Text {...theme.style('warning')}>{'  '}{levelInd}</Text> : null}
+        {grepInd ? <Text {...theme.style('accent')}>{'  '}{grepInd}</Text> : null}
+        <Text {...theme.style(following ? 'follow' : 'muted')}>{'  '}{formatFollowIndicator(following)}</Text>
+        <Text {...theme.style('muted')}>
+          {'  '}{entries.length}{entries.length !== totalCount ? `/${totalCount}` : ''} lines
         </Text>
       </Box>
-      <Box flexDirection="column">
-        {view.length === 0 ? (
-          <Text dimColor>{allEntries.length === 0 ? '(no log yet)' : '(no matching lines)'}</Text>
-        ) : view.map((line, i) => renderLine(line, sliceStart + i))}
-      </Box>
-      <Box>
-        {grepOpen ? (
-          <Box><Text>/</Text><TextInput value={grepQuery} onChange={setGrepQuery} onSubmit={submit} /></Box>
-        ) : (
-          <Text dimColor>{GREP_CHORD_HELP}  {LEVEL_CHORD_HELP}  [g/G] bottom/top  [PgUp/PgDn] [↑↓]  [q/Esc] back</Text>
-        )}
-      </Box>
+
+      {view.length === 0 ? (
+        <Text {...theme.style('muted')}>
+          {totalCount === 0 ? '(no output yet)' : '(no matching lines)'}
+        </Text>
+      ) : (
+        view.map((e, i) => {
+          const absIdx = sliceStart + i;
+          const role = levelRole(e.level);
+          // An unclassified line gets NO role — plain text, never a guess.
+          const style = role ? theme.style(role) : {};
+          const isCursor = cursorIdx != null && cursorIdx === absIdx;
+          const isMatch = grepMatch ? grepMatch(e.line) : false;
+          return (
+            <Box key={absIdx}>
+              <Text {...theme.style(isCursor ? 'accent' : 'muted')}>
+                {isCursor ? '▸' : ' '}{String(absIdx + 1).padStart(5)}{isMatch && grepMode === 'highlight' ? '*' : ' '}
+              </Text>
+              {renderText(e.line, style)}
+            </Box>
+          );
+        })
+      )}
+
+      {grepOpen ? (
+        <Box>
+          <Text color={theme.color('accent')}>/</Text>
+          <TextInput value={grepQuery} onChange={onGrepChange} onSubmit={onGrepSubmit} />
+          {/* Rendered from the chord map like every other hint — this was a
+              hand-written ribbon until the v1.13 review caught that tsc splits
+              a JSX literal at its interpolation, hiding it from the drift gate. */}
+          <Text {...theme.style('muted')}>
+            {'  '}{footerChords('grep').map(c => `[${c.key}] ${c.label}`).join('  ')}
+            {'  '}(now: {grepMode})
+          </Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }

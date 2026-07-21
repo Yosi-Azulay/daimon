@@ -5,6 +5,10 @@ import {
   bucketize, findStateChange, bucketIndexForTs, clampIndex, densityGlyph,
   type Granularity, type TimelineEvent,
 } from './timelineChord.js';
+import { makeTheme } from './theme.js';
+import { footerChords } from './chords.js';
+
+const theme = makeTheme();
 
 interface Props {
   registry: Registry;
@@ -84,7 +88,7 @@ export default function TimelinePane({ registry, appName, onExit }: Props) {
 
   const cols = stdout.columns || 100;
   const strip = buckets.map((b, i) => (
-    <Text key={b.start} color={i === selIdx ? 'cyan' : undefined} inverse={i === selIdx}>
+    <Text key={b.start} {...(i === selIdx ? { ...theme.style('selection'), inverse: true } : {})}>
       {densityGlyph(b.count, maxCount)}
     </Text>
   ));
@@ -93,34 +97,37 @@ export default function TimelinePane({ registry, appName, onExit }: Props) {
     <Box flexDirection="column">
       <Box>
         <Text bold>timeline</Text>
-        <Text dimColor>  {granularity === 'day' ? 'by day' : 'by hour'}{range ? ` · ${relLabel(range.from, 'day')}` : ''}{appName ? ` · app ${appName}` : ''}  ({events.length} events / 30d)</Text>
+        <Text {...theme.style('muted')}>  {granularity === 'day' ? 'by day' : 'by hour'}{range ? ` · ${relLabel(range.from, 'day')}` : ''}{appName ? ` · app ${appName}` : ''}  ({events.length} events / 30d)</Text>
       </Box>
 
       {buckets.length === 0 ? (
-        <Text dimColor>(no history in the last 30 days — nothing to walk yet)</Text>
+        <Text {...theme.style('muted')}>(no history in the last 30 days — nothing to walk yet)</Text>
       ) : (
         <>
-          <Box flexWrap="wrap"><Text dimColor>oldest </Text>{strip}<Text dimColor> newest</Text></Box>
+          <Box flexWrap="wrap"><Text {...theme.style('muted')}>oldest </Text>{strip}<Text {...theme.style('muted')}> newest</Text></Box>
           {selBucket ? (
             <Box flexDirection="column" marginTop={1}>
               <Text>
-                <Text color="cyan">{relLabel(selBucket.start, granularity)}</Text>
-                <Text dimColor>  {selBucket.count} event{selBucket.count === 1 ? '' : 's'}  ({selIdx + 1}/{buckets.length})</Text>
+                <Text color={theme.color('accent')}>{relLabel(selBucket.start, granularity)}</Text>
+                <Text {...theme.style('muted')}>  {selBucket.count} event{selBucket.count === 1 ? '' : 's'}  ({selIdx + 1}/{buckets.length})</Text>
               </Text>
               {bucketEvents.slice(0, 12).map((e, i) => (
-                <Text key={i} dimColor>
+                <Text key={i} {...theme.style('muted')}>
                   {new Date(e.ts).toISOString().slice(11, 19)}  {e.app.padEnd(16).slice(0, 16)}  {e.type}{e.to_state ? ` → ${e.to_state}` : ''}
                 </Text>
               ))}
-              {bucketEvents.length > 12 ? <Text dimColor>  … +{bucketEvents.length - 12} more</Text> : null}
+              {bucketEvents.length > 12 ? <Text {...theme.style('muted')}>  … +{bucketEvents.length - 12} more</Text> : null}
             </Box>
           ) : null}
         </>
       )}
 
+      {/* Footer rendered from the chord map (M163), never hand-listed. */}
       <Box marginTop={1}>
-        {hint ? <Text color="yellow">{hint}</Text> : (
-          <Text dimColor>[←/→] bucket  [g/G] oldest/newest  {granularity === 'day' ? '[Enter] drill to hours  ' : '[Esc] back to days  '}[n/p] app state change  [q] exit</Text>
+        {hint ? <Text {...theme.style('warning')}>{hint}</Text> : (
+          <Text {...theme.style('muted')}>
+            {footerChords('timeline').map(c => `[${c.key}] ${c.label}`).join('  ')}
+          </Text>
         )}
       </Box>
     </Box>

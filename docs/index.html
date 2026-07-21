@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.12.0 — docs</title>
+<title>daimon v1.13.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -54,11 +54,16 @@
   .pf-fixture { color: var(--tier-frozen-fg); }
   .pf-untestable-locally { color: var(--tier-exp-fg); }
   .pf-bug { color: var(--tier-stable-fg); }
+  table.chords { border-collapse: collapse; width: 100%; font-size: 0.92em; }
+  table.chords th, table.chords td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--hr); vertical-align: top; }
+  table.chords th { font-weight: 600; }
+  .chord-group-header { background: var(--code-bg); }
+  .chord-group-header td { font-weight: 600; padding: 8px 10px; }
 </style>
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.12.0</span></h1>
+<h1>daimon <span class="badge">v1.13.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -68,6 +73,7 @@
     <li><a href="#quickstart">Quickstart (3 min)</a></li>
     <li><a href="#stability">Stability tiers</a></li>
     <li><a href="#cli">CLI reference</a></li>
+    <li><a href="#chords">TUI chords</a></li>
     <li><a href="#http">HTTP API reference</a></li>
     <li><a href="#mcp">MCP reference</a></li>
     <li><a href="#config">Config reference</a></li>
@@ -242,6 +248,64 @@ npx daimon init --auto</code></pre>
 <dt><code>daimon plugins [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>List loaded plug-ins: name, apiVersion, status (active|disabled|load-error), hooks, error.</dd>
 </dl>
+
+<h2 id="chords">TUI chords</h2>
+<p>The TUI's chords are pane-scoped: the same key can mean different things in different panes. This table is generated from the same data module that powers the TUI's dispatch and the <code>?</code> overlay.</p>
+<table class="chords"><thead><tr><th>Key</th><th>Description</th><th>Panes</th></tr></thead><tbody>
+<tr class="chord-group-header"><td colspan="3"><strong>Global</strong></td></tr>
+<tr><td><code>?</code></td><td>open this help overlay</td><td>list, detail, log</td></tr>
+<tr><td><code>Tab</code></td><td>cycle focus: list → detail → log</td><td>list, detail, log</td></tr>
+<tr><td><code>Shift+L</code></td><td>maximize / restore the log pane full-screen</td><td>list, detail, log</td></tr>
+<tr><td><code>i</code></td><td>open the history timeline</td><td>list, detail</td></tr>
+<tr><td><code>q</code></td><td>quit the TUI (the daemon keeps running)</td><td>list, detail, log</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Navigation</strong></td></tr>
+<tr><td><code>j/k · ↑/↓</code></td><td>move the selection</td><td>list, detail</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Lifecycle</strong></td></tr>
+<tr><td><code>s</code></td><td>start the selected app</td><td>list, detail</td></tr>
+<tr><td><code>S</code></td><td>stop the selected app</td><td>list, detail</td></tr>
+<tr><td><code>r</code></td><td>restart the selected app (confirm y/n)</td><td>list, detail</td></tr>
+<tr><td><code>f</code></td><td>watch the app until it is stable</td><td>list, detail</td></tr>
+<tr><td><code>x</code></td><td>run permitted auto-fixes, restart, wait</td><td>list, detail</td></tr>
+<tr><td><code>T</code></td><td>run the app's own test suite once</td><td>list, detail</td></tr>
+<tr><td><code>O</code></td><td>bring up a whole profile / group</td><td>list, detail</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Inspect</strong></td></tr>
+<tr><td><code>o</code></td><td>open the app's URL in a browser</td><td>list, detail</td></tr>
+<tr><td><code>e</code></td><td>edit command / port / env (session-only)</td><td>list, detail</td></tr>
+<tr><td><code>E</code></td><td>cycle the active env file</td><td>list, detail</td></tr>
+<tr><td><code>V</code></td><td>edit the session override in $EDITOR</td><td>list, detail</td></tr>
+<tr><td><code>l</code></td><td>focus the log pane</td><td>list, detail</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Filter</strong></td></tr>
+<tr><td><code>/</code></td><td>filter the app list by name</td><td>list, detail</td></tr>
+<tr><td><code>t</code></td><td>filter the app list by tags</td><td>list, detail</td></tr>
+<tr><td><code>G</code></td><td>cycle the group filter (v1.1)</td><td>list, detail</td></tr>
+<tr><td><code>g</code></td><td>view hints: g then a/e/v/s/n</td><td>list, detail</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Log pane</strong></td></tr>
+<tr><td><code>l</code></td><td>cycle level filter: all → error → warn → info</td><td>log</td></tr>
+<tr><td><code>/</code></td><td>grep / live-filter the log (Esc restores)</td><td>log</td></tr>
+<tr><td><code>n</code></td><td>jump to the next grep match</td><td>log</td></tr>
+<tr><td><code>N</code></td><td>jump to the previous grep match</td><td>log</td></tr>
+<tr><td><code>g</code></td><td>scroll to the top (oldest lines)</td><td>log</td></tr>
+<tr><td><code>G</code></td><td>scroll to the bottom (newest) and resume follow</td><td>log</td></tr>
+<tr><td><code>↑/↓</code></td><td>scroll one line (scrolling up pauses follow)</td><td>log</td></tr>
+<tr><td><code>PgUp/PgDn</code></td><td>page the log up / down</td><td>list, detail, log</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Timeline</strong></td></tr>
+<tr><td><code>←/→ · h/l</code></td><td>move between time buckets</td><td>timeline</td></tr>
+<tr><td><code>g/G</code></td><td>jump to oldest / newest bucket</td><td>timeline</td></tr>
+<tr><td><code>Enter</code></td><td>drill a day into hours (Esc back to days)</td><td>timeline</td></tr>
+<tr><td><code>n/p</code></td><td>jump to the app’s next / prev state change</td><td>timeline</td></tr>
+<tr><td><code>q/Esc</code></td><td>exit the timeline (Esc steps hours → days first)</td><td>timeline</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>grep</strong></td></tr>
+<tr><td><code>Tab</code></td><td>toggle grep between narrowing and highlighting</td><td>grep</td></tr>
+<tr><td><code>Enter</code></td><td>keep the grep pattern and close the input</td><td>grep</td></tr>
+<tr><td><code>Esc</code></td><td>clear the grep pattern and restore the full stream</td><td>grep</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Attach</strong></td></tr>
+<tr><td><code>↑/↓</code></td><td>move the selection</td><td>attach</td></tr>
+<tr><td><code>Enter</code></td><td>toggle the log for the selected app</td><td>attach</td></tr>
+<tr><td><code>s</code></td><td>start the selected app</td><td>attach</td></tr>
+<tr><td><code>x</code></td><td>stop the selected app</td><td>attach</td></tr>
+<tr><td><code>r</code></td><td>restart the selected app</td><td>attach</td></tr>
+<tr><td><code>q</code></td><td>detach (the daemon keeps running)</td><td>attach</td></tr>
+</tbody></table>
 
 <h2 id="http">HTTP API reference</h2>
 <p>Loopback only — the daemon binds <code>127.0.0.1:&lt;apiPort&gt;</code> (default 4999) and rejects cross-origin mutation. <code>:name</code> takes an app name (add <code>?cwd=</code> to disambiguate across workspaces).</p>

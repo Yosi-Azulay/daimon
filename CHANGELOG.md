@@ -4,6 +4,40 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-07-21
+
+"Terminal Native" — part 3 of the UI redesign trilogy (M162–M167), and the one the oldest surface was owed. v1.11 gave the dashboard a visual language; v1.12 gave it an information architecture; v1.13 brings both to the TUI and makes every chord **discoverable**. The TUI had nineteen chords you could only find by reading the source, a footer hand-written in three places (one of which had already drifted out of sync with its own code), a v0.3-era two-box layout, status colors duplicated verbatim across two components, an unwindowed app list, and a 1-second interval that re-rendered the whole tree whether or not anything had changed. This release lives **entirely under `src/tui/`**: zero daemon, CLI, HTTP, or MCP change, no config key, no history migration, no new dependency, no frozen shape moved. **Migration: none. Every chord that worked in v1.12 works in v1.13, same key, same meaning — no remaps, so no legacy aliases.**
+
+### Added
+
+- **`?` help overlay (M163).** A full keyboard reference grouped by pane, with the focused pane's chords listed first, scrollable and usable at 80 columns. `?` / `Esc` / `q` close it.
+- **`src/tui/chords.ts` — the chord map (M163).** Every chord as data: key, pane scope, description, group, legacy aliases. Dispatch, the overlay, the per-pane footers, the docs cheat sheet, and the README table all render from it. `test/tui-chords.test.mjs` fails if any surface hand-lists a chord, and App's `Record<MainChordId, Handler>` makes a missing handler a **build** error.
+- **A pane system with a visible focus model (M162).** App list / detail / log are three first-class panes; `Tab` cycles focus, the focused pane is marked, and chords are pane-scoped — which is how `l`, `/`, `g`, and `G` each mean one thing in the list and another in the log without colliding.
+- **A persistent status bar (M162)** — daemon state and api port, workspace, active filters with a `visible/total` count, muted-app count, live log storms, and transient flash messages folded in as the last segment.
+- **Log pane 2.0 (M164).** v1.2 level classification is finally visible (error/warn/info tinted; a `null`-level line stays **plain** — daimon never guesses a level client-side). Follow mode is explicit (`[following]` / `[paused]`, pauses on scroll-up, `G` resumes). Grep keeps narrowing by default as it has since v1.2, with `Tab` toggling a highlight mode where `n`/`N` walk the matches. A storm marker shows while an app is in a v1.2 `log-storm` episode.
+- **`src/tui/theme.ts` — one semantic terminal theme (M165).** DESIGN.md's palette as roles, with a truecolor → 16-color → `NO_COLOR` ladder: truecolor gets the design language's own OKLCH values converted to sRGB (four land byte-identical on the dashboard's `--dm-chart-*` dark hex), 16-color gets a **hand-picked** ANSI fallback rather than auto-quantized mud, and `NO_COLOR` renders zero color codes with semantics carried on bold/dim/inverse — every feature intact on every rung.
+- **`npm run build:readme-chords`** and a chord section in the generated docs page — both rendered from the chord map, both idempotent.
+- **Six new test files** — `tui-chords`, `tui-theme`, `tui-layout`, `tui-log-pane`, `tui-render-budget`, and `tui-render-smoke` (which mounts the real TUI against a fake stdout using ink, no new dependency).
+
+### Changed
+
+- **`STATUS_COLORS` / `HEALTH_COLORS` exist once.** They were duplicated verbatim in `App.tsx` and `AttachApp.tsx`; both now read the theme module, and a test fails any component that hard-codes a color — DESIGN.md's token rule carried from the dashboard to the terminal.
+- **The app list is windowed (M166).** A 100-app registry renders one viewport with a `3/40` position indicator instead of 100 rows, with the selection always in view.
+- **Narrow terminals degrade in priority order (M166).** Columns drop cpu/mem first (the exact `cols >= 100` cutoff daimon has always used), then the framework badge below 80; below 60 columns the layout collapses to a single pane rather than corrupting two. Status is never dropped.
+- **Terminal resize re-layouts immediately (M162)** instead of waiting for the next tick.
+- **Idle re-renders cut 5× (M166).** The unconditional 1-second full-tree interval is gone; updates are driven by the registry `change`/`event` subscriptions that already existed, leaving one slow tick for derived clock values. Pinned by `test/tui-render-budget.test.mjs`, which also fails if a second interval or a 1s interval reappears.
+
+### Fixed
+
+- **The log pane's `g`/`G` labels were backwards.** Through v1.12 the footer read `[g/G] bottom/top` while the code did the opposite — `g` scrolled to the oldest lines, `G` to the newest. Code wins: `g` is top/oldest, `G` is bottom/newest (and now also resumes follow), matching vim and the timeline pane's own `g`/`G`. This drift is exactly what motivated making the chord map the single source of truth.
+
+### Notes
+
+- **Zero daemon/CLI/API change.** No new verbs, endpoints, MCP tools, event kinds, or config keys; no history migration. Every new surface is `experimental`; no frozen shape moved.
+- **Plain terminals and SSH are first-class.** No feature requires a mouse or truecolor.
+- **One deliberate deviation from the plan:** M166's acceptance line asked for `PgUp`/`PgDn` to page the app list. In v1.12 those keys scrolled the **log**, and "muscle memory is sacred" is a locked rule that outranks an acceptance detail — so they still page the log. The 100-app list is fully navigable via `j`/`k` with windowing.
+
+
 ## [1.12.0] — 2026-07-21
 
 "Wayfinding" — part 2 of the UI redesign trilogy (M156–M161). v1.11 gave the dashboard a visual language; v1.12 gives it an **information architecture**. The pages had accreted release-by-release: a flat fourteen-entry nav rail in ship order, a `/` route that was just the apps list, an app-detail page that grew a why panel, tests, and timeline links with no layout, and a command palette that did navigation OR search depending on a `>` prefix. Navigation was never designed — you found features by luck. v1.12 groups routes by task (**observe / investigate / configure**), unifies the palette into one ranked list, turns `/` into a real overview that answers "how are things" before a click, and re-lays the app page as readable anchored sections — while holding the one hard rule: **every URL that worked yesterday still resolves tomorrow.** This release **recomposes existing endpoints** — no new HTTP endpoint, no new config key, no history migration, no new dependency, no frozen shape moved. **Migration: some URLs redirect (all listed in `RELEASE-v1.12.0.md`); nothing 404s.**

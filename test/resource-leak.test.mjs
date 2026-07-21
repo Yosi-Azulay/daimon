@@ -5,9 +5,22 @@
 // that gets the whole feature turned off.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { ResourceGuard, computeBaseline, evaluateLeakWindow } from '../dist/resources.js';
-import { Notifier } from '../dist/notifier.js';
+
+// Isolation (M91 rule, enforced in v1.13): the Notifier below writes a
+// notifications.log under daimonDir(). Without DAIMON_HOME that lands in the
+// user's REAL ~/.daimon, which made test/demo-script.test.mjs — it asserts the
+// real state dir is untouched — fail whenever the two ran in parallel. Set
+// before importing the notifier so its constructor resolves the temp dir.
+const TMP_HOME = path.join(os.tmpdir(), `daimon-resource-leak-test-${process.pid}-${Date.now()}`);
+fs.mkdirSync(TMP_HOME, { recursive: true });
+process.env.DAIMON_HOME = TMP_HOME;
+
+const { ResourceGuard, computeBaseline, evaluateLeakWindow } = await import('../dist/resources.js');
+const { Notifier } = await import('../dist/notifier.js');
 
 const MB = 1024 * 1024;
 const STEP = 30_000; // default sampleMs cadence
