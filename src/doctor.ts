@@ -187,7 +187,12 @@ export async function runDoctor(
   // stats.rejected tally — never a generic guess — so the remedy matches what
   // actually happened.
   if (apps.length === 0) {
-    checks.push({ name: 'no-apps-detected', ok: false, detail: noAppsDetectedDetail(config, opts?.discoveryStats) });
+    // ok:true — suggest-only, like every other advisory rule (env-file-missing,
+    // port-pool-absent). `daimon doctor` exits 1 on any ok:false check, and a
+    // freshly-installed workspace that hasn't been pointed at anything yet is
+    // not a doctor FAILURE; making it one would break `daimon doctor && …` for
+    // everyone who scripted against v1.13's exit codes.
+    checks.push({ name: 'no-apps-detected', ok: true, detail: noAppsDetectedDetail(config, opts?.discoveryStats) });
   }
 
   for (const [name, ov] of Object.entries(config.overrides ?? {})) {
@@ -254,10 +259,14 @@ export async function runDoctor(
     // `daimon daemon start`. Distinct from port-holder-no-lock, which only
     // fires when something ELSE holds the port; this is precisely the case
     // where nothing does.
+    // ok:true — suggest-only. A stopped daemon is a normal state, not a fault:
+    // `daimon doctor` exits 1 on any ok:false check, so failing here would
+    // break the `daimon doctor && daimon daemon start` idiom that worked
+    // through v1.13. The finding still tells a stranger what to do next.
     checks.push({
       name: 'daemon-not-started',
-      ok: false,
-      detail: `no daimon is listening on apiPort ${config.apiPort} — run 'daimon daemon start'`,
+      ok: true,
+      detail: `no daimon is listening on apiPort ${config.apiPort}${process.env.DAIMON_PORT ? ` (config.apiPort; DAIMON_PORT=${process.env.DAIMON_PORT} is set, so a daemon may be running on that port instead)` : ''} — run 'daimon daemon start'`,
     });
   } else {
     const lock = readLock();

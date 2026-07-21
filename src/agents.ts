@@ -5,7 +5,10 @@
 // what without stepping on each other.
 
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
+import { daimonDir } from './daemon.js';
 
 const AGENT_INACTIVE_MS = 5 * 60_000;
 const DEFAULT_LOCK_TTL_MS = 30_000;
@@ -56,32 +59,141 @@ export interface LockAnalytics {
   perAgent: Map<string, AgentContention>;
 }
 
-// Stable, per-session agent id: <short-hostname>-<pid>-<4hex>. Kept in env so a
+// Stable, per-session agent id: <short-hostname>-<n>-<4hex>. Kept in env so a
 // child process forks pick the same value rather than minting their own.
 //
-// The SESSION is the terminal, not the process (v1.14 first-run fix). Minting
+// The SESSION is the TERMINAL, not the process (v1.14 first-run fix). Minting
 // a fresh random id per CLI invocation made two consecutive commands from one
 // shell look like two competing agents: `daimon start web` took a 30s soft
-// lock, and the `daimon stop web` typed a second later was DENIED by it —
-// the first thing a stranger tries, refused by daimon's own coordination.
-// So the identity is derived from the parent process (the shell) instead:
-// same terminal → same agent across invocations, while a second terminal, an
-// editor, or a Claude Code session each still get their own identity and the
-// multi-agent soft-lock protection that exists for them. Shape is unchanged
-// (<host>-<n>-<4hex>) and identity remains ADVISORY — an unauthenticated
-// header, never an authorization decision.
+// lock, and the `daimon stop web` typed a second later was DENIED by it — the
+// first thing a stranger tries, refused by daimon's own coordination.
+//
+// Two properties this has to get right, and an earlier v1.14 attempt got both
+// wrong, so they are spelled out:
+//
+//  1. The session key must actually be stable per terminal. `process.ppid`
+//     ISN'T, in Git Bash / MSYS: that shell forks a real Windows process per
+//     command, so the parent pid changes every invocation and a ppid-derived
+//     id silently reverts to per-process. Terminal emulators publish a proper
+//     per-session id (WT_SESSION, TERM_SESSION_ID, …) which IS stable there,
+//     so those come first; ppid is the fallback for a bare cmd/PowerShell.
+//  2. The suffix must be REAL entropy. Hashing the session key gave a value
+//     fully determined by inputs already in the id, so on OS pid reuse two
+//     genuinely different shells produced a BYTE-IDENTICAL id — and
+//     `LockManager.acquire` then treats the second shell as the lock's owner
+//     and silently REFRESHES it instead of denying: no denial, no steal, no
+//     audit row. That turns the M124 multi-agent protection invisible rather
+//     than merely permissive. So the suffix is random, minted once per session
+//     and remembered (see rememberSessionId) — two sessions can still collide
+//     with 1-in-65536 odds, exactly as they always could, but never
+//     deterministically.
+//
+// Identity remains ADVISORY throughout: an unauthenticated header, never an
+// authorization decision, and an explicit DAIMON_AGENT_ID always wins.
 export function generateAgentId(): string {
   const cached = process.env.DAIMON_AGENT_ID;
   if (cached && cached.trim()) return cached.trim();
   const host = (os.hostname() || 'unknown').split('.')[0].toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 24) || 'host';
-  const ppid = typeof process.ppid === 'number' && process.ppid > 0 ? process.ppid : null;
-  // Deterministic 4-hex from the session key so the id is reproducible for the
-  // same shell; random only when there is no parent to key off.
-  const id = ppid !== null
-    ? `${host}-${ppid}-${crypto.createHash('sha256').update(`${host}:${ppid}`).digest('hex').slice(0, 4)}`
-    : `${host}-${process.pid}-${crypto.randomBytes(2).toString('hex')}`;
+  const session = terminalSessionKey();
+  const rand = () => crypto.randomBytes(2).toString('hex');
+
+  let id: string;
+  if (session) {
+    const remembered = recallSessionId(session.key);
+    if (remembered) {
+      process.env.DAIMON_AGENT_ID = remembered;
+      return remembered;
+    }
+    id = `${host}-${session.label}-${rand()}`;
+    rememberSessionId(session.key, id);
+  } else {
+    // No terminal to key off (a daemon, a service, an unknown host shell):
+    // per-process identity, exactly as before v1.14.
+    id = `${host}-${process.pid}-${rand()}`;
+  }
   process.env.DAIMON_AGENT_ID = id;
   return id;
+}
+
+// Env vars terminal emulators set once per session/tab, in preference order.
+// Each is stable across invocations within one terminal and different between
+// terminals — which is precisely the property ppid lacks under MSYS.
+const SESSION_ENV_KEYS = [
+  'WT_SESSION',        // Windows Terminal (per tab) — works in Git Bash too
+  'TERM_SESSION_ID',   // macOS Terminal.app
+  'ITERM_SESSION_ID',  // iTerm2
+  'TMUX_PANE',         // tmux
+  'SSH_TTY',           // an ssh login session
+] as const;
+
+// The session this CLI invocation belongs to: `key` identifies it uniquely,
+// `label` is the short numeric-ish field that goes in the id.
+function terminalSessionKey(): { key: string; label: string } | null {
+  for (const name of SESSION_ENV_KEYS) {
+    const v = process.env[name];
+    if (v && v.trim()) {
+      const key = `${name}:${v.trim()}`;
+      // The middle field stays NUMERIC: it has been `<host>-<pid>-<4hex>` since
+      // v1.6 and a test pins that shape, so a session id is folded down to a
+      // number rather than widening the format. It is a display detail —
+      // uniqueness lives in `key` plus the random suffix.
+      const label = String(parseInt(crypto.createHash('sha256').update(key).digest('hex').slice(0, 6), 16));
+      return { key, label };
+    }
+  }
+  const ppid = typeof process.ppid === 'number' && process.ppid > 0 ? process.ppid : null;
+  if (ppid !== null) return { key: `ppid:${ppid}`, label: String(ppid) };
+  return null;
+}
+
+// Session → minted id, in daimon's own state dir. Entries expire so a recycled
+// pid can never inherit an old shell's identity: past the TTL the key mints a
+// fresh random id instead.
+const SESSION_TTL_MS = 12 * 60 * 60_000;
+const SESSION_FILE = 'cli-sessions.json';
+
+// daemon.js is imported statically: it pulls in only node builtins plus
+// version.js, does not import this module back, and the CLI already loads it
+// on every invocation — so this costs nothing against the M148 startup diet.
+function sessionStorePath(): string | null {
+  try {
+    return path.join(daimonDir(), SESSION_FILE);
+  } catch {
+    return null;
+  }
+}
+
+function recallSessionId(key: string): string | null {
+  const p = sessionStorePath();
+  if (!p) return null;
+  try {
+    const store = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const hit = store?.[key];
+    if (hit && typeof hit.id === 'string' && typeof hit.ts === 'number' && Date.now() - hit.ts < SESSION_TTL_MS) {
+      return hit.id;
+    }
+  } catch { /* absent or unreadable — mint a fresh one */ }
+  return null;
+}
+
+function rememberSessionId(key: string, id: string): void {
+  const p = sessionStorePath();
+  if (!p) return;
+  try {
+    let store: Record<string, { id: string; ts: number }> = {};
+    try { store = JSON.parse(fs.readFileSync(p, 'utf8')) || {}; } catch {}
+    const now = Date.now();
+    for (const [k, v] of Object.entries(store)) {
+      if (!v || typeof v.ts !== 'number' || now - v.ts >= SESSION_TTL_MS) delete store[k];
+    }
+    store[key] = { id, ts: now };
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    // tmp+rename: two shells can mint at the same moment, and a torn file here
+    // would cost every session its identity (M88 atomic-write rule).
+    const tmp = `${p}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(store, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmp, p);
+  } catch { /* identity is advisory — never fail a command over it */ }
 }
 
 export class AgentRegistry {

@@ -331,14 +331,22 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   `discoverApps()` with cwd as the proposed searchRoot, so a new
   `FrameworkProfile` row reaches the wizard for free and init can never
   disagree with `daimon list` about what is in the folder. The forked
-  four-marker `MARKERS` list was deleted in v1.14; do not reintroduce one. init
-  writes **exactly `daimon.config.json` in cwd** — no `~/.daimon` write, no
-  second file, no source edit, no `.env` read beyond discovery's own, no daemon
-  start (the closing lines POINT at `daimon daemon start` / `daimon claude
-  install`). A filesystem-sentinel test in `test/init-wizard.test.mjs` asserts
-  the one-file rule. **Overwrite safety is absolute**: `--yes` refuses when a
-  config exists, interactive asks and leaves the file byte-identical on
-  decline, `--force` is the only silent overwrite — all three tested.
+  four-marker `MARKERS` list was deleted in v1.14; do not reintroduce one. The
+  `runInit` module writes **exactly `daimon.config.json` in cwd** — no
+  `~/.daimon` write, no second file, no source edit, no `.env` read beyond
+  discovery's own, no daemon start (the closing lines POINT at `daimon daemon
+  start` / `daimon claude install`). A filesystem-sentinel test in
+  `test/init-wizard.test.mjs` asserts it, with its own isolated `DAIMON_HOME`
+  (never guard that assertion behind optional env — the branch silently dies).
+  Note the CLI *process* may still touch daimon's own state dir for ordinary
+  bookkeeping (`cli-sessions.json`, the version nudge); the promise is about
+  the user's project, so phrase it that way in user-facing copy.
+  **Overwrite safety is absolute**: `--yes` refuses when a config exists,
+  interactive asks and leaves the file byte-identical on decline, `--force` is
+  the only silent overwrite — all three tested. Decide occupancy with
+  **`lstat`, never `existsSync`**: a dangling symlink at the config path reads
+  as "nothing here" and the write then lands on the link's target outside cwd.
+  The write is tmp+rename, and writing THROUGH a symlink is refused outright.
 - **Documentation that claims a command is TESTED as a command (M170, v1.14).**
   `QUICKSTART.md` is executed by `test/quickstart.test.mjs`: every fenced
   `bash` block runs, in page order, against a clean `DAIMON_HOME` in a temp
@@ -356,14 +364,25 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   suite made `plugin-isolation` and `resource-sampling` flake. When a heavy
   integration test destabilises neighbours, isolate the load; **never loosen
   the neighbour's budget** to absorb it.
-- **One terminal is ONE agent (v1.14).** `generateAgentId()` derives identity
-  from the PARENT process, not a per-invocation random: a fresh id per CLI
-  process made `daimon start web` and the `daimon stop web` typed a second
-  later look like two competing agents, so the 30s soft lock denied the second
-  command — the first thing a stranger tries. Never restore a per-process
-  random. Identity stays ADVISORY (unauthenticated header, never an
-  authorization decision), an explicit `DAIMON_AGENT_ID` still wins, and a
-  second terminal / editor / Claude Code session still gets its own identity.
+- **One terminal is ONE agent (v1.14).** `generateAgentId()` keys identity off
+  a TERMINAL SESSION, because a fresh id per CLI process made `daimon start
+  web` and the `daimon stop web` typed a second later look like two competing
+  agents, so the 30s soft lock denied the second command — the first thing a
+  stranger tries. Two rules that a first attempt got wrong, so don't repeat
+  them: (1) **`process.ppid` is NOT a session key** — Git Bash/MSYS forks a
+  process per command, so a ppid-derived id silently degrades to per-process
+  there; the emulator vars (`WT_SESSION`, `TERM_SESSION_ID`, `ITERM_SESSION_ID`,
+  `TMUX_PANE`, `SSH_TTY`) come first and ppid is only the fallback. (2) **The
+  4-hex suffix must stay real entropy** — deriving it from the session key made
+  two shells that reuse an OS pid byte-identical, and `LockManager.acquire`
+  then REFRESHES the other agent's live lock instead of denying it: no denial,
+  no steal, no audit row, M124's protection invisible rather than merely
+  permissive. The suffix is random, minted once per session and remembered in
+  `~/.daimon/cli-sessions.json` (TTL'd, tmp+rename). Identity stays ADVISORY,
+  and an explicit `DAIMON_AGENT_ID` still wins. Tests must spawn from
+  genuinely DIFFERENT sessions — children of one test process share a parent by
+  construction, which is how the first version's test passed while asserting
+  nothing.
 - **First-run doctor rules are suggest-only (M171, v1.14).**
   `config-wrong-directory`, `daemon-not-started`, `no-apps-detected`, and
   `port-pool-absent` catch the mistakes strangers actually make. None gets an

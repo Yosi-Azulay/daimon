@@ -11,10 +11,12 @@ npm install -g daimon
 Provide a config in the repo root (`daimon.config.json`) or generate one non-interactively:
 
 ```bash
-daimon init --auto   # picks safe defaults from nx.json / angular.json / vite.config.* markers
+daimon init --yes    # scans this folder with the framework registry and writes daimon.config.json
 ```
 
 The daemon auto-spawns on the first `daimon` call that needs it — no separate "start the daemon" step is required. It binds `127.0.0.1` only, so nothing is exposed on the runner's network.
+
+Since v1.14 `daimon init` writes the config and **starts nothing**, including when a daemon is already running from an earlier step. If your job writes a config *after* the daemon is already up, add `daimon daemon restart` so the new config is actually loaded — otherwise the daemon keeps serving the one it booted with.
 
 ## The CI verb
 

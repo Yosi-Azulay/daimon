@@ -111,27 +111,28 @@ test('QUICKSTART.md commands execute as written on a clean DAIMON_HOME', { timeo
     return st.status === 0 && /"running"\s*:\s*true/.test(st.stdout);
   };
 
+  // Retries are allowed for exactly ONE command and one reason.
+  //
+  // `daimon daemon start` gives up after a fixed 5s window; this file used to
+  // run beside ~40 parallel test processes and a cold boot could miss that
+  // window while still succeeding a moment later. That is the only tolerated
+  // flake, and it is resolved by asserting on STATE (did the daemon come up?)
+  // rather than on the stopwatch.
+  //
+  // Every other command is asserted on its FIRST result. A blanket retry would
+  // be wrong for state-mutating verbs: a `start` that fails and then succeeds
+  // because the first attempt already half-started the app is indistinguishable
+  // from contention, so retrying would hide a real ordering bug.
   const run = (line, cwd, allowed) => {
-    let r = once(line, cwd);
-    if (!allowed.includes(r.status)) {
-      // `daemon start` gives up after a FIXED 5s window. This file runs inside
-      // the parallel suite alongside ~40 other test processes, and a cold boot
-      // on a saturated machine can miss that window while still succeeding a
-      // moment later. So assert on the STATE, not the stopwatch: poll for the
-      // daemon the documented command was supposed to produce. This is not a
-      // blanket retry — a daemon that never comes up still fails the gate.
-      if (/^daimon daemon start/.test(line)) {
-        for (let i = 0; i < 25; i++) {
-          if (daemonUp(cwd)) {
-            t.diagnostic(`\`${line}\` exceeded its 5s window but the daemon came up (machine contention)`);
-            return r;
-          }
-          sleep(1000);
+    const r = once(line, cwd);
+    if (!allowed.includes(r.status) && /^daimon daemon start/.test(line)) {
+      for (let i = 0; i < 25; i++) {
+        if (daemonUp(cwd)) {
+          t.diagnostic(`\`${line}\` exceeded its 5s window but the daemon came up (machine contention)`);
+          return r; // the documented command achieved its documented effect
         }
+        sleep(1000);
       }
-      t.diagnostic(`retrying \`${line}\` after exit ${r.status} (machine contention?)`);
-      sleep(2000);
-      r = once(line, cwd);
     }
     assert.ok(
       allowed.includes(r.status),
@@ -197,6 +198,16 @@ test('QUICKSTART.md commands execute as written on a clean DAIMON_HOME', { timeo
       const pid = askPort();
       if (!pid) break;                       // nobody home — the normal path
       if (pid === process.pid) break;        // paranoia: never signal ourselves
+      // TREE-kill: QUICKSTART step 6 starts a real dev server, so the daemon
+      // has children. A bare `process.kill(pid)` reaps only the daemon and
+      // orphans the dev server, which then holds a port out of the documented
+      // 4200-4299 range that other suites use — and DAIMON_HOME is deleted a
+      // few lines below, so nothing could ever find it again. tree-kill is
+      // already a dependency and handles the Windows/POSIX split for us; it is
+      // callback-based, so it runs in a child we can wait on synchronously.
+      spawnSync(process.execPath, ['-e',
+        `require('tree-kill')(${pid}, 'SIGKILL', () => process.exit(0));`,
+      ], { cwd: repoRoot, encoding: 'utf8', timeout: 20_000 });
       try { process.kill(pid); } catch {}
       t.diagnostic(`quickstart: force-stopped leftover daemon pid ${pid} on :${API_PORT}`);
       sleep(500);

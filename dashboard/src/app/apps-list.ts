@@ -519,7 +519,7 @@ export class AppsListViewComponent {
           </dm-first-run-card>
         } @else {
           <dm-empty icon="rocket_launch" title="No apps discovered yet"
-                    hint="Run daimon init --auto in your workspace to discover apps, or run /discover. The doctor page can help diagnose missing apps.">
+                    hint="Run daimon init --yes in your workspace to discover apps, or run /discover. The doctor page can help diagnose missing apps.">
             <div class="dm-empty-actions">
               <a routerLink="/doctor" class="dm-link-btn">
                 <span class="material-symbols-outlined">stethoscope</span>Open Doctor

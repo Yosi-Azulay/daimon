@@ -109,8 +109,8 @@ const ROUTINES: RoutineDef[] = [
                 <dm-skeleton height="1rem" width="80%"></dm-skeleton>
               </div>
             } @else if (discovery() && discovery()!.appsFound === 0) {
-              <dm-empty icon="search_off" [title]="'No apps discovered'" [hint]="discovery()!.suggestion || 'Run daimon init --auto in your workspace'">
-                <dm-mono>daimon init --auto</dm-mono>
+              <dm-empty icon="search_off" [title]="'No apps discovered'" [hint]="discovery()!.suggestion || 'Run daimon init --yes in your workspace'">
+                <dm-mono>daimon init --yes</dm-mono>
               </dm-empty>
             } @else if (discovery()) {
               <div class="dm-kv">

@@ -20,7 +20,7 @@ Loopback only. Single user. No cloud. **No telemetry, ever** — the full postur
 npm i -g daimon         # requires Node ≥ 20
 cd your-workspace       # anywhere with nx.json / angular.json / vite.config.* / manage.py /
                         # a *.csproj / pubspec.yaml / or just a package.json with a dev script
-daimon init --yes       # scans this folder and writes ./daimon.config.json — that one file, nothing else
+daimon init --yes       # scans this folder and writes ./daimon.config.json — the only file it adds to your project
 daimon list             # discovers your apps; auto-spawns the daemon on first call
 daimon start <name>     # or: daimon ensure <name> — start if needed AND wait until healthy
 daimon dashboard        # opens the web dashboard scoped to this workspace

@@ -819,7 +819,7 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
     name: 'init',
     args: '[--yes] [--force] [--auto]',
     summary: 'Create daimon.config.json in cwd from a real discovery scan of this folder; --yes accepts the proposal without prompts.',
-    description: 'Scan cwd with the framework registry (the same scan the daemon runs), show the apps it found, and write daimon.config.json in cwd after you confirm. Writes that one file and nothing else — it never starts the daemon and never edits your source. An existing config is never replaced without explicit confirmation: --yes refuses, --force overwrites.',
+    description: 'Scan cwd with the framework registry (the same scan the daemon runs), show the apps it found, and write daimon.config.json in cwd after you confirm. That config is the only file it writes in your project — it never starts the daemon and never edits your source. An existing config is never replaced without explicit confirmation: --yes refuses, --force overwrites.',
     example: 'daimon init --yes',
     options: [
       { flag: '--yes', description: 'Accept the scanned proposal exactly; no prompts. Refuses if a config already exists.' },

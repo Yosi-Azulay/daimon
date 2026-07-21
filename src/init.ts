@@ -104,7 +104,9 @@ export function buildProposal(opts: { cwd?: string; portRange?: [number, number]
   return {
     cwd,
     configPath,
-    exists: fs.existsSync(configPath),
+    // lstat, not existsSync: a DANGLING symlink is still something occupying
+    // the path, and treating it as "nothing here" skipped the consent gate.
+    exists: configPathOccupied(configPath),
     searchRoots: [rootEntry],
     apps: apps.map(a => ({
       name: a.name,
@@ -126,9 +128,48 @@ export function proposalToConfig(p: InitProposal): any {
   return { searchRoots: p.searchRoots, portRange: p.portRange, apiPort: p.apiPort };
 }
 
+// Does anything at all occupy the config path — including a symlink whose
+// target does not exist?
+//
+// `existsSync` FOLLOWS symlinks, so a dangling `daimon.config.json -> …`
+// looked like "no config here": `--yes` skipped its refusal, the interactive
+// flow showed the friendly CREATE prompt, and the write then landed on the
+// link's target, anywhere on disk, with no consent asked. `lstat` is the whole
+// fix — decide on the path itself, never on what it points at.
+function configPathOccupied(target: string): boolean {
+  try {
+    fs.lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isSymlink(target: string): boolean {
+  try {
+    return fs.lstatSync(target).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function writeConfig(target: string, config: any): void {
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  const body = JSON.stringify(config, null, 2) + '\n';
+  // Refuse to write THROUGH a symlink: `--force` is consent to replace
+  // daimon.config.json, not to truncate whatever file the link happens to
+  // point at (which may be outside the workspace entirely).
+  if (isSymlink(target)) {
+    throw new Error(
+      `refusing to write through a symlink at ${target} (it points somewhere else; ` +
+      `remove or replace the link, then re-run 'daimon init')`,
+    );
+  }
+  // tmp+rename so a crash mid-write can never leave a hand-written config
+  // truncated (the M88 atomic-write discipline, applied to the user's file).
+  const tmp = `${target}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, body, 'utf8');
+  fs.renameSync(tmp, target);
 }
 
 function overwriteError(target: string, how: string): Error {

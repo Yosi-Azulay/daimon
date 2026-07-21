@@ -50,7 +50,7 @@ daimon init --yes
 
 `daimon init` runs **the same discovery scan the daemon runs**, shows you the apps it found, and writes `daimon.config.json` in the current directory. `--yes` accepts that proposal without prompting; leave it off to review and edit the ports interactively.
 
-It writes exactly that one file. It never starts anything, never touches your source, and **never replaces an existing `daimon.config.json`** — with a config already present, `--yes` refuses and tells you to use `daimon init --force` or the interactive flow instead.
+That is the only file it writes in your project: it never starts anything, never touches your source, and **never replaces an existing `daimon.config.json`** — with a config already present, `--yes` refuses and tells you to use `daimon init --force` or the interactive flow instead.
 
 ---
 

@@ -132,12 +132,37 @@ hint: pass --steal to override, or wait
 ```
 
 That is the second command a new user ever runs, refused by daimon's own
-coordination machinery. The identity is now derived from the parent process —
-the terminal — so one shell keeps one identity across invocations, while a
+coordination machinery.
+
+Identity is now keyed to the **terminal session** — `WT_SESSION`,
+`TERM_SESSION_ID`, `ITERM_SESSION_ID`, `TMUX_PANE`, `SSH_TTY`, falling back to
+the parent pid and then to per-process — with the minted random suffix
+remembered per session in `~/.daimon/cli-sessions.json` under a 12-hour TTL. A
 second terminal, an editor, or a Claude Code session each still get their own
-and the multi-agent protection those exist for. The shape is unchanged, the
+identity and the multi-agent protection those exist for. The shape is unchanged,
 identity stays **advisory** (an unauthenticated header, never an authorization
 decision), and an explicit `DAIMON_AGENT_ID` still wins.
+
+The first attempt at this fix keyed off `process.ppid` alone and hashed the
+session key into the suffix. Review caught two defects in it, both fixed before
+release and both worth recording:
+
+- **`process.ppid` is not stable in Git Bash / MSYS.** That shell forks a real
+  Windows process per command (`53620`, `53552`, `49896` for three consecutive
+  invocations), so a ppid-keyed identity silently degraded back to per-process
+  there — in one of the two main Windows dev shells, the fix did nothing.
+- **A derived suffix carries no entropy.** `sha256(host:ppid)` is fully
+  determined by values already in the id, so on OS pid reuse two genuinely
+  different shells minted a **byte-identical** agent id — and
+  `LockManager.acquire` then treats the newcomer as the lock's owner and
+  *refreshes* it rather than denying: no denial, no steal, no audit row. That
+  doesn't relax M124's multi-agent protection, it makes it invisible, which is
+  worse. The suffix is random again.
+
+The regression test was rewritten too: the original spawned two children from
+one test process, which share a parent by construction, so it asserted only
+that the function is deterministic and would have passed had it returned a
+constant.
 
 Neither bug was found by reading. Both were found by making the documentation
 run.
@@ -172,8 +197,9 @@ a section scroll.
 
 ## Numbers
 
-- **Backend suite: 1130 tests, 0 fail** (v1.13.0: 1102), verified green on three
-  consecutive runs. New files: `init-wizard`, `quickstart`, `tui-first-run`,
+- **Backend suite: 1137 tests, 0 fail** (v1.13.0: 1102), verified green on
+  repeated runs (the real-daemon torture files are load-sensitive on a busy
+  box; each passes in isolation, per the repo's flaky protocol). New files: `init-wizard`, `quickstart`, `tui-first-run`,
   `doctor-onboarding`.
 - **Dashboard vitest: 140** (v1.13.0: 130).
 - **Playwright: 57/57** on the gates this release owns — first-run states (6),

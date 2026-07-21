@@ -202,17 +202,28 @@ test('a directory with no framework markers still succeeds and explains why', as
 
 test('init writes EXACTLY ONE file and touches nothing else', async () => {
   const dir = viteWorkspace();
-  const before = snapshotTree(dir);
-  const homeBefore = fs.existsSync(process.env.DAIMON_HOME || '') ? snapshotTree(process.env.DAIMON_HOME) : null;
+  // Own the state dir for this assertion rather than depending on the runner
+  // to have set one. The previous version guarded the ~/.daimon check behind
+  // `if (process.env.DAIMON_HOME)`, which npm test never sets — so the branch
+  // was DEAD: a regression to writing state files would have passed here and
+  // polluted the developer's real ~/.daimon. That is the silent-gate pattern
+  // M142 banned; never guard an assertion on optional env.
+  const home = tmpdir('daimon-init-home-');
+  const prevHome = process.env.DAIMON_HOME;
+  process.env.DAIMON_HOME = home;
+  try {
+    const before = snapshotTree(dir);
+    const homeBefore = snapshotTree(home);
 
-  await runInitYes({ cwd: dir });
+    await runInitYes({ cwd: dir });
 
-  const after = snapshotTree(dir);
-  const added = after.filter(f => !before.includes(f));
-  assert.deepEqual(added, [CONFIG_FILENAME], 'exactly one new file: ' + JSON.stringify(added));
-  assert.deepEqual(after.filter(f => before.includes(f)).sort(), before, 'no file removed');
-  if (homeBefore) {
-    assert.deepEqual(snapshotTree(process.env.DAIMON_HOME), homeBefore, 'DAIMON_HOME must be untouched');
+    const after = snapshotTree(dir);
+    const added = after.filter(f => !before.includes(f));
+    assert.deepEqual(added, [CONFIG_FILENAME], 'exactly one new file: ' + JSON.stringify(added));
+    assert.deepEqual(after.filter(f => before.includes(f)).sort(), before, 'no file removed');
+    assert.deepEqual(snapshotTree(home), homeBefore, 'the runInit module must not touch the state dir');
+  } finally {
+    if (prevHome === undefined) delete process.env.DAIMON_HOME; else process.env.DAIMON_HOME = prevHome;
   }
 });
 
@@ -273,4 +284,51 @@ test('an inverted or out-of-range port range is rejected, not written', async ()
   const r = await runInit({ cwd: dir, input: io.input, output: io.output });
   const cfg = JSON.parse(fs.readFileSync(r.path, 'utf8'));
   assert.deepEqual(cfg.portRange, [4200, 4299], 'hi < lo must not reach the config');
+});
+
+// A symlink at the config path used to defeat BOTH promises: existsSync
+// follows links, so a dangling link read as "no config here" (no refusal, no
+// overwrite prompt) and the write then landed on the link's target — outside
+// cwd entirely. Decide on the path itself (lstat), never on what it points at.
+function canSymlink(dir) {
+  try {
+    fs.writeFileSync(path.join(dir, '_t'), 'x');
+    fs.symlinkSync(path.join(dir, '_t'), path.join(dir, '_l'));
+    fs.rmSync(path.join(dir, '_l'), { force: true });
+    fs.rmSync(path.join(dir, '_t'), { force: true });
+    return true;
+  } catch { return false; }
+}
+
+test('a DANGLING symlink at the config path is treated as occupied, not as empty', async t => {
+  const dir = viteWorkspace();
+  if (!canSymlink(dir)) return t.skip('symlink creation not permitted on this host');
+  const victimDir = tmpdir('daimon-victim-');
+  const victim = path.join(victimDir, 'not-created-yet.json');
+  fs.symlinkSync(victim, path.join(dir, CONFIG_FILENAME));
+
+  await assert.rejects(() => runInitYes({ cwd: dir }), /refusing/,
+    '--yes must refuse: something occupies the config path');
+  assert.ok(!fs.existsSync(victim), 'nothing may be written outside cwd');
+});
+
+test('a LIVE symlink is never written through, even with --force', async t => {
+  const dir = viteWorkspace();
+  if (!canSymlink(dir)) return t.skip('symlink creation not permitted on this host');
+  const victimDir = tmpdir('daimon-victim-');
+  const victim = path.join(victimDir, 'thesis.txt');
+  const original = 'important user content\n'.repeat(20);
+  fs.writeFileSync(victim, original, 'utf8');
+  fs.symlinkSync(victim, path.join(dir, CONFIG_FILENAME));
+
+  await assert.rejects(() => runInitYes({ cwd: dir, force: true }), /symlink/,
+    '--force is consent to replace the config, not to truncate the link target');
+  assert.equal(fs.readFileSync(victim, 'utf8'), original, 'the target file must be untouched');
+});
+
+test('the config write is atomic (tmp+rename), leaving no partial file behind', async () => {
+  const dir = viteWorkspace();
+  await runInitYes({ cwd: dir });
+  const leftovers = fs.readdirSync(dir).filter(f => f.includes('.tmp-'));
+  assert.deepEqual(leftovers, [], `no temp files may survive: ${leftovers}`);
 });

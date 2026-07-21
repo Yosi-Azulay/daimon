@@ -1,5 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+// Identity derivation persists a session->id map under daimonDir() (v1.14), so
+// this file MUST isolate its state dir before importing the module — otherwise
+// it reads and writes the developer's real ~/.daimon/cli-sessions.json, which
+// both pollutes their machine and makes these assertions depend on whatever a
+// previous run left behind.
+process.env.DAIMON_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'daimon-agents-suite-'));
+delete process.env.DAIMON_AGENT_ID;
 
 const { generateAgentId, AgentRegistry, LockManager } = await import('../dist/agents.js');
 
@@ -142,27 +153,95 @@ test('analytics: a non-contended acquire produces no waits or steals', () => {
   assert.equal(a.stealsAfterExpiry, 0);
 });
 
-// v1.14 first-run fix: one terminal is ONE agent. Two consecutive CLI
-// invocations from the same shell used to mint two identities, so the 30s soft
-// lock taken by `daimon start web` denied the `daimon stop web` typed right
-// after it.
-test('two processes with the same parent derive the same agent id', async () => {
-  const { execFileSync } = await import('node:child_process');
-  const script = "import('./dist/agents.js').then(m=>process.stdout.write(m.generateAgentId()))";
-  const env = { ...process.env };
-  delete env.DAIMON_AGENT_ID;
-  const run = () => execFileSync(process.execPath, ['-e', script], { env, encoding: 'utf8' }).trim();
-  const a = run();
-  const b = run();
-  assert.equal(a, b, 'consecutive CLI runs from one shell must share an identity');
-  assert.match(a, /^[a-z0-9-]+-\d+-[0-9a-f]{4}$/, `shape preserved: ${a}`);
+
+// ── v1.14: one terminal is ONE agent ─────────────────────────────────────────
+//
+// The papercut this fixes: a fresh identity per CLI process made `daimon start
+// web` and the `daimon stop web` typed a second later look like two competing
+// agents, so the 30s soft lock denied the second command.
+//
+// These tests spawn children with EXPLICITLY DIFFERENT session environments —
+// an earlier version of this suite spawned two children from one test process,
+// which share a parent by construction, so it asserted only that the function
+// is deterministic and would have passed even if it returned a constant.
+const mintScript = "import('./dist/agents.js').then(m=>process.stdout.write(m.generateAgentId()))";
+
+function mint(env) {
+  const { execFileSync } = require_child();
+  const clean = { ...process.env, ...env };
+  delete clean.DAIMON_AGENT_ID;
+  for (const k of ['WT_SESSION', 'TERM_SESSION_ID', 'ITERM_SESSION_ID', 'TMUX_PANE', 'SSH_TTY']) {
+    if (!(k in env)) delete clean[k];
+  }
+  return execFileSync(process.execPath, ['-e', mintScript], { env: clean, encoding: 'utf8' }).trim();
+}
+function require_child() {
+  return { execFileSync: childProcess.execFileSync };
+}
+const childProcess = await import('node:child_process');
+const fsMod = await import('node:fs');
+const osMod = await import('node:os');
+const pathMod = await import('node:path');
+
+function withHome(fn) {
+  const home = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'daimon-agentid-'));
+  try { return fn(home); } finally { fsMod.rmSync(home, { recursive: true, force: true }); }
+}
+
+test('the same terminal keeps ONE identity across separate processes', () => {
+  withHome(home => {
+    const env = { DAIMON_HOME: home, WT_SESSION: 'tab-alpha' };
+    const a = mint(env);
+    const b = mint(env);
+    const c = mint(env);
+    assert.equal(a, b, 'consecutive commands in one terminal must share an identity');
+    assert.equal(b, c);
+    assert.match(a, /^[a-z0-9-]+-\d+-[0-9a-f]{4}$/, `shape preserved: ${a}`);
+  });
 });
 
-test('an explicit DAIMON_AGENT_ID still wins', async () => {
-  const { execFileSync } = await import('node:child_process');
-  const script = "import('./dist/agents.js').then(m=>process.stdout.write(m.generateAgentId()))";
-  const out = execFileSync(process.execPath, ['-e', script], {
-    env: { ...process.env, DAIMON_AGENT_ID: 'pinned-agent-1' }, encoding: 'utf8',
-  }).trim();
-  assert.equal(out, 'pinned-agent-1');
+test('different terminals get different identities', () => {
+  withHome(home => {
+    const a = mint({ DAIMON_HOME: home, WT_SESSION: 'tab-alpha' });
+    const b = mint({ DAIMON_HOME: home, WT_SESSION: 'tab-beta' });
+    assert.notEqual(a, b, 'two terminals must not collapse into one agent — that is the M124 protection');
+  });
+});
+
+test('the suffix is REAL entropy, not a hash of the session key', () => {
+  // The regression this pins: deriving the suffix from the same inputs already
+  // in the id made two shells that reuse an OS pid byte-identical, so one
+  // silently refreshed the other's live lock instead of being denied.
+  const ids = new Set();
+  for (let i = 0; i < 6; i++) {
+    withHome(home => { ids.add(mint({ DAIMON_HOME: home, WT_SESSION: 'same-key-every-time' })); });
+  }
+  assert.ok(ids.size > 1, `identical session keys must still mint distinct random ids, got ${[...ids]}`);
+});
+
+test('a recycled ppid does not inherit the previous shell identity', () => {
+  withHome(home => {
+    // No terminal session var → the ppid fallback. Two runs with the SAME
+    // simulated ppid key but a cleared store must not produce the same id.
+    const a = mint({ DAIMON_HOME: home, WT_SESSION: 'ppid-sim-1' });
+    fsMod.rmSync(pathMod.join(home, 'cli-sessions.json'), { force: true });
+    const b = mint({ DAIMON_HOME: home, WT_SESSION: 'ppid-sim-1' });
+    assert.notEqual(a, b, 'an expired/cleared session must mint a fresh identity, not resurrect the old one');
+  });
+});
+
+test('an explicit DAIMON_AGENT_ID still wins over any session derivation', () => {
+  withHome(home => {
+    const out = childProcess.execFileSync(process.execPath, ['-e', mintScript], {
+      env: { ...process.env, DAIMON_HOME: home, WT_SESSION: 'tab-alpha', DAIMON_AGENT_ID: 'pinned-agent-1' },
+      encoding: 'utf8',
+    }).trim();
+    assert.equal(out, 'pinned-agent-1');
+  });
+});
+
+test('identity derivation never throws when the state dir is unwritable', () => {
+  // Advisory identity must never fail a command.
+  const id = mint({ DAIMON_HOME: pathMod.join(osMod.tmpdir(), 'daimon-nonexistent', 'deep', 'path'), WT_SESSION: 'x' });
+  assert.ok(id.length > 0, 'still produced an id');
 });
