@@ -22,7 +22,7 @@ import { findPortHolder, scanListeningPorts } from './portDiag.js';
 import { diffEnvSnapshots, resolveEnvFilePath } from './envFiles.js';
 import { isLogLevel, type LogLevel } from './frameworks.js';
 import { buildGraphView, matchesWorkspace, workspaceLabels } from './graph.js';
-import { parseSearchQuery, impliesUnifiedScope, SEARCH_KINDS } from './searchQuery.js';
+import { parseSearchQuery, impliesUnifiedScope, isEmptyQuery, SEARCH_KINDS } from './searchQuery.js';
 import { facetsOf } from './history.js';
 import { saveSearch, renameSearch, deleteSearch, sortSaved } from './savedSearches.js';
 import { currentPersistedState, savePersistedState } from './stateFile.js';
@@ -1543,10 +1543,23 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const parsed = parseSearchQuery(q);
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error, hint: parsed.hint }); return; }
         const pq = parsed.query;
+        // A query that SAYS nothing (`""`, a lone quote) survives the blank-q
+        // guard above but would compile to an unconstrained SELECT — i.e. the
+        // newest rows in the database returned as "hits". Refuse it instead.
+        if (isEmptyQuery(pq)) {
+          sendJson(res, 400, {
+            error: 'query has no terms and no filters',
+            hint: 'search for a word, a "quoted phrase", or a filter like app:web / level:error / after:24h',
+          });
+          return;
+        }
         const sinceP = parseSinceParam(url.searchParams.get('since'));
         const since = sinceP.sinceTs ?? (sinceP.sinceMs != null ? Date.now() - sinceP.sinceMs : undefined);
+        // CLAMPED here, not just inside search(): the value is also used for
+        // the post-filter slices below, where a negative limit would silently
+        // drop hits (`slice(0, -1)`).
         const limitRaw = Number(url.searchParams.get('limit') || 50);
-        const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
+        const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 500) : 50;
         const unified = scopeRaw === 'all' || impliesUnifiedScope(pq)
           || kindRaw === 'tests' || kindRaw === 'error-groups';
         // ?workspace= (M177, v1.15 — experimental param): hits restricted to
@@ -1574,7 +1587,17 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
           try {
             const { groupErrors, searchErrorGroups } = await import('./errorGroups.js');
             const perAppErr = registry.list().map(s => ({ app: s.name, errors: registry.errors(s.name) ?? [] }));
-            r.hits = r.hits.concat(searchErrorGroups(groupErrors(perAppErr), pq, effLimit));
+            // The MERGED filters, not the parsed query alone: `?app=`/`?since=`
+            // still apply when the query omits those fields, exactly as they do
+            // for events, logs and test runs. Passing `pq` raw made
+            // `?scope=all&app=api&since=…` return groups from every app, all
+            // time — the one store that ignored the legacy params.
+            const mergedForGroups = {
+              ...pq,
+              app: pq.app ?? (url.searchParams.get('app') || undefined),
+              after: pq.after ?? since,
+            };
+            r.hits = r.hits.concat(searchErrorGroups(groupErrors(perAppErr), mergedForGroups, effLimit));
             r.hits.sort((a: any, b: any) => b.ts - a.ts);
             r.hits = r.hits.slice(0, effLimit);
           } catch { /* a group-fold failure never fails the whole search */ }
@@ -1599,7 +1622,11 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         sendJson(res, 200, { searches: sortSaved(currentPersistedState().savedSearches ?? []) });
         return;
       }
-      if (parts[0] === 'api' && parts[1] === 'searches' && method === 'POST') {
+      // EXACT paths only: `POST /api/searches` saves, `POST /api/searches/rename`
+      // renames. Treating any other subpath as "save" meant a typo'd
+      // `/api/searches/renmae` silently created a search instead of 404ing.
+      if (parts[0] === 'api' && parts[1] === 'searches' && method === 'POST'
+          && (!parts[2] || parts[2] === 'rename') && !parts[3]) {
         const body = await readJsonBody(req);
         const before = currentPersistedState().savedSearches ?? [];
         const action = parts[2] === 'rename' ? 'rename' : 'save';

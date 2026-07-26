@@ -84,10 +84,15 @@ export function formatHitRow(hit: SearchHit, cols: number): string {
 /** The saved-search rows shown under an EMPTY query input. */
 export function savedRows(saved: SavedSearch[], cols: number): string[] {
   const width = Math.max(30, cols);
+  // Stripped for the SAME reason formatHitRow strips: a saved query is
+  // arbitrary user text, and an ESC sequence inside one repaints the pane when
+  // the list is drawn.
+  const clean = (t: string) => t.replace(/[\u0000-\u001f\u007f]+/g, ' ');
   return saved.map(s => {
-    const head = `${s.name.padEnd(18).slice(0, 18)}  `;
+    const head = `${clean(s.name).padEnd(18).slice(0, 18)}  `;
     const room = Math.max(10, width - head.length);
-    return head + (s.query.length > room ? s.query.slice(0, room - 1) + '…' : s.query);
+    const q = clean(s.query);
+    return head + (q.length > room ? q.slice(0, room - 1) + '…' : q);
   });
 }
 

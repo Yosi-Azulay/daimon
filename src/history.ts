@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import type Database from 'better-sqlite3';
 import type { AppEvent, HistoryConfig } from './types.js';
-import { LEVEL_EVENT_TYPES, isFilterOnly, type ParsedQuery, type SearchKind } from './searchQuery.js';
+import { LEVEL_EVENT_TYPES, LEVEL_LOG_VALUES, isFilterOnly, type ParsedQuery, type SearchKind } from './searchQuery.js';
 
 const requireCjs = createRequire(import.meta.url);
 
@@ -189,8 +189,13 @@ export function errorEventTypes(): readonly string[] { return ERROR_EVENT_TYPES;
 // `a"b` or `NEAR` can't inject operators. A trailing `*` keeps prefix search.
 // A token containing spaces (a "quoted phrase", M179) becomes one quoted FTS
 // token, which is exactly FTS5's phrase syntax.
+// Both search paths take at most this many tokens (see `likeTokens` in
+// search()): FTS5 has always capped here, and the LIKE path must match it or
+// the two engines disagree about which rows match.
+export const FTS_MAX_TERMS = 8;
+
 export function ftsQueryFromTerms(tokens: string[]): string {
-  return tokens.filter(Boolean).slice(0, 8).map(t => {
+  return tokens.filter(Boolean).slice(0, FTS_MAX_TERMS).map(t => {
     const prefix = t.length > 1 && t.endsWith('*');
     const body = (prefix ? t.slice(0, -1) : t).replace(/"/g, '""');
     return `"${body}"${prefix ? '*' : ''}`;
@@ -730,7 +735,14 @@ export class History {
     //          ranked snippets); a legacy call keeps v1.15's single
     //          whole-string pattern, so pre-v1.16 calls are unchanged.
     const ftsTokens = pq ? [...pq.phrases, ...pq.terms] : opts.q.split(/\s+/).filter(Boolean);
-    const likeTokens = pq ? [...pq.phrases, ...pq.terms] : [opts.q.trim()];
+    // The SAME cap on both paths. Two reasons, and the first is the milestone's
+    // own rule: ftsQueryFromTerms takes the first 8 tokens, so a LIKE path that
+    // AND'd all of them would return FEWER rows than the index — the exact
+    // inversion of "a degraded index changes speed, never which rows match".
+    // The second is that one AND'd LIKE clause per token hits SQLite's
+    // expression-depth ceiling (1000) — a pasted stack trace used to 500 the
+    // endpoint from a code path outside the try/catch below.
+    const likeTokens = (pq ? [...pq.phrases, ...pq.terms] : [opts.q.trim()]).slice(0, FTS_MAX_TERMS);
     const snippetNeedle = likeTokens[0] ?? '';
     // ── the ONE filter builder, used by both paths ──────────────────────────
     // `p` is the column prefix ('e.' when joined against the FTS shadow, ''
@@ -759,7 +771,16 @@ export class History {
       if (fBefore != null) { wh.push(`${p}ts <= ?`); args.push(fBefore); }
       // v1.2's nullable level column: a line daimon could not classify has NULL
       // here, so `level:` excludes it — documented, never guessed at.
-      if (fLevel) { wh.push(`${p}level = ?`); args.push(fLevel); }
+      //
+      // The grammar's level vocabulary is NOT the column's (error|warning|lint
+      // vs error|warn|info|debug), so the mapping is explicit. An empty list
+      // means this level cannot match a log line at all (`level:lint`), and
+      // `1 = 0` says so honestly instead of matching everything.
+      if (fLevel) {
+        const vals = LEVEL_LOG_VALUES[fLevel];
+        if (!vals.length) wh.push('1 = 0');
+        else { wh.push(`${p}level IN (${vals.map(() => '?').join(',')})`); args.push(...vals); }
+      }
       return { wh, args };
     };
     // Whether THIS query may use the FTS index. Distinct from `ftsOk` (is the
@@ -845,8 +866,14 @@ export class History {
     // Column path — the LIKE fallback (slower, but COMPLETE: it scans the base
     // tables, so it never returns fewer rows than FTS would) and, for a
     // filter-only query, the only path there is.
+    //
+    // WRAPPED, because this is the last path there is. A throw here used to
+    // escape search() entirely and surface as an HTTP 500 with no remedy —
+    // breaking the "search never errors the daemon" promise. Whatever was
+    // collected before the failure is still returned, flagged as a fallback.
     const textWhere = (col: string) => likeTokens.filter(Boolean).map(() => `${col} LIKE ? ESCAPE '\\'`);
     const textArgs = likeTokens.filter(Boolean).map(likePatternForToken);
+    try {
     if (wantEvents) {
       const f = evFilters('');
       const wh: string[] = [...textWhere('message'), ...f.wh];
@@ -875,6 +902,9 @@ export class History {
       }
     }
     if (wantTests) hits.push(...this.searchTestRuns(likeTokens, { app: fApp, after: fAfter, before: fBefore }, limit));
+    } catch (err: any) {
+      this.warnOnce(`search fell back to the column path and failed: ${err?.message || err}`);
+    }
     hits.sort((a, b) => b.ts - a.ts);
     // A filter-only query was answered exactly; `fallback` then describes the
     // index's health, not this answer's quality.

@@ -36,6 +36,12 @@ export function validateSavedSearchName(name: string): SearchQueryError | null {
   if (/[\u0000-\u001f\u007f]/.test(n)) {
     return { error: 'name contains control characters', hint: 'use letters, digits, dashes' };
   }
+  // `.` and `..` are URL DOT SEGMENTS: the WHATWG parser normalises them away,
+  // so `DELETE /api/searches/..` never reaches the route — such a name could be
+  // created but never removed except by hand-editing state.json.
+  if (n === '.' || n === '..') {
+    return { error: `'${n}' is not a usable name`, hint: 'it is a URL path segment, so it could never be deleted again — pick a word' };
+  }
   return null;
 }
 

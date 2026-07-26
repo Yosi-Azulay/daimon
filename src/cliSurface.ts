@@ -377,13 +377,13 @@ export const CLI_SUBCOMMANDS: CliSubcommand[] = [
   },
   {
     name: 'searches',
-    args: '[list|save <name> <query>|rename <old> <new>|delete <name>] [--force] [--json]',
+    args: '[list|save <name> <query>|rename <old> <new>|delete|rm <name>] [--force] [--json]',
     summary: 'Saved searches: name a query once, run it by name later. Inert data — nothing about a saved search runs on its own.',
     description: 'List, save, rename and delete named queries, stored in ~/.daimon/state.json (merge-written, never clobbering other keys). A query is validated by the real search parser when you save it, so a saved search can never be one that fails when you finally run it. Saving does NOT schedule anything: daimon has no search timer, no search notification, and never will — run one with `daimon search "$(daimon searches list --json | …)"`, from the dashboard palette, or from the TUI search pane.',
     example: 'daimon searches save today-errors \'level:error after:24h\'',
     options: [
       { flag: '--force', description: 'Replace an existing saved search of the same name.' },
-      { flag: '--json', description: 'JSON output (default when piped).' },
+      { flag: '--json', description: 'Accepted for symmetry — the output is already JSON.' },
     ],
     needsDaemon: true,
     group: 'queries',

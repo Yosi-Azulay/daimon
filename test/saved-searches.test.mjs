@@ -53,6 +53,11 @@ test('names and duplicates are guarded, and every refusal carries a remedy', () 
   assert.match(validateSavedSearchName('x'.repeat(SAVED_SEARCH_NAME_MAX + 1)).error, /longer than/);
   assert.match(validateSavedSearchName('a\u0007b').error, /control characters/);
   assert.equal(validateSavedSearchName('  ok-name  '), null);
+  // `.` / `..` are URL dot segments — creatable but never deletable.
+  for (const n of ['.', '..']) {
+    assert.match(validateSavedSearchName(n).error, /not a usable name/);
+    assert.match(validateSavedSearchName(n).hint, /path segment/);
+  }
 
   const one = saveSearch([], 'dupe', 'boom', { now: T0 }).searches;
   const clash = saveSearch(one, 'dupe', 'other', { now: T0 });
@@ -182,8 +187,11 @@ test('nothing runs a saved search on its own: no timer, no scheduler, no notifie
   // gets a stronger check than the allowlist: the getter it hands the TUI must
   // not sit anywhere near a scheduler.
   const mainSrc = fs.readFileSync(path.join(distDir, 'main.js'), 'utf8');
-  const mentions = [...mainSrc.matchAll(/savedSearches/g)].map(m => m.index);
-  assert.ok(mentions.length <= 2, `main.js mentions savedSearches ${mentions.length} times — it should only build the TUI's read-only getter`);
+  // BOTH spellings: the state read (`…savedSearches`) and the wiring identifier
+  // (`getSavedSearches`, handed to render(App)). Matching only the former
+  // skipped the line that actually connects the feature to anything.
+  const mentions = [...mainSrc.matchAll(/savedSearches/gi)].map(m => m.index);
+  assert.ok(mentions.length <= 4, `main.js mentions saved searches ${mentions.length} times — it should only build the TUI's read-only getter`);
   assert.match(mainSrc, /getSavedSearches\s*=\s*\(\)\s*=>/, 'the only main.js use must be the TUI getter');
   for (const at of mentions) {
     const around = mainSrc.slice(Math.max(0, at - 400), at + 400);
@@ -195,21 +203,49 @@ test('nothing runs a saved search on its own: no timer, no scheduler, no notifie
 
   // Nothing in the daemon may pair a saved search with a timer: the only files
   // allowed to mention them at all are the ones a human drives.
-  const allowed = new Set(['savedSearches.js', 'stateFile.js', 'server.js', 'cli.js', 'searchQuery.js', 'main.js']);
+  // CASE-INSENSITIVE, and the route path too. A case-sensitive `savedSearches`
+  // probe matched three files in dist/ and missed httpSurface.js/cli.js
+  // entirely — a hypothetical `searchWatcher.js` polling `/api/searches` on a
+  // timer would have been invisible to the gate that exists to catch it.
+  const allowed = new Set([
+    'savedSearches.js', 'stateFile.js', 'server.js', 'cli.js', 'searchQuery.js',
+    'main.js', 'httpSurface.js', 'cliSurface.js', 'cliHelp.js', 'mcp.js',
+  ]);
+  let scanned = 0;
   for (const f of fs.readdirSync(distDir)) {
     if (!f.endsWith('.js')) continue;
     const s = fs.readFileSync(path.join(distDir, f), 'utf8');
-    if (!/savedSearches/.test(s)) continue;
-    assert.ok(allowed.has(f), `${f} touches savedSearches — add it to the reviewed allowlist only if a HUMAN drives it`);
+    if (!/savedSearch/i.test(s) && !/api\/searches/.test(s)) continue;
+    scanned++;
+    assert.ok(allowed.has(f), `${f} touches saved searches — add it to the reviewed allowlist only if a HUMAN drives it`);
   }
+  assert.ok(scanned >= 5, `the sweep saw only ${scanned} files — it is not actually scanning`);
   // The TUI is human-driven by definition, and lives in its own dist subtree.
+  // PROXIMITY, not a blanket ban: App.js legitimately owns the TUI's one idle
+  // interval (v1.13's render budget) and also holds the saved-search getter.
+  // What must never happen is the two being WIRED TOGETHER, so the rule is
+  // "no timer call within 400 characters of a saved-search mention" — the same
+  // rule main.js gets above. A hypothetical searchWatcher.js polling
+  // /api/searches on an interval fails this; App.js passes it.
   const tuiDir = path.join(distDir, 'tui');
+  let tuiSeen = 0;
   for (const f of fs.existsSync(tuiDir) ? fs.readdirSync(tuiDir) : []) {
     if (!f.endsWith('.js')) continue;
-    const s = fs.readFileSync(path.join(tuiDir, f), 'utf8');
-    if (!/savedSearches|api\/searches/.test(s)) continue;
-    assert.ok(!/setInterval/.test(s), `tui/${f} pairs saved searches with an interval`);
+    const src = fs.readFileSync(path.join(tuiDir, f), 'utf8');
+    const hits = [...src.matchAll(/savedSearch|api\/searches/gi)].map(m => m.index);
+    if (!hits.length) continue;
+    tuiSeen++;
+    for (const at of hits) {
+      const around = src.slice(Math.max(0, at - 400), at + 400);
+      for (const timer of ['setInterval', 'setTimeout', 'setImmediate']) {
+        assert.ok(!around.includes(timer),
+          `tui/${f} has a saved-search reference within 400 chars of ${timer} — nothing may run a saved search on a clock`);
+      }
+    }
   }
+  // The TUI IS a saved-search consumer (App hands the pane a getter), so a zero
+  // here means the pattern stopped matching and the check went quiet.
+  assert.ok(tuiSeen >= 1, 'the TUI sweep matched nothing — it is a no-op, not a gate');
 });
 
 test('cleanup', () => {

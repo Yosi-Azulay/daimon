@@ -198,7 +198,7 @@ test('F opens the search pane, a syntax query returns the same hits the API woul
   );
   const expectedCount = fromHistory.hits.length + fromGroups.length;
   assert.ok(expectedCount >= 3, 'fixture sanity');
-  assert.match(text, new RegExp(`${expectedCount} hits`), `summary missing from:\n${text}`);
+  assert.match(text, new RegExp(`(^|[^0-9])${expectedCount} hits`), `summary missing from:\n${text}`);
   assert.match(text, /quokka-marker/, 'no hit text rendered');
 });
 
@@ -235,8 +235,19 @@ test('saved searches are listed and runnable — by a keystroke, never on their 
   await settle();
   const text = stdout.text;
   instance.unmount();
-  assert.match(text, /hit/, `the saved search did not run:\n${text}`);
-  assert.match(text, /quokka-marker/);
+  // NOT `/hit/` — that also matches "no hits" — and not the marker alone,
+  // which the echoed query line already contains. Assert the real count and a
+  // string that appears ONLY in a rendered hit row.
+  const savedParsed = parseSearchQuery('level:error quokka-marker');
+  const savedFromHistory = history.search({ q: 'level:error quokka-marker', query: savedParsed.query, scope: 'all', limit: 100 });
+  const savedFromGroups = searchErrorGroups(
+    groupErrors([{ app: 'web', errors: [{ message: 'quokka-marker TS2304 boom', count: 2, firstSeen: now - 5000, lastSeen: now - 300, level: 'error' }] }]),
+    savedParsed.query, 100,
+  );
+  const savedExpected = savedFromHistory.hits.length + savedFromGroups.length;
+  assert.ok(savedExpected >= 2, 'fixture sanity');
+  assert.match(text, new RegExp(`(^|[^0-9])${savedExpected} hits`), `expected ${savedExpected} hits:\n${text}`);
+  assert.match(text, /boom in main|TS2304/, 'no hit ROW rendered — only the echoed query');
 });
 
 test('while the search pane is open, its keys never reach the app underneath', async () => {
@@ -249,6 +260,14 @@ test('while the search pane is open, its keys never reach the app underneath', a
   stdin.press('s');
   await settle();
   assert.deepEqual(started, [], 'typing into the search box started an app');
+
+  // POSITIVE CONTROL: without it this also passes if `s` never reaches the
+  // list pane's start chord for some unrelated reason.
+  stdin.press(KEY.esc);
+  await settle();
+  stdin.press('s');
+  await settle();
+  assert.deepEqual(started, ['web'], 'the start chord must work once the modal is closed');
   stdin.press(KEY.esc);
   await settle();
   instance.unmount();

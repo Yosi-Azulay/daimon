@@ -14,8 +14,8 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const {
-  parseSearchQuery, parseTimeBound, describeQuery, isFilterOnly, impliesUnifiedScope,
-  SEARCH_FIELDS, SEARCH_FIELD_NAMES, SEARCH_KINDS, SEARCH_LEVELS, LEVEL_EVENT_TYPES,
+  parseSearchQuery, parseTimeBound, describeQuery, isFilterOnly, isEmptyQuery, impliesUnifiedScope,
+  SEARCH_FIELDS, SEARCH_FIELD_NAMES, SEARCH_KINDS, SEARCH_LEVELS, LEVEL_EVENT_TYPES, LEVEL_LOG_VALUES,
 } = await import('../dist/searchQuery.js');
 const { History, errorEventTypes, facetsOf, ftsQueryFromTerms } = await import('../dist/history.js');
 const { groupErrors, searchErrorGroups } = await import('../dist/errorGroups.js');
@@ -65,7 +65,7 @@ test('every field in the grammar parses, and the docs table covers exactly them'
 test('unknown field errors, naming the valid fields, and never becomes a term', () => {
   const r = parseSearchQuery('lvl:error boom', NOW);
   assert.equal(r.ok, false);
-  assert.equal(r.error, "unknown field 'lvl:' — valid fields: app, kind, level, before, after");
+  assert.equal(r.error, "unknown field 'lvl:' — did you mean 'level:'? valid fields: app, kind, level, before, after");
   assert.match(r.hint, /quote the token/); // the remedy (M90)
   // Quoting it makes it a literal search, exactly as the hint says.
   const quoted = parseSearchQuery('"lvl:error"', NOW);
@@ -134,6 +134,60 @@ test('FTS token compilation: phrases become one quoted token, prefixes survive, 
   assert.equal(ftsQueryFromTerms(Array.from({ length: 12 }, (_, i) => 't' + i)).split(' ').length, 8);
 });
 
+test('ordinary text containing a colon stays a TERM — the v1.15 queries still work', () => {
+  // THE BACK-COMPAT RULE. `word:` is everywhere in real search text, and every
+  // one of these returned hits in v1.15. Erroring on them would break the
+  // stable /api/search surface for the most common thing anyone pastes.
+  for (const [q, expected] of [
+    ['TypeError: cannot read', ['TypeError:', 'cannot', 'read']],
+    ['http://localhost:4200', ['http://localhost:4200']],
+    ['node:fs', ['node:fs']],
+    ['errgroup:src/a.ts:4', ['errgroup:src/a.ts:4']],
+  ]) {
+    const r = parseSearchQuery(q, NOW);
+    assert.equal(r.ok, true, `${q} must parse, not 400`);
+    assert.deepEqual(r.query.terms, expected);
+  }
+  // …while a NEAR-MISS of a real field is a typo and still errors loudly, which
+  // is what "never silently treated as a term" is actually protecting.
+  for (const [q, near] of [['lvl:error', 'level'], ['ap:web', 'app'], ['kinds:logs', 'kind'], ['befor:24h', 'before']]) {
+    const r = parseSearchQuery(q, NOW);
+    assert.equal(r.ok, false, `${q} is a typo and must error`);
+    assert.match(r.error, new RegExp(`did you mean '${near}:'`));
+  }
+});
+
+test('Windows paths keep their separators, quoted or not (the dev box is Windows)', () => {
+  // In JS source each `\\` below is ONE backslash reaching the parser.
+  assert.deepEqual(parseSearchQuery('D:\\Synology\\SourceCode', NOW).query.terms, ['D:\\Synology\\SourceCode']);
+  assert.deepEqual(parseSearchQuery('"D:\\Synology\\SourceCode"', NOW).query.phrases, ['D:\\Synology\\SourceCode']);
+  // A backslash still escapes the three characters that need it: quote, space, backslash.
+  assert.deepEqual(parseSearchQuery('a\\ b', NOW).query.terms, ['a b']);
+  assert.deepEqual(parseSearchQuery('a\\"b', NOW).query.terms, ['a"b']);
+  assert.deepEqual(parseSearchQuery('a\\\\b', NOW).query.terms, ['a\\b']);
+});
+
+test('a time outside the Date range is not a time — it used to crash the TUI on render', () => {
+  for (const q of ['after:99999999999999999', 'after:99999999w', 'after:1751328000000000000']) {
+    const r = parseSearchQuery(q, NOW);
+    assert.equal(r.ok, false, `${q} must be rejected`);
+    assert.match(r.error, /is not a time/);
+  }
+  // describeQuery runs on the TUI render path, so it must never throw even if
+  // a bound reaches it some other way.
+  assert.doesNotThrow(() => describeQuery({ terms: [], phrases: [], after: 1e17, raw: '' }));
+});
+
+test('a query that says nothing is detected, so search never dumps the newest rows', () => {
+  for (const q of ['""', '"', '""""']) {
+    const r = parseSearchQuery(q, NOW);
+    assert.equal(r.ok, true);
+    assert.equal(isEmptyQuery(r.query), true, `${q} must count as empty`);
+  }
+  assert.equal(isEmptyQuery(parseSearchQuery('app:web', NOW).query), false);
+  assert.equal(isEmptyQuery(parseSearchQuery('boom', NOW).query), false);
+});
+
 // ---------------------------------------------------------------------------
 // Compilation into history — the SAME assertions on both paths.
 
@@ -146,6 +200,9 @@ function seed(h, now) {
   h.recordLogLine('web', 'zebra-marker ERROR chunk failed to load /main.js', now - 600, 'error');
   h.recordLogLine('web', 'zebra-marker INFO all good', now - 500, 'info');
   h.recordLogLine('api', 'zebra-marker unclassified line', now - 400, null);
+  // The log column's own spelling is 'warn' (frameworks.ts LOG_LEVELS), NOT the
+  // grammar's 'warning' — this row is the one that catches a missing mapping.
+  h.recordLogLine('web', 'zebra-marker WARN deprecated api used', now - 550, 'warn');
   h.recordTestRun(
     { app: 'web', ts: now - 300, runner: 'vitest', durationMs: 1200, total: 10, passed: 9, failed: 1, skipped: 0, exitCode: 1, gitHead: null },
     [{ suite: 'zebra-marker suite', test: 'renders the chunk', file: 'a.spec.ts', message: 'expected true', fingerprint: 'fp1' }],
@@ -217,6 +274,19 @@ test('filters narrow to exactly the seeded rows', () => {
     assert.ok(!err.hits.some(x => x.snippet.includes('unclassified')), 'null-level lines excluded');
     assert.ok(!err.hits.some(x => x.snippet.includes('deprecated')), 'warnings excluded from level:error');
 
+    // THE TWO VOCABULARIES. `level:warning` must reach a log line the
+    // classifier stored as 'warn' — comparing the grammar's word to the column
+    // directly made this structurally impossible, and no fixture noticed
+    // because none seeded a warn line.
+    const warn = run(h, 'level:warning zebra-marker');
+    assert.ok(warn.hits.some(x => x.kind === 'errors'), 'warning events matched');
+    assert.ok(warn.hits.some(x => x.kind === 'logs' && x.snippet.includes('deprecated api')),
+      'a log line stored as level=warn must match level:warning');
+    // lint is an issue level with no log-level counterpart: events only, and
+    // never a fabricated log match.
+    const lint = run(h, 'level:lint');
+    assert.ok(!lint.hits.some(x => x.kind === 'logs'), 'level:lint must never match a log line');
+
     // Time bounds, including the 40-day-old row that only `before:` reaches.
     const recent = run(h, `after:${now - 2000} zebra-marker`);
     assert.ok(!recent.hits.some(x => x.snippet.includes('ancient')));
@@ -232,6 +302,21 @@ test('filters narrow to exactly the seeded rows', () => {
     // Filter-only: no text at all, answered by column predicates.
     const filterOnly = run(h, 'app:api');
     assert.ok(filterOnly.hits.length > 0 && filterOnly.hits.every(x => x.app === 'api'));
+  }
+});
+
+test('truncation order is per-engine, and each path returns a subset of the same match set', () => {
+  // The FTS branch streams `events_fts.rowid DESC` (the M146 optimisation that
+  // lets it stop at LIMIT); the column path orders `ts DESC`. Those agree while
+  // everything matches under the limit — the parity suite above runs there —
+  // but with ingest out of ts order they can pick DIFFERENT rows once the
+  // result is truncated. That is a documented ordering caveat, not a
+  // correctness one: both paths draw from the same match set.
+  const full = new Set(refs(run(ftsHist, 'zebra-marker')));
+  for (const h of [ftsHist, likeHist]) {
+    const cut = run(h, 'zebra-marker', { limit: 2 });
+    assert.ok(cut.hits.length <= 2 * 2, 'each store applies the limit');
+    for (const r of refs(cut)) assert.ok(full.has(r), `${r} is not in the full match set`);
   }
 });
 

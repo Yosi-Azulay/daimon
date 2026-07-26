@@ -174,7 +174,7 @@ test('HTTP: scope=all adds test-run and error-group hits with facets; kind:tests
 test('HTTP: rejected values name what would have been accepted', async () => {
   const unknown = await get('/api/search?q=' + encodeURIComponent('lvl:error boom'));
   assert.equal(unknown.status, 400);
-  assert.equal(unknown.body.error, "unknown field 'lvl:' — valid fields: app, kind, level, before, after");
+  assert.equal(unknown.body.error, "unknown field 'lvl:' — did you mean 'level:'? valid fields: app, kind, level, before, after");
   assert.match(unknown.body.hint, /quote the token/);
 
   const badKind = await get('/api/search?kind=bananas&q=x');
@@ -193,6 +193,62 @@ test('HTTP: rejected values name what would have been accepted', async () => {
   assert.equal((await get('/api/search?q=%20')).status, 400);
 });
 
+test('HTTP: the v1.15 queries that contain a colon still return hits, not 400s', async () => {
+  // The regression this file previously could not see: it only ever searched a
+  // colon-free token, so every one of these — ordinary text, a URL, a Windows
+  // path — could have been 400ing and the gate would have stayed green.
+  for (const q of ['okapi-marker', 'TypeError: okapi-marker', 'http://localhost:4200 okapi-marker', 'C:\src okapi-marker']) {
+    const r = await get('/api/search?q=' + encodeURIComponent(q));
+    assert.equal(r.status, 200, `${q} must not 400: ${JSON.stringify(r.body)}`);
+  }
+  // …while a TYPO of a real field still errors, and now names the field.
+  const typo = await get('/api/search?q=' + encodeURIComponent('lvl:error boom'));
+  assert.equal(typo.status, 400);
+  assert.match(typo.body.error, /did you mean 'level:'/);
+});
+
+test('HTTP: a query with no terms and no filters is refused, not answered with the newest rows', async () => {
+  for (const q of ['""', '"']) {
+    const r = await get('/api/search?q=' + encodeURIComponent(q));
+    assert.equal(r.status, 400, `${q} must be refused`);
+    assert.match(r.body.error, /no terms and no filters/);
+    assert.match(r.body.hint, /app:web/);
+  }
+});
+
+test('HTTP: limit is clamped before it reaches a slice', async () => {
+  // ?limit=-1 used to reach `hits.slice(0, -1)` and silently drop the last hit.
+  const neg = await get('/api/search?limit=-1&q=okapi-marker');
+  assert.equal(neg.status, 200);
+  const one = await get('/api/search?limit=1&q=okapi-marker');
+  assert.equal(one.body.hits.length, 1);
+  assert.ok(neg.body.hits.length >= 1, 'a negative limit must not empty the result');
+  const huge = await get('/api/search?limit=99999&q=okapi-marker');
+  assert.ok(huge.body.hits.length <= 500);
+});
+
+test('HTTP: the legacy app/since params also scope error-group hits', async () => {
+  // Every other store honoured ?app=; groups ignored it, so a scoped search
+  // returned groups from every app and all time.
+  const r = await get('/api/search?scope=all&app=api&q=okapi-marker');
+  assert.equal(r.status, 200);
+  const groups = r.body.hits.filter(h => h.kind === 'error-groups');
+  assert.ok(groups.length > 0, 'fixture has an api group');
+  assert.ok(groups.every(h => h.app === 'api'), `a foreign-app group leaked: ${JSON.stringify(groups)}`);
+});
+
+test('HTTP: only the two declared POST paths are accepted', async () => {
+  // `POST /api/searches/<anything>` used to be treated as "save".
+  const res = await fetch(base + '/api/searches/renmae', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'sneaky', query: 'boom' }),
+  });
+  assert.equal(res.status, 404, 'a mistyped subpath must 404, not save');
+  const list = await get('/api/searches');
+  assert.ok(!list.body.searches.some(x => x.name === 'sneaky'), 'nothing was created by the typo path');
+});
+
 test('CLI: the same query, the same errors, plus --all for the unified scope', async () => {
   const ok = await cli(['search', 'app:web level:error okapi-marker']);
   assert.equal(ok.code, 0, ok.stderr);
@@ -204,8 +260,8 @@ test('CLI: the same query, the same errors, plus --all for the unified scope', a
   assert.ok(all.body.hits.some(h => h.kind === 'tests'));
 
   const bad = await cli(['search', 'lvl:error boom']);
-  assert.notEqual(bad.code, 0);
-  assert.match(bad.stderr, /unknown field 'lvl:' — valid fields: app, kind, level, before, after/);
+  assert.equal(bad.code, 1, 'a bad query is a plain error exit, not a 2');
+  assert.match(bad.stderr, /unknown field 'lvl:' — did you mean 'level:'\? valid fields: app, kind, level, before, after/);
   assert.match(bad.stderr, /quote the token/);
 });
 
@@ -220,7 +276,7 @@ test('CLI: `daimon searches` round-trips through the daemon', async () => {
 
   // A saved query is validated by the REAL parser at save time.
   const bad = await cli(['searches', 'save', 'broken', 'lvl:error']);
-  assert.notEqual(bad.code, 0);
+  assert.equal(bad.code, 1);
   assert.match(bad.stderr, /unknown field 'lvl:'/);
   assert.equal((await cli(['searches', 'list'])).body.searches.length, 1, 'nothing was saved');
 
@@ -229,7 +285,7 @@ test('CLI: `daimon searches` round-trips through the daemon', async () => {
   assert.equal(renamed.body.saved.name, 'errors-today');
 
   const missing = await cli(['searches', 'delete', 'nope']);
-  assert.notEqual(missing.code, 0);
+  assert.equal(missing.code, 1);
   assert.match(missing.stderr, /no saved search named 'nope'/);
   assert.match(missing.stderr, /errors-today/, 'the error names what IS saved');
 

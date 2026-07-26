@@ -1208,7 +1208,7 @@ daimon search 'level:error'                          # filters alone are a valid
 |---|---|
 | `app:<name>` | One app. Wins over `--app` / `?app=` when both are given. |
 | `kind:<facet>` | `logs`, `errors`, `events`, and the v1.16 kinds `tests`, `error-groups`. |
-| `level:error\|warning\|lint` | Spans both stores: event type families **and** the v1.2 log-line level column. |
+| `level:error\|warning\|lint` | Spans both stores: event type families **and** the v1.2 log-line level column — whose own vocabulary is `error/warn/info/debug`, so `level:warning` matches lines stored as `warn`. `level:lint` matches lint *events* only; no classifier writes a lint log level. |
 | `before:` / `after:` | `2026-07-01`, `2026-07-01T14:30`, `24h` / `7d` / `30m`, or epoch ms. `after:` is the general form of `--since`. |
 | `"quoted phrase"` | The words in order. Also how you search for something that *looks* like a field — a URL (`"http://localhost:4200"`) or a Windows path (`"C:\Users\me\app"`) both begin with something that parses as `field:`. |
 | bare terms | Every term must match. A trailing `*` is a prefix search. |
@@ -1218,11 +1218,13 @@ field in the query overrides the equivalent flag or URL param.
 
 Everything is ANDed; there is no `OR` and there are no parentheses (deliberately
 — the closed field list ships first, and grammar growth gets its own scale
-check). An unknown field is an error that names the valid ones and tells you how
-to search for it literally:
+check). A field name that is a NEAR-MISS of a real one is treated as a typo and
+errors, naming what you probably meant. Ordinary text that merely contains a
+colon — `TypeError: cannot read`, `http://localhost:4200`, `C:\Users\me\app` —
+stays a plain search term, exactly as it was before v1.16:
 
 ```
-error: unknown field 'lvl:' — valid fields: app, kind, level, before, after
+error: unknown field 'lvl:' — did you mean 'level:'? valid fields: app, kind, level, before, after
   hint: use one of app, kind, level, before, after, or quote the token to search for it literally: "lvl:…"
 ```
 
@@ -1302,7 +1304,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-1216 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
+1226 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 

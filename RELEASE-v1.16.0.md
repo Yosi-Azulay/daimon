@@ -32,6 +32,12 @@ wrong, and it still says so.
   (`savedSearches`), written under the existing merge-write + `.bak` rule. An
   older daimon reading that file ignores the key; a malformed row is dropped on
   load, never fabricated.
+- **Two deliberate behavior changes for the five field names.** `app:`,
+  `kind:`, `level:`, `before:` and `after:` now MEAN something, so a v1.15
+  query that searched for one of them as literal text (`daimon search
+  "app:web"`) now filters instead. That is the feature. Everything else that
+  merely contains a colon — `TypeError:`, `http://`, `C:\…` — is still a
+  plain term, and a near-miss of a real field (`lvl:`) is a typo error.
 - **One deliberate behavior change, on the degraded path only:** a multi-term
   query on the LIKE fallback now ANDs its terms instead of matching the whole
   string as one contiguous substring. The FTS path has always ANDed tokens, so
@@ -147,7 +153,7 @@ scans the whole `src/` tree rather than `history.ts` alone.
 
 ## Numbers
 
-- Backend suite: **1216** `node:test` cases (v1.15: 1180), 0 fail — plus the
+- Backend suite: **1226** `node:test` cases (v1.15: 1180), 0 fail — plus the
   isolated `quickstart` phase, 3/3. New files: `test/search-query.test.mjs`,
   `test/search-surfaces.test.mjs`, `test/saved-searches.test.mjs`,
   `test/tui-search-chord.test.mjs`.
@@ -188,6 +194,32 @@ v1.17's to investigate.
 
 ---
 
+## Fixed after review
+
+A pre-tag review pass (four independent lenses: back-compat, surface drift,
+test integrity, correctness) found eleven defects worth fixing before the tag.
+The four that mattered most:
+
+1. **Ordinary text containing a colon 400'd.** `daimon search "TypeError:
+   Cannot read properties of undefined"` — the single most common thing anyone
+   pastes into a log search — returned an error instead of hits. The grammar
+   now distinguishes a TYPO of a real field (errors, and names what you meant)
+   from text that merely contains a colon (a term, as always).
+2. **An out-of-range `after:` crashed the TUI search pane** inside the daemon
+   process, because `describeQuery` formats bounds on the render path.
+3. **A ~1000-word query 500'd the endpoint** on the LIKE path, from code
+   outside the try/catch. Both paths now share the 8-token cap — which also
+   fixed the fallback returning fewer rows than the index for long queries,
+   the one place this release's parity claim was actually false.
+4. **`level:warning` could never match a log line**, because the grammar's
+   vocabulary (error/warning/lint) is not the log column's
+   (error/warn/info/debug). No fixture had seeded a `warn` line, so nothing
+   caught it; there is one now.
+
+The review also found four weak tests — a bench assertion that skipped itself
+when its baseline was absent, an inertness grep that scanned three files
+instead of the tree, a saved-search assertion satisfiable by "no hits", and a
+modal-guard test with no positive control. All four are now real.
 ## Standing NOs reaffirmed
 
 - **No `daimon import`.** Export stays one-way; import edges toward sync.

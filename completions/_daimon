@@ -34,7 +34,7 @@ _daimon() {
       env) cands=(diff) ;;
       plugin) cands=(list show validate) ;;
       profiles) cands=(suggest) ;;
-      searches) cands=(list save rename delete) ;;
+      searches) cands=(list save rename delete rm) ;;
       workspaces) cands=(list add rm show) ;;
     esac
     case $canon in

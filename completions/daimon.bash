@@ -36,7 +36,7 @@ _daimon_complete() {
       env) sub="diff" ;;
       plugin) sub="list show validate" ;;
       profiles) sub="suggest" ;;
-      searches) sub="list save rename delete" ;;
+      searches) sub="list save rename delete rm" ;;
       workspaces) sub="list add rm show" ;;
     esac
     case "$canon" in

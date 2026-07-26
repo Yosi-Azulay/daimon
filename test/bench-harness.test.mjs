@@ -246,8 +246,14 @@ test('the v1.16 query-syntax paths are budgeted from their own committed baselin
   assert.match(scaleSrc, /measureSyntax\(h, 'search-syntax-'/, 'the FTS path must run the syntax queries');
   assert.match(scaleSrc, /measureSyntax\(hl, 'search-like-syntax-'/, 'the LIKE path must run the same syntax queries');
 
+  // NOT an early return. A self-skipping guard here would let the release ship
+  // with CHANGELOG/RELEASE claiming "certified against a committed baseline"
+  // while every budget below gated as `skipped — no committed baseline entry`
+  // on both ends (this file AND bench/scale.mjs's gate()).
   const baselinePath = path.join(repoRoot, 'bench', 'BASELINE-v1.16-search.json');
-  if (!fs.existsSync(baselinePath)) return; // recorded by --write-syntax on a quiet machine
+  assert.ok(fs.existsSync(baselinePath),
+    'bench/BASELINE-v1.16-search.json must be COMMITTED — the docs claim the query-syntax paths are certified, '
+    + 'and without it every one of those budgets silently skips. Record it with `node bench/scale.mjs --write-syntax` on a quiet machine.');
   const b = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
   for (const name of expected) {
     const m = b.metrics?.[name];
@@ -255,4 +261,7 @@ test('the v1.16 query-syntax paths are budgeted from their own committed baselin
     assert.ok(typeof m.method === 'string' && m.method.length > 20, `${name} must document how it was measured`);
     assert.ok(m.hits > 0, `${name} certified an EMPTY result set — the budget would mean nothing`);
   }
+  assert.equal(b.machineQuiet, true,
+    'the committed baseline was recorded on a busy machine — every budget derived from it is inflated');
+  assert.equal(b.scale, 1_000_000, 'the query-syntax baseline must come from the 1M corpus');
 });

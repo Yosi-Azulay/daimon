@@ -150,7 +150,7 @@ npx daimon init --yes</code></pre>
 <dd>Recent log lines for an app. --level filters by classified level; --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON; --group merges a group's tails.</dd>
 <dt><code>daimon search &lt;query&gt; [--all] [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events|tests|error-groups] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Full-text search over everything daimon has seen: log lines, errors, and events. Compact JSON hits {kind,app,ts,snippet,ref}.</dd>
-<dt><code>daimon searches [list|save &lt;name&gt; &lt;query&gt;|rename &lt;old&gt; &lt;new&gt;|delete &lt;name&gt;] [--force] [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dt><code>daimon searches [list|save &lt;name&gt; &lt;query&gt;|rename &lt;old&gt; &lt;new&gt;|delete|rm &lt;name&gt;] [--force] [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Saved searches: name a query once, run it by name later. Inert data — nothing about a saved search runs on its own.</dd>
 <dt><code>daimon test-history &lt;name&gt; [--flaky] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Recent test runs for an app (totals, exit codes, gitHead, failures). --flaky lists tests that flipped pass↔fail ≥3× at the same gitHead.</dd>
@@ -265,7 +265,7 @@ npx daimon init --yes</code></pre>
 <dt><code>kind:logs|errors|events|tests|error-groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Restrict to one result kind. `tests` and `error-groups` are v1.16 kinds and imply the unified scope. <em>e.g.</em> <code>kind:logs</code></dd>
 <dt><code>level:error|warning|lint</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
-<dd>Restrict to one severity. Spans both stores: event type families (error-*/warning-*/lint-*) and the log-line level column (v1.2). Log lines daimon could not classify carry no level and are excluded. <em>e.g.</em> <code>level:error</code></dd>
+<dd>Restrict to one severity. Spans both stores: event type families (error-*/warning-*/lint-*) and the log-line level column (v1.2), whose own vocabulary is error/warn/info/debug — so level:warning matches log lines stored as 'warn', and level:lint matches lint EVENTS only (no classifier ever writes a lint log level). Log lines daimon could not classify carry no level and are excluded. <em>e.g.</em> <code>level:error</code></dd>
 <dt><code>before:&lt;time&gt;</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
 <dd>Only rows at or before this time. <em>e.g.</em> <code>before:2026-07-01</code></dd>
 <dt><code>after:&lt;time&gt;</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>

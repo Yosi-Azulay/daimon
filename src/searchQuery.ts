@@ -42,7 +42,7 @@ export const SEARCH_FIELDS: readonly SearchFieldDef[] = [
   {
     name: 'level',
     arg: 'error|warning|lint',
-    summary: 'Restrict to one severity. Spans both stores: event type families (error-*/warning-*/lint-*) and the log-line level column (v1.2). Log lines daimon could not classify carry no level and are excluded.',
+    summary: "Restrict to one severity. Spans both stores: event type families (error-*/warning-*/lint-*) and the log-line level column (v1.2), whose own vocabulary is error/warn/info/debug — so level:warning matches log lines stored as 'warn', and level:lint matches lint EVENTS only (no classifier ever writes a lint log level). Log lines daimon could not classify carry no level and are excluded.",
     example: 'level:error',
   },
   {
@@ -93,6 +93,29 @@ export const LEVEL_EVENT_TYPES: Readonly<Record<SearchLevel, readonly string[]>>
   lint: ['lint-new', 'lint-recur'],
 };
 
+/**
+ * `level:` → the values the `log_lines.level` column actually holds.
+ *
+ * THE TWO VOCABULARIES ARE NOT THE SAME, and pretending they were made
+ * `level:warning` silently unable to match any log line: the grammar's issue
+ * levels are error|warning|lint (they name event families), while v1.2's
+ * classifier stores frameworks.ts's LOG_LEVELS — error|warn|info|debug. The
+ * mapping is explicit rather than implied by string equality:
+ *
+ *   error   → 'error'
+ *   warning → 'warn'    (the column's spelling)
+ *   lint    → nothing   — lint is an issue level, not a log level; no
+ *                         classifier ever writes it, so a `level:lint` query
+ *                         matches lint EVENTS and no log lines. Documented,
+ *                         not a guess: inventing a mapping here would fabricate
+ *                         matches the classifier never claimed.
+ */
+export const LEVEL_LOG_VALUES: Readonly<Record<SearchLevel, readonly string[]>> = {
+  error: ['error'],
+  warning: ['warn'],
+  lint: [],
+};
+
 export interface ParsedQuery {
   /** Bare terms, in input order. A trailing `*` survives here — the FTS
    *  compiler turns it into a prefix search, the LIKE compiler strips it. */
@@ -124,6 +147,19 @@ export function isFilterOnly(q: ParsedQuery): boolean {
   return q.terms.length === 0 && q.phrases.length === 0;
 }
 
+/**
+ * True when the query says NOTHING — no text and no filters.
+ *
+ * `""` and `"` survive the callers' `q.trim()` guard (they are non-blank
+ * strings) but tokenize to nothing, and a filter-only query with zero filters
+ * is an unconstrained `SELECT … ORDER BY ts DESC LIMIT 50` — i.e. "search"
+ * would dump the newest rows in the database and call them hits. Callers
+ * reject this instead.
+ */
+export function isEmptyQuery(q: ParsedQuery): boolean {
+  return isFilterOnly(q) && !q.app && !q.kind && !q.level && q.before == null && q.after == null;
+}
+
 /** True when the query asks for a kind that only exists under `scope=all`. */
 export function impliesUnifiedScope(q: ParsedQuery): boolean {
   return !!q.kind && UNIFIED_ONLY_KINDS.includes(q.kind);
@@ -131,12 +167,72 @@ export function impliesUnifiedScope(q: ParsedQuery): boolean {
 
 const FIELD_LIST = SEARCH_FIELD_NAMES.join(', ');
 
-function fieldError(name: string): SearchQueryError {
+function fieldError(name: string, near: string): SearchQueryError {
   return {
-    error: `unknown field '${name}:' — valid fields: ${FIELD_LIST}`,
+    error: `unknown field '${name}:' — did you mean '${near}:'? valid fields: ${FIELD_LIST}`,
     hint: `use one of ${FIELD_LIST}, or quote the token to search for it literally: "${name}:…"`,
   };
 }
+
+/**
+ * Levenshtein distance, inlined because this module imports NOTHING (the
+ * purity contract). Same algorithm cliHelp.ts uses for verb/config-key
+ * suggestions — daimon has suggested nearest names since M91 and this is that
+ * convention applied to the grammar.
+ */
+function distance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const dp: number[] = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) dp[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
+}
+
+// How close an unknown `word:` must be to a real field before we call it a
+// TYPO rather than ordinary text. 2 is the same threshold cliHelp.ts uses for
+// verbs and config keys.
+const FIELD_TYPO_DISTANCE = 2;
+
+/**
+ * Is this unknown `word:` a misspelling of a real field, or just text?
+ *
+ * THIS DISTINCTION IS BACK-COMPAT, NOT POLISH. `word:` is extremely common in
+ * ordinary search text — `TypeError: cannot read`, `http://localhost:4200`,
+ * `node:fs`, `C:\src\app.ts` — and every one of those was a working v1.15
+ * query. Erroring on all of them would break the `stable` /api/search surface
+ * for the most common thing anyone pastes into a log search.
+ *
+ * So the rule is: a token that is CLOSE to a real field name is a typo and
+ * errors loudly (which is what M179's "never silently treated as a term" is
+ * protecting — a user who typed `lvl:error` and got zero hits would have no
+ * idea why); anything else is just a term, exactly as in v1.15. A user who
+ * genuinely wants to search for `level:` as literal text quotes it, and the
+ * error says so.
+ */
+function nearestField(name: string): string | null {
+  let best: { name: string; d: number } | null = null;
+  for (const f of SEARCH_FIELD_NAMES) {
+    const d = distance(name, f);
+    if (d <= FIELD_TYPO_DISTANCE && (!best || d < best.d)) best = { name: f, d };
+  }
+  return best?.name ?? null;
+}
+
+// SQLite stores epoch ms; Date's own range is ±8.64e15. A value outside it
+// makes `new Date(ts).toISOString()` throw RangeError — and describeQuery runs
+// on the TUI's render path, so an out-of-range paste (a nanosecond timestamp
+// from a Go log) would take down the pane inside the daemon process.
+const MAX_EPOCH_MS = 8.64e15;
 
 interface RawToken {
   text: string;
@@ -166,7 +262,16 @@ function tokenize(input: string): RawToken[] {
   };
   for (let i = 0; i < input.length; i++) {
     const c = input[i];
-    if (c === '\\' && i + 1 < input.length) {
+    // A backslash escapes ONLY the three characters that need escaping: a
+    // quote, a space, and itself. Everything else keeps its backslash.
+    //
+    // WINDOWS-FIRST, and learned the hard way: a general "escape the next
+    // character" rule silently turned `D:\src\app.ts` into `D:srcapp.ts`, so
+    // searching for a Windows stack frame — on daimon's own primary platform —
+    // matched nothing and said nothing. Quoting it (the remedy the error
+    // message itself suggests) made it worse, because the escape applied
+    // inside quotes too.
+    if (c === '\\' && i + 1 < input.length && (input[i + 1] === '"' || input[i + 1] === '\\' || input[i + 1] === ' ')) {
       buf += input[i + 1];
       started = true;
       i++;
@@ -199,13 +304,17 @@ const DURATION_MS: Record<string, number> = {
 export function parseTimeBound(value: string, now: number): number | null {
   const v = value.trim();
   if (!v) return null;
+  // Every branch below funnels through inRange: a bound outside Date's own
+  // range is not a time, and letting one through crashes any caller that
+  // formats it (describeQuery, on the TUI render path).
+  const inRange = (n: number): number | null =>
+    Number.isFinite(n) && Math.abs(n) <= MAX_EPOCH_MS ? n : null;
   const dur = DURATION_RE.exec(v);
-  if (dur) return now - Number(dur[1]) * DURATION_MS[dur[2]];
+  if (dur) return inRange(now - Number(dur[1]) * DURATION_MS[dur[2]]);
   if (/^\d+$/.test(v)) {
     // Epoch ms. Seconds would be ambiguous with a duration-less number, so
     // only ms is accepted — documented in SEARCH_TIME_FORMS.
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
+    return inRange(Number(v));
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
     const n = Date.parse(v + 'T00:00:00Z');
@@ -245,7 +354,14 @@ export function parseSearchQuery(input: string, now: number = Date.now()): Parse
     }
     const field = m[1].toLowerCase();
     const value = m[2];
-    if (!SEARCH_FIELD_NAMES.includes(field)) return { ok: false, ...fieldError(m[1]) };
+    if (!SEARCH_FIELD_NAMES.includes(field)) {
+      // A near-miss is a typo and errors loudly; anything else is ordinary
+      // text and stays a term, exactly as it was in v1.15. See nearestField.
+      const near = nearestField(field);
+      if (near) return { ok: false, ...fieldError(m[1], near) };
+      q.terms.push(tok.text);
+      continue;
+    }
     if (!value.trim()) {
       return {
         ok: false,
@@ -302,12 +418,18 @@ export function parseSearchQuery(input: string, now: number = Date.now()): Parse
 /** Human-readable echo of the compiled filters — used by the TUI header and the
  *  CLI's non-JSON output so a user can see what their query actually meant. */
 export function describeQuery(q: ParsedQuery): string {
+  // Defensive on top of parseTimeBound's range check: this runs on the TUI's
+  // RENDER path, so a throw here takes the pane down inside the daemon. A
+  // belt-and-braces fallback costs nothing and cannot regress.
+  const iso = (ts: number): string => {
+    try { return new Date(ts).toISOString(); } catch { return String(ts); }
+  };
   const bits: string[] = [];
   if (q.app) bits.push(`app=${q.app}`);
   if (q.kind) bits.push(`kind=${q.kind}`);
   if (q.level) bits.push(`level=${q.level}`);
-  if (q.after != null) bits.push(`after=${new Date(q.after).toISOString()}`);
-  if (q.before != null) bits.push(`before=${new Date(q.before).toISOString()}`);
+  if (q.after != null) bits.push(`after=${iso(q.after)}`);
+  if (q.before != null) bits.push(`before=${iso(q.before)}`);
   const text = [...q.phrases.map(p => `"${p}"`), ...q.terms];
   if (text.length) bits.push(`text=${text.join(' ')}`);
   return bits.join(' · ') || '(no filters)';

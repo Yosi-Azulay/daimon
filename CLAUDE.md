@@ -211,7 +211,7 @@ scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIM
 scripts/platform-smoke.sh # (M143, v1.9) ~2-min PASS/FAIL probe for a REAL Mac/Linux box.
                     # POSIX sh, zero deps, throwaway DAIMON_HOME; --dry-run runs the
                     # plumbing on any host. The human runs it before publish.
-test/               # node --test suite. 1216 test cases (v1.16); files run in parallel child processes.
+test/               # node --test suite. 1226 test cases (v1.16); files run in parallel child processes.
                     # NEVER run a bench (npm run bench) and npm test at the same
                     # time — they contend and produce spurious failures.
                     # test/helpers/platformSkip.mjs + test/fixtures/platform/<tool>/ (M141-M142).
@@ -459,7 +459,18 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   pure, import-free parser (no history, no server, no node builtins) whose
   `SEARCH_FIELDS` table IS the docs table, the CLI help text, and the
   unknown-field error message. Adding a field means adding a row there; a second
-  hand-written copy of the grammar anywhere is a defect. (2) **Filters compile to
+  hand-written copy of the grammar anywhere is a defect. A `word:` token errors
+  ONLY when it is a NEAR-MISS of a real field (Levenshtein <= 2, the M91
+  nearest-name convention) — a typo must be loud, but `TypeError:`,
+  `http://...` and `C:\src\app.ts` are ordinary v1.15 search text and stay
+  terms; erroring on them broke the stable surface for the most common paste
+  there is. A backslash escapes only a quote, a space, or a backslash, for the
+  same Windows-first reason. `level:` carries TWO vocabularies that are not the
+  same word (`error|warning|lint` for event families, `error|warn|info|debug`
+  in the v1.2 log column): the mapping is explicit in `LEVEL_LOG_VALUES`, and a
+  level with no log counterpart matches no log lines rather than pretending.
+  Both paths take the SAME token cap (`FTS_MAX_TERMS`) or the fallback returns
+  fewer rows than the index and the parity claim below is false. (2) **Filters compile to
   WHERE clauses on the real columns, never to FTS tricks** — `app:` → the app
   column, `before:`/`after:` → `ts` bounds, `level:` → the `error-*`/`warning-*`/
   `lint-*` event families AND the v1.2 `log_lines.level` column, `kind:` → the
@@ -658,7 +669,7 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   a multi-term query's terms (the FTS path always did — a degraded index used to
   return fewer rows), and a TUI modal's keys no longer reach the app underneath
   it (`q` in the v1.8 timeline used to quit the whole TUI). Backend suite
-  **1216 tests**, dashboard vitest 187. New tests: `search-query`,
+  **1226 tests**, dashboard vitest 187. New tests: `search-query`,
   `search-surfaces`, `saved-searches`, `tui-search-chord`.
 
 ## v1.15 highlights
