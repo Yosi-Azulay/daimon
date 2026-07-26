@@ -13,6 +13,8 @@
 //
 // Usage:
 //   node bench/scale.mjs --write        # record the scale baseline (quiet only)
+//   node bench/scale.mjs --write-syntax # record ONLY the v1.16 query-syntax
+//                                       # baseline (bench/BASELINE-v1.16-search.json)
 //   node bench/scale.mjs                # gate against the committed baseline
 //   node bench/scale.mjs --scale=100000 # smaller corpus (smoke)
 
@@ -35,6 +37,14 @@ const opt = n => {
 
 const SCALE = Number(opt('scale') || 1_000_000);
 export const SCALE_BASELINE_PATH = path.join(repoRoot, 'bench', 'BASELINE-v1.10-scale.json');
+// M183 (v1.16): the query-syntax budgets get their OWN committed baseline.
+// The v1.10 file is the historical record of that release's measurements and
+// `--write` rewrites every entry in it — so recording the new paths there
+// would silently re-baseline all eleven v1.10 numbers on today's machine.
+// A second file keeps each release's measurements exactly as they were taken.
+export const SYNTAX_BASELINE_PATH = path.join(repoRoot, 'bench', 'BASELINE-v1.16-search.json');
+const SYNTAX_PREFIXES = ['search-syntax-', 'search-like-syntax-'];
+const isSyntaxMetric = name => SYNTAX_PREFIXES.some(p => name.startsWith(p));
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 
 // ---------------------------------------------------------------------------
@@ -50,6 +60,18 @@ const CLASSES = {
   'search-like-common': ['query', 'the no-FTS degraded path on a term that exits early at LIMIT'],
   'search-like-rare': ['query', 'LIKE walking most of the corpus before it fills LIMIT'],
   'search-like-miss': ['query', 'the true LIKE worst case — no match, so no early exit at all'],
+  // M183 (v1.16): the query syntax, certified at scale on BOTH paths. The
+  // filters compile to WHERE clauses on real columns, so the question these
+  // answer is whether a filtered query still rides the FTS fast path (rowid
+  // DESC streaming, stop at LIMIT) instead of degenerating into a full scan.
+  'search-syntax-filtered': ['interactive', 'app: + after: on top of a common term — the everyday filtered search'],
+  'search-syntax-phrase': ['interactive', 'a quoted phrase is one FTS phrase token; more index work than a single term'],
+  'search-syntax-level': ['interactive', 'level: spans both stores (event type families + the log level column)'],
+  'search-syntax-unified': ['query', 'scope=all adds the test-run column query to the indexed stores'],
+  'search-like-syntax-filtered': ['query', 'the same filtered query with no index — column predicates only'],
+  'search-like-syntax-phrase': ['query', 'a phrase on the LIKE path is one contiguous substring scan'],
+  'search-like-syntax-level': ['query', 'level: on the LIKE path — the WHERE clause is identical, the scan is not'],
+  'search-like-syntax-unified': ['query', 'unified scope with no index: the widest degraded query daimon can be asked'],
   // Composition over many queries; nobody blocks on a keystroke.
   'report': ['batch', 'fans out over every section; per-section noise compounds'],
   'export': ['batch', 'the widest composition daimon has — report plus raw sections'],
@@ -60,6 +82,19 @@ const CLASSES = {
   // Deferred-FTS catch-up from a cold high-water mark.
   'fts-catchup': ['batch', 'one-time index build after a corpus arrives unindexed'],
 };
+
+// The v1.16 syntax queries, as a user would type them. Built from the corpus's
+// own needles and its real time span so every one of them MATCHES — a budget
+// certifying an empty result set certifies nothing (the M146 rule).
+function syntaxQueries(meta) {
+  const weekIn = meta.startMs + 83 * 86_400_000; // inside the corpus's newest week
+  return [
+    ['filtered', `app:web after:${weekIn} ${NEEDLES.common}`],
+    ['phrase', '"Cannot resolve module"'],
+    ['level', `level:error ${NEEDLES.common}`],
+    ['unified', `app:web ${NEEDLES.common}`, { scope: 'all' }],
+  ];
+}
 
 async function getJson(apiPort, pathname) {
   const r = await fetch(`http://127.0.0.1:${apiPort}${pathname}`, {
@@ -73,9 +108,26 @@ async function getJson(apiPort, pathname) {
 // In-process measurements (search + FTS catch-up): these exercise the storage
 // engine directly, with no HTTP framing in the number.
 // ---------------------------------------------------------------------------
-async function measureSearch(dbPath) {
+async function measureSearch(dbPath, meta) {
   const { History } = await import(pathToFileURL(path.join(repoRoot, 'dist', 'history.js')).href);
+  const { parseSearchQuery } = await import(pathToFileURL(path.join(repoRoot, 'dist', 'searchQuery.js')).href);
   const out = {};
+  const SYNTAX = syntaxQueries(meta);
+  // One helper for both engines: the SAME query strings, the SAME parser, so a
+  // difference in the numbers is a difference in the engine and nothing else.
+  const measureSyntax = async (hist, prefix, runs) => {
+    for (const [name, q, extra = {}] of SYNTAX) {
+      const parsed = parseSearchQuery(q);
+      if (!parsed.ok) throw new Error(`bench query does not parse: ${q} — ${parsed.error}`);
+      let hits = 0;
+      const s2 = await sample(() => {
+        const r = hist.search({ q, query: parsed.query, limit: 50, ...extra });
+        hits = r.hits.length;
+      }, { runs, warmup: 2 });
+      if (!hits) throw new Error(`${prefix}${name} found nothing — the budget would certify an empty query`);
+      out[`${prefix}${name}`] = { ...s2, hits, method: `History.search({ q: '${q}'${extra.scope ? ", scope: 'all'" : ''} }) on the ${SCALE}-event corpus` };
+    }
+  };
 
   const h = new History({ enabled: true, path: dbPath, retentionDays: 3650 });
   try {
@@ -90,6 +142,7 @@ async function measureSearch(dbPath) {
       out[name] = { ...s, hits, method: `History.search({ q: '${q}', limit: 50 }) on the ${SCALE}-event corpus, FTS path` };
       if (!hits) throw new Error(`${name} found nothing — the budget would be certifying an empty query`);
     }
+    await measureSyntax(h, 'search-syntax-', 12);
   } finally {
     h.close();
   }
@@ -128,6 +181,7 @@ async function measureSearch(dbPath) {
       if (!mustHit && hits) throw new Error(`${name} was supposed to match nothing, got ${hits}`);
       out[name] = { ...s, hits, method: `History.search({ q: '${q}' }) on an FTS-squatted copy — LIKE degraded path, ${SCALE}-event corpus` };
     }
+    await measureSyntax(hl, 'search-like-syntax-', 6);
   } finally {
     hl.close();
     try { fs.rmSync(likeDb, { force: true }); } catch {}
@@ -237,8 +291,8 @@ export async function runScale({ scale = SCALE } = {}) {
   else log(`[bench] reusing cached corpus (${Math.round(meta.dbBytes / 1048576)}MB)`);
 
   const metrics = {};
-  log('· search (FTS common / FTS rare / LIKE fallback) …');
-  Object.assign(metrics, await measureSearch(dbPath));
+  log('· search (FTS common / rare / v1.16 syntax, then the same on the LIKE path) …');
+  Object.assign(metrics, await measureSearch(dbPath, meta));
   log('· fts catch-up from a cold high-water mark …');
   Object.assign(metrics, await measureFtsCatchup(dbPath));
   log('· report / export / sessions / why / context (HTTP) …');
@@ -260,12 +314,19 @@ export async function runScale({ scale = SCALE } = {}) {
   };
 }
 
-/** Gate a fresh run against the committed scale baseline. */
-export function gate(fresh, baseline) {
+/**
+ * Gate a fresh run against the committed baselines.
+ *
+ * Two baseline sources, one rule: a metric is gated against whichever committed
+ * file recorded it (v1.10 for the original eleven paths, v1.16 for the query
+ * syntax). A metric with no baseline anywhere SKIPS — it is never silently
+ * passed and never invented.
+ */
+export function gate(fresh, baseline, syntaxBaseline = null) {
   const rows = [];
   for (const [name, m] of Object.entries(fresh.metrics)) {
     const [klass, why] = CLASSES[name] ?? [];
-    const base = baseline.metrics?.[name];
+    const base = baseline.metrics?.[name] ?? syntaxBaseline?.metrics?.[name];
     if (m.note) { rows.push({ name, status: 'skipped', detail: m.note }); continue; }
     if (!klass) { rows.push({ name, status: 'skipped', detail: 'no budget class declared' }); continue; }
     if (!base || base.p95 == null) { rows.push({ name, status: 'skipped', detail: 'no committed baseline entry' }); continue; }
@@ -295,19 +356,33 @@ if (invokedDirectly) {
   const result = await runScale();
   printMetrics(result);
 
-  if (flag('write')) {
+  if (flag('write') || flag('write-syntax')) {
     if (!result.machineQuiet) {
-      process.stderr.write('[bench] refusing --write: machine was not quiet — a contended baseline inflates every budget derived from it.\n');
+      process.stderr.write('[bench] refusing to write a baseline: machine was not quiet — a contended baseline inflates every budget derived from it.\n');
       process.exit(2);
     }
-    fs.writeFileSync(SCALE_BASELINE_PATH, JSON.stringify(result, null, 2) + '\n');
-    log(`[bench] wrote ${path.relative(repoRoot, SCALE_BASELINE_PATH)}`);
+    if (flag('write-syntax')) {
+      // ONLY the v1.16 query-syntax paths (M183). The v1.10 numbers stay
+      // exactly as they were measured for that release — `--write` rewrites
+      // every entry, so recording the new paths there would silently
+      // re-baseline eleven older budgets on today's machine.
+      const metrics = Object.fromEntries(Object.entries(result.metrics).filter(([n]) => isSyntaxMetric(n)));
+      const out = { ...result, release: 'v1.16.0', metrics };
+      fs.writeFileSync(SYNTAX_BASELINE_PATH, JSON.stringify(out, null, 2) + '\n');
+      log(`[bench] wrote ${path.relative(repoRoot, SYNTAX_BASELINE_PATH)} (${Object.keys(metrics).length} query-syntax paths)`);
+    } else {
+      fs.writeFileSync(SCALE_BASELINE_PATH, JSON.stringify(result, null, 2) + '\n');
+      log(`[bench] wrote ${path.relative(repoRoot, SCALE_BASELINE_PATH)}`);
+    }
   } else {
     if (!fs.existsSync(SCALE_BASELINE_PATH)) {
       process.stderr.write('[bench] no scale baseline committed yet — run with --write on a quiet machine first.\n');
       process.exit(2);
     }
-    const rows = gate(result, JSON.parse(fs.readFileSync(SCALE_BASELINE_PATH, 'utf8')));
+    const syntaxBase = fs.existsSync(SYNTAX_BASELINE_PATH)
+      ? JSON.parse(fs.readFileSync(SYNTAX_BASELINE_PATH, 'utf8'))
+      : null;
+    const rows = gate(result, JSON.parse(fs.readFileSync(SCALE_BASELINE_PATH, 'utf8')), syntaxBase);
     let failed = 0;
     for (const r of rows) {
       if (r.status === 'OVER BUDGET') failed++;

@@ -206,12 +206,53 @@ test('every baseline metric records the method that produced it (reproducibility
 // ---------------------------------------------------------------------------
 
 test('no FTS trigger sits on the INSERT path — deferred indexing only', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'src', 'history.ts'), 'utf8');
-  const triggers = [...src.matchAll(/CREATE\s+TRIGGER[^;]*?(AFTER|BEFORE)\s+(INSERT|UPDATE|DELETE)\s+ON\s+(\w+)/gi)];
-  assert.ok(triggers.length > 0, 'expected the retention-cleanup triggers to still exist');
-  for (const [, when, verb, table] of triggers) {
-    assert.equal(verb.toUpperCase(), 'DELETE',
-      `${when} ${verb} trigger on ${table}: FTS indexing must stay OFF the write path `
-      + '(measured 4-10x on inserts) — only DELETE cleanup triggers are permitted');
+  // M183 (v1.16) widened the scan from history.ts to EVERY source file: the
+  // query syntax and the unified scope added search code outside history.ts,
+  // and "no per-insert FTS trigger" is a property of the whole tree, not of
+  // one file that happens to hold the schema today.
+  const roots = [path.join(repoRoot, 'src'), path.join(repoRoot, 'src', 'tui')];
+  const files = roots.flatMap(dir => fs.readdirSync(dir)
+    .filter(f => f.endsWith('.ts') || f.endsWith('.tsx'))
+    .map(f => path.join(dir, f)));
+  let total = 0;
+  for (const file of files) {
+    const src = fs.readFileSync(file, 'utf8');
+    const triggers = [...src.matchAll(/CREATE\s+TRIGGER[^;]*?(AFTER|BEFORE)\s+(INSERT|UPDATE|DELETE)\s+ON\s+(\w+)/gi)];
+    total += triggers.length;
+    for (const [, when, verb, table] of triggers) {
+      assert.equal(verb.toUpperCase(), 'DELETE',
+        `${path.basename(file)}: ${when} ${verb} trigger on ${table}: FTS indexing must stay OFF the write path `
+        + '(measured 4-10x on inserts) — only DELETE cleanup triggers are permitted');
+    }
+  }
+  assert.ok(total > 0, 'expected the retention-cleanup triggers to still exist');
+});
+
+test('the v1.16 query-syntax paths are budgeted from their own committed baseline', () => {
+  // M183: the syntax queries are certified on BOTH engines. This asserts the
+  // harness is WIRED — every class declared, every metric documented, and the
+  // baseline (once recorded) covering both paths. The numbers themselves are
+  // produced by `npm run bench:scale`, never typed in here.
+  const scaleSrc = fs.readFileSync(path.join(repoRoot, 'bench', 'scale.mjs'), 'utf8');
+  const declared = [...scaleSrc.matchAll(/'(search-(?:like-)?syntax-[a-z]+)':\s*\['(interactive|query|batch|startup|write)'/g)]
+    .map(m => m[1]);
+  const expected = ['filtered', 'phrase', 'level', 'unified']
+    .flatMap(k => [`search-syntax-${k}`, `search-like-syntax-${k}`]);
+  for (const name of expected) {
+    assert.ok(declared.includes(name), `${name} has no budget class — an unclassified metric silently SKIPS the gate`);
+  }
+  // Both engines, from one query table: a query certified on FTS only would
+  // leave the degraded path — the one a broken index falls back to — ungated.
+  assert.match(scaleSrc, /measureSyntax\(h, 'search-syntax-'/, 'the FTS path must run the syntax queries');
+  assert.match(scaleSrc, /measureSyntax\(hl, 'search-like-syntax-'/, 'the LIKE path must run the same syntax queries');
+
+  const baselinePath = path.join(repoRoot, 'bench', 'BASELINE-v1.16-search.json');
+  if (!fs.existsSync(baselinePath)) return; // recorded by --write-syntax on a quiet machine
+  const b = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
+  for (const name of expected) {
+    const m = b.metrics?.[name];
+    assert.ok(m && typeof m.p95 === 'number', `${name} missing from the committed v1.16 baseline`);
+    assert.ok(typeof m.method === 'string' && m.method.length > 20, `${name} must document how it was measured`);
+    assert.ok(m.hits > 0, `${name} certified an EMPTY result set — the budget would mean nothing`);
   }
 });

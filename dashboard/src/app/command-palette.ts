@@ -7,22 +7,30 @@ import { NAV_ENTRIES } from './nav-model';
 import {
   flattenGroups,
   fmtHitAgo,
+  formatFacetSummary,
   groupHitsByKind,
   isSearchQuery,
+  isSearchSyntaxError,
   parseRecents,
   rankItems,
   rememberRecent,
   routeForHit,
+  savedSearchQueryText,
   searchQueryText,
+  sortSavedSearches,
   type RecentEntry,
+  type SavedSearch,
   type SearchHit,
   type SearchHitGroup,
 } from './command-palette-helpers';
 
-// One unified item model (M157). `route` present ⇒ it's a navigation and is
-// remembered in recents; actions have only `run` and are never replayed blind.
+// One unified item model (M157; 'saved-search' added M181, v1.16). `route`
+// present ⇒ it's a navigation and is remembered in recents; actions have
+// only `run` and are never replayed blind. A saved-search item has neither —
+// selecting one switches the palette into search mode instead of navigating
+// or firing an action (see runIdx's special case below).
 interface PaletteItem {
-  kind: 'nav' | 'app' | 'action';
+  kind: 'nav' | 'app' | 'action' | 'saved-search';
   label: string;
   keywords?: string;
   hint?: string;
@@ -61,7 +69,7 @@ const RECENTS_KEY = 'daimon.palette.recents';
           <input #input
                  [(ngModel)]="query"
                  (ngModelChange)="onQuery($event)"
-                 placeholder="Jump to app, run action, navigate… (type &gt; to search logs/errors/events)"
+                 placeholder="Jump to app, run action, navigate… (type &gt; to search — app:/kind:/level:/before:/after:)"
                  autocomplete="off"
                  spellcheck="false"
                  role="combobox"
@@ -70,13 +78,21 @@ const RECENTS_KEY = 'daimon.palette.recents';
                  [attr.aria-activedescendant]="activeId()" />
           <kbd>esc</kbd>
         </div>
-        @if (fallbackVisible()) {
+        @if (searchErrorVisible(); as err) {
+          <div class="dm-palette-note dm-palette-error" role="alert">
+            <mat-icon fontSet="material-symbols-outlined">error</mat-icon>
+            <span>{{ err.error }}{{ err.hint ? ' — ' + err.hint : '' }}</span>
+          </div>
+        } @else if (fallbackVisible()) {
           <div class="dm-palette-note">
             <mat-icon fontSet="material-symbols-outlined">info</mat-icon>
             LIKE fallback — full-text index unavailable, results may be less precise.
           </div>
         }
-        <ul class="dm-palette-list" id="dm-palette-list" role="listbox" #list>
+        @if (facetSummaryVisible(); as summary) {
+          <div class="dm-palette-facets">{{ summary }}</div>
+        }
+        <ul class="dm-palette-list" id="dm-palette-list" [attr.role]="listRole()" #list>
           @if (searchLoading() && flatSearchHits().length === 0 && rankedCommands().length === 0 && !isSearchMode()) {
             <li class="dm-palette-empty">Searching…</li>
           }
@@ -155,7 +171,10 @@ const RECENTS_KEY = 'daimon.palette.recents';
     }
     .dm-palette-item.active { background: color-mix(in oklch, var(--dm-color-primary) 14%, transparent); }
     .dm-palette-label { flex: 1; }
-    .dm-palette-hint { color: var(--dm-color-fg-muted); font-family: 'Roboto Mono', monospace; font-size: .75rem; }
+    .dm-palette-hint {
+      color: var(--dm-color-fg-muted); font-family: 'Roboto Mono', monospace; font-size: .75rem;
+      max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .dm-palette-kind {
       font-size: .6875rem; padding: 2px 8px; border-radius: 999px;
       background: var(--dm-color-surface);
@@ -171,6 +190,16 @@ const RECENTS_KEY = 'daimon.palette.recents';
       border-bottom: 1px solid var(--dm-color-border);
     }
     .dm-palette-note mat-icon { font-size: 16px; width: 16px; height: 16px; color: var(--dm-color-accent); }
+    .dm-palette-error {
+      color: var(--dm-color-error);
+      background: color-mix(in oklch, var(--dm-color-error) 10%, transparent);
+    }
+    .dm-palette-error mat-icon { color: var(--dm-color-error); }
+    .dm-palette-facets {
+      padding: 4px 16px; font: 500 .75rem/1.25rem Roboto;
+      color: var(--dm-color-fg-muted);
+      border-bottom: 1px solid var(--dm-color-border);
+    }
     .dm-palette-group-label {
       padding: 8px 12px 4px; font: 600 .6875rem/1rem Roboto;
       text-transform: uppercase; letter-spacing: .05em;
@@ -208,6 +237,29 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   readonly searchLoading = signal(false);
   readonly searchGroups = computed<SearchHitGroup[]>(() => groupHitsByKind(this.searchHits()));
   readonly flatSearchHits = computed<SearchHit[]>(() => flattenGroups(this.searchGroups()));
+
+  // Unified search (M180, v1.16): per-kind hit counts, present only when the
+  // API was asked for `scope=all` (search mode always asks). Query-syntax
+  // errors (M179's 400, e.g. an unknown `lvl:` field) — present INSTEAD of
+  // hits, never alongside a stale result set.
+  readonly searchFacets = signal<Record<string, number> | null>(null);
+  readonly searchError = signal<{ error: string; hint?: string } | null>(null);
+  readonly facetSummary = computed(() => formatFacetSummary(this.searchFacets()));
+
+  // Saved searches (M181, v1.16) — loaded fresh each time the palette opens
+  // (they change rarely; no live-polling signal needed). Sorted the same
+  // way the server sorts /api/searches so ordering never surprises.
+  readonly savedSearches = signal<SavedSearch[]>([]);
+  private readonly savedSearchItems = computed<PaletteItem[]>(() =>
+    sortSavedSearches(this.savedSearches()).map(s => ({
+      kind: 'saved-search' as const,
+      icon: 'bookmark',
+      label: s.name,
+      hint: s.query,
+      keywords: s.query,
+      run: () => this.selectSavedSearch(s),
+    })),
+  );
 
   private searchTimer?: ReturnType<typeof setTimeout>;
   private searchToken = 0;
@@ -255,6 +307,17 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
 
   // The fully assembled, index-annotated row list the template renders and the
   // keyboard navigates. Group headers are interleaved but never indexed.
+  // ARIA (fixed in v1.16): `role="listbox"` REQUIRES option children, so a
+  // palette showing only an empty state or a query-syntax error must not claim
+  // to be one — axe flags it critical (aria-required-children), and a screen
+  // reader announces a listbox with nothing in it. With no options the list is
+  // a plain <ul> of plain <li>, which is exactly what it is. Caught by the
+  // M184 axe pass over the new error state; the empty state could reach it
+  // before v1.16 too, but no axe check had ever rendered one.
+  listRole(): string | null {
+    return this.rows().some(r => r.type === 'item') ? 'listbox' : null;
+  }
+
   rows(): PaletteRow[] {
     const out: PaletteRow[] = [];
     let idx = 0;
@@ -278,6 +341,11 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
       if (cmds.length) {
         out.push({ type: 'header', label: 'Jump to' });
         for (const it of cmds) out.push({ type: 'item', item: it, index: idx++ });
+      }
+      const saved = this.savedSearchItems();
+      if (saved.length) {
+        out.push({ type: 'header', label: 'Saved searches' });
+        for (const it of saved) out.push({ type: 'item', item: it, index: idx++ });
       }
       return out;
     }
@@ -308,7 +376,8 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
 
   emptyMessage(): string {
     if (this.isSearchMode()) {
-      if (this.currentSearchText().length === 0) return 'Type to search logs, errors and events.';
+      if (this.searchError()) return 'Fix the query above and try again.';
+      if (this.currentSearchText().length === 0) return 'Type to search logs, errors, tests and error groups.';
       if (this.searchLoading()) return 'Searching…';
       return 'No matches.';
     }
@@ -316,7 +385,20 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   }
 
   fallbackVisible(): boolean {
-    return this.searchFallback() && (this.isSearchMode() || this.query.trim().length >= PLAIN_SEARCH_MIN);
+    return !this.searchError() && this.searchFallback() && (this.isSearchMode() || this.query.trim().length >= PLAIN_SEARCH_MIN);
+  }
+
+  // A query-syntax error (M179's 400) only ever applies to search mode — the
+  // plain-typing path never sends `scope=all` and its bare-term queries
+  // can't fail to parse.
+  searchErrorVisible(): { error: string; hint?: string } | null {
+    return this.isSearchMode() ? this.searchError() : null;
+  }
+
+  // The facet summary only makes sense once results (or an error) came back
+  // from a `scope=all` call, and never alongside the error banner.
+  facetSummaryVisible(): string | null {
+    return this.isSearchMode() && !this.searchError() ? this.facetSummary() : null;
   }
 
   private listener = (e: Event) => this.openPalette((e as CustomEvent<{ query?: string }>).detail?.query);
@@ -339,6 +421,7 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
     this.active.set(0);
     this.recents.set(parseRecents(localStorage.getItem(RECENTS_KEY)));
     this.resetSearch();
+    void this.loadSavedSearches();
     setTimeout(() => {
       this.input?.nativeElement.focus();
       if (this.query) this.onQuery(this.query);
@@ -386,11 +469,33 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
   }
 
   hitIcon(h: SearchHit): string {
-    return h.kind === 'logs' ? 'terminal' : (h.kind === 'errors' ? 'error' : 'timeline');
+    switch (h.kind) {
+      case 'logs': return 'terminal';
+      case 'errors': return 'error';
+      case 'error-groups': return 'bug_report';
+      case 'tests': return 'science';
+      default: return 'timeline'; // events
+    }
   }
 
   fmtAgo(ts: number): string {
     return fmtHitAgo(ts);
+  }
+
+  async loadSavedSearches(): Promise<void> {
+    this.savedSearches.set(await this.api.getSavedSearches());
+  }
+
+  // Selecting a saved search (M181) never runs it directly — it puts the
+  // palette into search mode with the saved query preset and lets the normal
+  // onQuery → runSearch path do the actual GET /api/search. The palette
+  // stays open (unlike runIdx's nav/action items) so the results land right
+  // where the user was looking.
+  private selectSavedSearch(s: SavedSearch): void {
+    this.query = savedSearchQueryText(s);
+    this.active.set(0);
+    this.onQuery(this.query);
+    this.input?.nativeElement.focus();
   }
 
   onQuery(_q: string): void {
@@ -401,23 +506,31 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
       this.resetSearch();
       return;
     }
+    // Search mode always asks for the M180 unified scope (tests + live error
+    // groups + facets); plain in-place typing stays the pre-v1.16 logs/
+    // errors/events-only shape.
+    const scope: 'all' | undefined = this.isSearchMode() ? 'all' : undefined;
     this.searchLoading.set(true);
-    this.searchTimer = setTimeout(() => void this.runSearch(text), SEARCH_DEBOUNCE_MS);
+    this.searchTimer = setTimeout(() => void this.runSearch(text, scope), SEARCH_DEBOUNCE_MS);
   }
 
   private resetSearch(): void {
     this.searchHits.set([]);
     this.searchFallback.set(false);
     this.searchLoading.set(false);
+    this.searchFacets.set(null);
+    this.searchError.set(null);
   }
 
-  private async runSearch(text: string): Promise<void> {
+  private async runSearch(text: string, scope?: 'all'): Promise<void> {
     const token = ++this.searchToken;
     try {
-      const r = await this.api.search({ q: text, limit: 30 });
+      const r = await this.api.search({ q: text, limit: 30, scope });
       if (token !== this.searchToken) return; // superseded
-      this.searchHits.set(r.hits);
+      this.searchHits.set(isSearchSyntaxError(r) ? [] : r.hits);
       this.searchFallback.set(r.fallback);
+      this.searchFacets.set(r.facets ?? null);
+      this.searchError.set(isSearchSyntaxError(r) ? { error: r.error!, hint: r.hint } : null);
     } finally {
       if (token === this.searchToken) this.searchLoading.set(false);
     }
@@ -431,6 +544,14 @@ export class CommandPaletteComponent implements OnInit, OnDestroy {
       return;
     }
     const item = row.item;
+    // A saved search (M181) switches the palette into search mode instead
+    // of navigating away or firing an action — it must NOT close the
+    // palette, and it's never added to recents (recents are navigation
+    // targets; a saved search is a query, run explicitly every time).
+    if (item.kind === 'saved-search') {
+      item.run();
+      return;
+    }
     // Remember navigation selections (nav + app jumps) before closing —
     // actions are never remembered (replaying "Stop web" blind is unsafe).
     if (item.route) {

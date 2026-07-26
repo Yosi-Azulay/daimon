@@ -231,7 +231,7 @@ function warnOnVersionSkew(res: { headers: { get(name: string): string | null } 
 // daemon still unblocks. Streaming verbs (streamNdjson) are long-lived and excluded.
 const CALL_TIMEOUT_MS = 660_000;
 
-async function call(pathname: string, method: 'GET' | 'POST' = 'GET'): Promise<{ status: number; body: any }> {
+async function call(pathname: string, method: 'GET' | 'POST' | 'DELETE' = 'GET'): Promise<{ status: number; body: any }> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), CALL_TIMEOUT_MS);
   try {
@@ -1209,17 +1209,60 @@ async function main() {
     }
     case 'search': {
       const q = f.positional.join(' ').trim();
-      if (!q) failHint('missing query', 'usage: daimon search <query> [--app <a>] [--since <dur>] [--kind logs|errors|events]');
+      if (!q) failHint('missing query', "usage: daimon search <query> [--all] [--app <a>] [--since <dur>] [--kind logs|errors|events|tests|error-groups]\n  query syntax: app:web level:error after:24h \"quoted phrase\" bare-terms");
       const params = new URLSearchParams({ q });
       if (f.app) params.set('app', f.app);
       if (f.since) params.set('since', f.since);
       if (f.kind) params.set('kind', f.kind);
       if (f.workspace) params.set('workspace', f.workspace);
+      // --all is the CLI spelling of ?scope=all (M180): the unified scope.
+      if (f.all) params.set('scope', 'all');
       if (f.limit != null && Number.isFinite(f.limit)) params.set('limit', String(Math.floor(f.limit)));
       const r = await call('/api/search?' + params.toString());
       if (r.status === 400 && r.body?.error && r.body?.hint) failHint(r.body.error, r.body.hint);
       if (r.status === 400) fail(JSON.stringify(r.body));
       out(r.body);
+      return;
+    }
+    // Saved searches (M181, v1.16). Four data operations — list, save, rename,
+    // delete — and nothing else: `searches` never runs a query, it only names
+    // one. Errors carry the parser's own message so a bad saved query fails
+    // where you typed it, not later.
+    case 'searches': {
+      const sub = (f.positional[0] || 'list').toLowerCase();
+      const usage = 'usage: daimon searches [list | save <name> <query> | rename <old> <new> | delete <name>]';
+      if (sub === 'list') {
+        const r = await call('/api/searches');
+        out(r.body);
+        return;
+      }
+      if (sub === 'save') {
+        const name = f.positional[1];
+        const query = f.positional.slice(2).join(' ').trim();
+        if (!name || !query) failHint('missing name or query', "usage: daimon searches save <name> <query>\n  example: daimon searches save today-errors 'level:error after:24h'");
+        const r = await callJson('/api/searches', 'POST', { name, query, force: !!f.force });
+        if (r.status !== 200) failHint(r.body?.error || `save failed (HTTP ${r.status})`, r.body?.hint || usage);
+        out(r.body);
+        return;
+      }
+      if (sub === 'rename') {
+        const from = f.positional[1];
+        const to = f.positional[2];
+        if (!from || !to) failHint('missing names', 'usage: daimon searches rename <old> <new>');
+        const r = await callJson('/api/searches/rename', 'POST', { from, to });
+        if (r.status !== 200) failHint(r.body?.error || `rename failed (HTTP ${r.status})`, r.body?.hint || usage);
+        out(r.body);
+        return;
+      }
+      if (sub === 'delete' || sub === 'rm') {
+        const name = f.positional[1];
+        if (!name) failHint('missing name', 'usage: daimon searches delete <name>');
+        const r = await call('/api/searches/' + encodeURIComponent(name), 'DELETE');
+        if (r.status !== 200) failHint(r.body?.error || `delete failed (HTTP ${r.status})`, r.body?.hint || usage);
+        out(r.body);
+        return;
+      }
+      failHint(`unknown subcommand '${sub}'`, usage);
       return;
     }
     case 'test-history': {

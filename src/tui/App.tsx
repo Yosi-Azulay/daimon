@@ -16,6 +16,9 @@ import { cycleGroupFilter, filterByGroup, computeGroupHealth, formatGroupHeader 
 import { cycleWorkspaceFilter, filterByWorkspace, workspaceCycle } from './workspaceChord.js';
 import { renderAwayLine, type AwaySummary } from '../away.js';
 import TimelinePane from './TimelinePane.js';
+import SearchPane from './SearchPane.js';
+import type { JumpTarget } from './searchChord.js';
+import type { SavedSearch } from '../stateFile.js';
 import {
   resolveChord, footerChords, MAIN_CHORD_IDS, firstRunHintText,
   type Pane, type MainChordId, type KeyState,
@@ -62,6 +65,10 @@ interface Props {
   // once, ever; Esc clears it from view.
   firstRunHint?: boolean;
   onAckFirstRunHint?: () => void;
+  // Saved searches (M181, v1.16) for the search pane's picker. A GETTER, not a
+  // snapshot, so the pane sees a search saved from the CLI a moment ago — and
+  // deliberately read-only: the TUI runs saved searches, it never writes them.
+  getSavedSearches?: () => SavedSearch[];
 }
 
 function fmtUptime(ms: number | null): string {
@@ -85,7 +92,7 @@ const TONE_ROLE = {
 // keys (j/k, ↑/↓, PgUp/PgDn) without splitting into two map rows.
 type ChordHandler = (input: string, key: KeyState) => void;
 
-export default function App({ registry, apiPort, onQuit, initialAway, onAckAway, firstRunHint, onAckFirstRunHint }: Props) {
+export default function App({ registry, apiPort, onQuit, initialAway, onAckAway, firstRunHint, onAckFirstRunHint, getSavedSearches }: Props) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const theme = useMemo<Theme>(() => makeTheme(), []);
@@ -114,6 +121,8 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
   const [away, setAway] = useState<AwaySummary | null>(initialAway ?? null);
   const [showFirstRunHint, setShowFirstRunHint] = useState(!!firstRunHint);
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timelineFocusTs, setTimelineFocusTs] = useState<number | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // ── v1.13 pane / focus model (M162) ─────────────────────────────────────────
   const [focusedPane, setFocusedPane] = useState<Pane>('list');
@@ -381,7 +390,7 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
         return !m;
       });
     },
-    timeline: () => setTimelineOpen(true),
+    timeline: () => { setTimelineFocusTs(null); setTimelineOpen(true); },
     quit: () => { onQuit(); exit(); },
 
     // navigation
@@ -415,6 +424,7 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
     envFile: withApp(n => cycleEnvFile(n)),
     editor: withApp(n => openInEditor(n)),
     logFocus: () => setFocusedPane('log'),
+    searchOpen: () => setSearchOpen(true),
 
     // filter
     filter: () => setFilterPicking(true),
@@ -446,6 +456,17 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
   };
 
   useInput((input, key) => {
+    // 0. A full-screen modal surface owns every key while it is open.
+    //
+    //    This hook is registered UNCONDITIONALLY, while the timeline and the
+    //    search pane are rendered INSTEAD of the main app further down — so
+    //    without this guard both handlers fire for the same keypress: `q` in
+    //    the timeline exited the pane AND quit the TUI, and typing `s` into
+    //    the v1.16 search box would have started an app. Found by the M182
+    //    render test; the modal's own useInput is the only one that should
+    //    answer while it is up.
+    if (timelineOpen || searchOpen) return;
+
     // 1. Help overlay owns every key while it is open.
     if (helpOpen) {
       if (input === '?' || input === 'q' || key.escape) { setHelpOpen(false); return; }
@@ -564,7 +585,44 @@ export default function App({ registry, apiPort, onQuit, initialAway, onAckAway,
   // Timeline chord (M136): walk the event stream by hour/day bucket. Windowed
   // query on open; empty history renders a note, not a crash.
   if (timelineOpen) {
-    return <TimelinePane registry={registry} appName={current?.name ?? null} onExit={() => setTimelineOpen(false)} />;
+    return (
+      <TimelinePane
+        registry={registry}
+        appName={current?.name ?? null}
+        focusTs={timelineFocusTs}
+        onExit={() => { setTimelineOpen(false); setTimelineFocusTs(null); }}
+      />
+    );
+  }
+
+  // Search pane (M182, v1.16): the query language, in the terminal, over the
+  // in-process History — and every hit jumps to the surface that can show it.
+  if (searchOpen) {
+    return (
+      <SearchPane
+        registry={registry}
+        saved={getSavedSearches?.() ?? []}
+        onExit={() => setSearchOpen(false)}
+        onJump={(t: JumpTarget) => {
+          setSearchOpen(false);
+          // Land on the app the hit belongs to, when it is still visible.
+          const idx = visibleApps.findIndex(a => a.name === t.app);
+          if (idx >= 0) { setSelected(idx); setLogScroll(0); setFollowLog(true); }
+          if (t.surface === 'timeline') { setTimelineFocusTs(t.ts); setTimelineOpen(true); return; }
+          if (t.surface === 'log') {
+            setFocusedPane('log');
+            // Honest about what the log pane can show: it tails the LIVE ring
+            // buffer, so a line recorded hours ago may no longer be in it.
+            flashStatus(`${t.app}: live log — the matched line was at ${new Date(t.ts).toISOString().slice(11, 19)}`);
+            return;
+          }
+          setFocusedPane('detail');
+          flashStatus(idx >= 0
+            ? `${t.app}: ${t.kind === 'test' ? 'test run' : t.kind === 'errgroup' ? 'error group' : 'hit'} at ${new Date(t.ts).toISOString().slice(11, 19)}`
+            : `${t.app} is not in the current list (filters?) — hit at ${new Date(t.ts).toISOString().slice(11, 19)}`);
+        }}
+      />
+    );
   }
 
   if (helpOpen) {

@@ -2,7 +2,7 @@
   "name": "daimon",
   "displayName": "daimon",
   "description": "Local dev-server manager — status bar, errors panel, and one-click control of daimon-discovered apps.",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "license": "SEE LICENSE IN LICENSE",
   "publisher": "flycotech",
   "author": "Yosi Azulay (https://flycotech.com)",

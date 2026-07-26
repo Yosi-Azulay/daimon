@@ -22,6 +22,7 @@ const { EVENT_KIND_STABILITY } = await import(dist('types.js'));
 const { DOCTOR_COVERAGE } = await import(dist('doctor.js'));
 const { PLATFORM_BRANCHES } = await import(dist('platformInventory.js'));
 const { CHORDS } = await import(dist('tui/chords.js'));
+const { SEARCH_FIELDS, SEARCH_TIME_FORMS, SEARCH_KINDS, SEARCH_LEVELS } = await import(dist('searchQuery.js'));
 
 function esc(s = '') {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -64,12 +65,32 @@ function renderHttp() {
   return out.join('\n');
 }
 
+// Search query syntax (v1.16, M179) — rendered from src/searchQuery.ts, which
+// is the ONE source of the grammar. The parser, the CLI help, the daemon's
+// error messages and this table all read the same rows, so a field added to
+// the language shows up here without anyone remembering to write it down.
+function renderSearchSyntax() {
+  const out = ['<dl class="cli-grid">'];
+  for (const f of SEARCH_FIELDS) {
+    out.push(`<dt><code>${esc(f.name)}:${esc(f.arg)}</code> ${tierBadge('experimental')}</dt>`);
+    out.push(`<dd>${esc(f.summary)} <em>e.g.</em> <code>${esc(f.example)}</code></dd>`);
+  }
+  out.push('<dt><code>"quoted phrase"</code></dt><dd>Matches the words in order — one FTS phrase, one contiguous substring on the LIKE fallback. Quote a token to search for it literally when it would otherwise look like a field — a URL (<code>"http://localhost:4200"</code>) or a Windows path (<code>"C:\\Users\\me\\app"</code>) both start with something that parses as <code>field:</code>, so an unquoted one is an unknown-field error, never a silent term.</dd>');
+  out.push('<dt><code>bare terms</code></dt><dd>Every term must match (AND). A trailing <code>*</code> does prefix search on the indexed path.</dd>');
+  out.push('</dl>');
+  out.push('<p>Everything is ANDed; there is no <code>OR</code> and no grouping. A field given twice takes the LAST value (<code>app:web app:api</code> searches <code>api</code>), and a field in the query overrides the equivalent flag or URL param.</p>');
+  out.push(`<p><strong>Time values</strong> (<code>before:</code> / <code>after:</code>): ${SEARCH_TIME_FORMS.map(f => `<code>${esc(f)}</code>`).join(' · ')}.</p>`);
+  out.push(`<p><strong>Kinds</strong>: ${SEARCH_KINDS.map(k => `<code>${esc(k)}</code>`).join(' · ')} — <code>tests</code> and <code>error-groups</code> imply the unified scope (<code>--all</code> / <code>?scope=all</code>), which also returns a per-kind <code>facets</code> count. <strong>Levels</strong>: ${SEARCH_LEVELS.map(l => `<code>${esc(l)}</code>`).join(' · ')}.</p>`);
+  return out.join('\n');
+}
+
 // TUI chords (v1.13) — rendered from the CHORDS data module so the docs
 // can't drift from the dispatch source or the overlay.
 function renderChords() {
   const GROUP_TITLES = {
     global: 'Global', nav: 'Navigation', lifecycle: 'Lifecycle', inspect: 'Inspect',
     filter: 'Filter', log: 'Log pane', timeline: 'Timeline', attach: 'Attach',
+    grep: 'Grep input', search: 'Search',
   };
 
   // Preserve chord order, collecting unique groups as they appear
@@ -321,6 +342,7 @@ const html = `<!doctype html>
     <li><a href="#quickstart">Quickstart (3 min)</a></li>
     <li><a href="#stability">Stability tiers</a></li>
     <li><a href="#cli">CLI reference</a></li>
+    <li><a href="#search-syntax">Search query syntax</a></li>
     <li><a href="#chords">TUI chords</a></li>
     <li><a href="#http">HTTP API reference</a></li>
     <li><a href="#mcp">MCP reference</a></li>
@@ -359,6 +381,10 @@ npx daimon init --yes</code></pre>
 
 <h2 id="cli">CLI reference</h2>
 ${renderCli()}
+
+<h2 id="search-syntax">Search query syntax</h2>
+<p>One query language, four surfaces: <code>daimon search</code>, <code>GET /api/search?q=</code>, the MCP <code>daimon_search</code> tool, and the TUI's <code>F</code> pane all parse the same grammar with the same parser and return the same errors. Filters compile to WHERE clauses on real columns, so a query behaves identically whether it is answered by the FTS index or by the LIKE fallback — that difference is speed and snippet quality, never which rows match. An unknown field is an error naming the valid fields; it is never silently treated as a search term. Save a query by name with <code>daimon searches save</code> — saved searches are inert data: nothing runs one until you do.</p>
+${renderSearchSyntax()}
 
 <h2 id="chords">TUI chords</h2>
 <p>The TUI's chords are pane-scoped: the same key can mean different things in different panes. This table is generated from the same data module that powers the TUI's dispatch and the <code>?</code> overlay.</p>

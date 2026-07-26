@@ -12,7 +12,7 @@ import type { Stability } from './stability.js';
 //
 // Path placeholders: `:name` (app), `:profile`, `:task`.
 export interface HttpEndpoint {
-  method: 'GET' | 'POST' | 'PATCH';
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   path: string;
   stability: Stability;
   summary: string;
@@ -60,7 +60,11 @@ export const HTTP_ENDPOINTS: HttpEndpoint[] = [
   { method: 'POST', path: '/api/orchestrate', stability: 'stable', summary: 'Whole-profile bring-up with one try-fix round (?profile=, ?goal=).' },
   { method: 'GET', path: '/api/errors', stability: 'stable', summary: 'All apps\' errors (?group=fingerprint to fold by stack fingerprint; any other ?group= value filters to that named group\'s members — v1.1, experimental; ?level=; ?workspace= — v1.15, experimental).' },
   { method: 'GET', path: '/api/context/:name', stability: 'stable', summary: 'Agent context pack (?budget= drops sections).' },
-  { method: 'GET', path: '/api/search', stability: 'stable', summary: 'FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=, ?workspace= — v1.15, experimental param).' },
+  { method: 'GET', path: '/api/search', stability: 'stable', summary: 'FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=, ?workspace= — v1.15, experimental param). ?q= accepts the v1.16 query syntax (app:/kind:/level:/before:/after:/"phrases"); ?scope=all adds test-run + error-group hits and a facets object (v1.16, experimental params).' },
+  { method: 'GET', path: '/api/searches', stability: 'experimental', summary: 'Saved searches — named query strings from state.json (v1.16). Inert data: nothing here runs a search.' },
+  { method: 'POST', path: '/api/searches', stability: 'experimental', summary: 'Save a named query ({ name, query, force }); parser-validated at save time (v1.16).' },
+  { method: 'POST', path: '/api/searches/rename', stability: 'experimental', summary: 'Rename a saved search ({ from, to }) (v1.16).' },
+  { method: 'DELETE', path: '/api/searches/:name', stability: 'experimental', summary: 'Delete a saved search (v1.16).' },
   { method: 'GET', path: '/api/why/:name', stability: 'stable', summary: 'One-shot crash forensics composition.' },
   { method: 'GET', path: '/api/tests', stability: 'stable', summary: 'Recorded test runs (?app=, ?since=, ?limit=).' },
   { method: 'GET', path: '/api/tests/flaky', stability: 'stable', summary: 'Flaky tests derived from run history (?app=).' },

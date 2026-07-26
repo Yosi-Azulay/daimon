@@ -14,6 +14,10 @@ interface Props {
   registry: Registry;
   appName: string | null;
   onExit: () => void;
+  // Land on the bucket containing this timestamp instead of the newest one
+  // (M182, v1.16): a search hit's `event:<id>` ref jumps here. Null = the
+  // pre-v1.16 behaviour, unchanged.
+  focusTs?: number | null;
 }
 
 // One windowed query on open (never a full-table scan per keystroke); every
@@ -27,7 +31,7 @@ function relLabel(start: number, g: Granularity): string {
   return g === 'day' ? iso.slice(0, 10) : iso.slice(0, 13).replace('T', ' ') + ':00';
 }
 
-export default function TimelinePane({ registry, appName, onExit }: Props) {
+export default function TimelinePane({ registry, appName, onExit, focusTs = null }: Props) {
   const { stdout } = useStdout();
 
   const events = useMemo<TimelineEvent[]>(() => {
@@ -40,13 +44,24 @@ export default function TimelinePane({ registry, appName, onExit }: Props) {
 
   const [granularity, setGranularity] = useState<Granularity>('day');
   const [range, setRange] = useState<{ from: number; to: number } | null>(null);
+  // A jump lands on the bucket holding its timestamp; without one the pane
+  // opens where it always did.
   const [sel, setSel] = useState(0);
+  const [jumped, setJumped] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
 
   const buckets = useMemo(() => bucketize(events, granularity, range ?? undefined), [events, granularity, range]);
   const maxCount = buckets.reduce((m, b) => Math.max(m, b.count), 0);
   const selIdx = clampIndex(sel, buckets.length);
   const selBucket = selIdx >= 0 ? buckets[selIdx] : null;
+
+  // One-shot landing on the focused bucket: computed from the buckets this
+  // render produced, then never re-applied (arrow keys must be free after).
+  if (focusTs != null && !jumped && buckets.length) {
+    const idx = bucketIndexForTs(buckets, focusTs);
+    if (idx >= 0 && idx !== sel) setSel(idx);
+    setJumped(true);
+  }
 
   const bucketEvents = useMemo(() => {
     if (!selBucket) return [];

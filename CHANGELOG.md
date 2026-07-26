@@ -4,6 +4,35 @@ All notable changes to Daimon are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.16.0] — 2026-07-26
+
+"Recall" (M179–M184) — search grows a query language, one unified surface, and saved searches. Since M77 daimon has remembered everything and let you ask about it one word at a time: bare terms plus three URL params, with error groups and test runs not searchable at all. The recall was total; the asking was primitive. v1.16 fixes the asking. A small closed grammar (`app:` `kind:` `level:` `before:` `after:` `"phrases"` bare terms) parses into the **existing** FTS/LIKE machinery as WHERE clauses on real columns, one query spans events, log lines, error groups and test runs, and a query can be saved by name as inert data. **Migration: none — no new config keys, no history migration, no new dependency, no frozen shape moved. Saved searches add one additive `savedSearches` key to `~/.daimon/state.json`, and a pre-v1.16 call to `GET /api/search` returns the pre-v1.16 body byte for byte.**
+
+### Added
+
+- **Query syntax (M179, experimental).** `src/searchQuery.ts` is the ONE source of the grammar — a pure, import-free parser consumed by the daemon, the CLI, the TUI and the docs generator alike. Fields: `app:<name>`, `kind:logs|errors|events|tests|error-groups`, `level:error|warning|lint`, `before:`/`after:` (`2026-07-01`, `2026-07-01T14:30`, `24h`/`7d`/`30m`, epoch ms), `"quoted phrases"`, and bare terms — all ANDed. `level:` spans **both** stores: the `error-*`/`warning-*`/`lint-*` event families and the v1.2 log-line level column (a line daimon could not classify carries no level and is excluded, by design). A filter-only query (`app:web level:error`, no text) is valid and answered by column predicates alone. An unknown field is a 400 naming the valid fields plus how to search for the token literally; it is never silently treated as a term.
+- **Unified search (M180, experimental).** `?scope=all` — `daimon search --all` — widens the same query to recorded **test runs** (`ref: test:<id>`, matched on runner + the run's failures) and live fingerprint-folded **error groups** (`ref: errgroup:<fingerprint>`), and adds a per-kind `facets` count over the hits in the response. `kind:tests` / `kind:error-groups` imply it. Opt-in on purpose: without it the response is the v1.15 shape, and the new kinds never appear.
+- **Saved searches (M181, experimental).** `daimon searches list|save <name> <query>|rename <old> <new>|delete <name>` + `GET/POST /api/searches`, `POST /api/searches/rename`, `DELETE /api/searches/:name`. Stored in `state.json` under the merge-write rule; validated by the real parser at save time, so a saved search can never be a query that fails when it is finally run. **Inert by construction** — no schedule, no notification kind, no hook, and `test/saved-searches.test.mjs` greps the compiled daemon to keep it that way.
+- **TUI search pane (M182, experimental).** `F` opens a search pane over the in-process History: the same parser, the same compiled filters, and the same error text as the daemon. `↑/↓` walks results, `Enter` jumps to where the hit happened (event → its timeline position, log line → that app's log pane, test run / error group → the app's detail pane), `Tab` returns to the query, `Esc` closes. An empty box lists your saved searches, `Enter` runs the highlighted one. Chord map rows as usual — the pane's footer, the `?` overlay, the docs cheat sheet and the README table all render from `src/tui/chords.ts`.
+- **Query-syntax scale gates (M183).** `bench/scale.mjs` now measures filter-heavy, phrase, `level:` and `scope=all` queries on the 1M-event corpus, on the FTS path **and** on the LIKE fallback, against a new committed baseline (`bench/BASELINE-v1.16-search.json`; the v1.10 file keeps that release's numbers untouched). Budgets stay derived — `baseline p95 × class headroom` — never typed in.
+
+### Changed
+
+- **The LIKE fallback now ANDs a multi-term query's terms** instead of matching the whole string as one contiguous substring. This is a fallback-path **parity fix**: the FTS path has always ANDed tokens, so a degraded index used to return *fewer* rows than a healthy one for the same query. Single-term queries — the overwhelming majority, and every pre-v1.16 test — are unchanged, and no query loses a hit.
+- **`GET /api/search?kind=` accepts two more values** (`tests`, `error-groups`) and its 400 now names all five. `?scope=` accepts only `all`, and a bad value 400s naming the alternative.
+- **MCP `daimon_search`** documents the grammar and takes an optional `scope: "all"` (still **35 tools** — no new tool).
+- **The no-per-insert-FTS-trigger gate now scans the whole `src/` tree**, not just `history.ts`: v1.16 added search code outside that file, and the rule is a property of the tree.
+
+### Fixed
+
+- **A TUI modal's keys reached the app underneath it.** `App`'s `useInput` is registered unconditionally while the timeline (and now the search pane) render *instead of* the main app, so both handlers fired for the same keypress — `q` in the timeline exited the pane **and** quit the whole TUI. Found by the M182 render test; a modal now owns every key while it is open.
+
+### Notes
+
+- **Filters are WHERE clauses, never FTS tricks.** That is what makes the syntax work identically on the LIKE fallback: a degraded index changes speed and snippet quality, never which rows match. The fallback stays complete (it scans the base tables) and still reports `fallback: true`.
+- **Deferred indexing is untouched.** No per-insert FTS trigger, the same three sync points (idle flush ticks / pre-retention / pre-search), no new ones and none removed. Test runs and error groups are searched with column queries **precisely so** the unified scope costs the index nothing — an FTS shadow for them would have meant a write-path trigger.
+- **No `daimon import`, no scheduled searches, no regex search, no `OR`/parentheses** — all deliberately out of scope (see `goals/v1.16-PLAN.md`). Grammar growth gets its own release and its own scale check.
+
 ## [1.15.0] — 2026-07-21
 
 "Atlas" (M173–M178) — workspaces and the dependency graph become visible, navigable surfaces. The depends graph has existed since v0.3 and had never once been *seen*: `depends.ts` computes cycles, closures, and topo levels; `orchestrate.ts` orders every `up` with them; and the only trace a user ever got was a cycle warning string. Workspaces were the same story from the other side — labels on every app, filters on some verbs, and no way to *stand in* one. v1.15 draws the map: a workspace switcher in the dashboard header and TUI status bar, a read-only hand-rolled-SVG rendering of the real depends graph with health painted on, `daimon graph` for the same picture in a terminal or a pipe, v1.1 groups as clusters with the `up` start order previewed, and the workspace filter honored end-to-end so "the workspace I'm in" means the same thing on every read surface. **Migration: none — no new config keys, no history migration, no frozen shape moved; the workspace preference is client-side, so there is nothing to migrate.**

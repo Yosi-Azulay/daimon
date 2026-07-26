@@ -433,19 +433,21 @@ export function buildServer(): McpServer {
   });
 
   server.registerTool('daimon_search', {
-    description: 'Full-text search over everything daimon has seen — per-app log lines, errors, and events (FTS5; falls back to LIKE with fallback:true). Returns compact hits { kind, app, ts, snippet, ref }. A trailing * on a term does prefix search.',
+    description: 'Full-text search over everything daimon has seen — per-app log lines, errors, and events (FTS5; falls back to LIKE with fallback:true). Returns compact hits { kind, app, ts, snippet, ref }. A trailing * on a term does prefix search.\n\nq accepts the v1.16 query syntax, all terms ANDed: app:<name>, kind:logs|errors|events|tests|error-groups, level:error|warning|lint, before:/after:<2026-07-01 | 2026-07-01T14:30 | 24h | epoch ms>, "quoted phrases", and bare terms. An unknown field is an error naming the valid fields — quote a token to search for it literally. Filters compile to WHERE clauses on real columns, so they behave identically on the FTS index and on the LIKE fallback.\n\nscope:"all" (or kind:tests / kind:error-groups) widens the search to recorded test runs and live fingerprint-folded error groups, and adds a per-kind facets count. Without it the response is exactly the pre-v1.16 shape.',
     inputSchema: {
       q: z.string(),
       app: z.string().optional(),
       since: z.string().optional().describe('Duration window like 30m, 24h, 7d'),
-      kind: z.enum(['logs', 'errors', 'events']).optional(),
+      kind: z.enum(['logs', 'errors', 'events', 'tests', 'error-groups']).optional(),
+      scope: z.literal('all').optional().describe('Unified scope: also search test runs and error groups (v1.16, experimental)'),
       limit: z.number().int().positive().max(500).optional(),
     },
-  }, async ({ q, app, since, kind, limit }) => {
+  }, async ({ q, app, since, kind, scope, limit }) => {
     const qs = new URLSearchParams({ q });
     if (app) qs.set('app', app);
     if (since) qs.set('since', since);
     if (kind) qs.set('kind', kind);
+    if (scope) qs.set('scope', scope);
     if (limit) qs.set('limit', String(limit));
     const r = await callJson('/api/search?' + qs.toString());
     if (r.status === 0) return err(r.body?.error || 'unknown');

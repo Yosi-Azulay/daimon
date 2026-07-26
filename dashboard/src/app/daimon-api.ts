@@ -1,8 +1,8 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import type { FlakyTest, TestRun } from './tests-page-helpers';
-import type { SearchHit } from './command-palette-helpers';
+import type { SavedSearch, SearchHit } from './command-palette-helpers';
 import type { GroupInfo } from './groups-helpers';
 import type { LogLevel } from './logs-page-helpers';
 import { workspaceOptionsFrom } from './workspace-helpers';
@@ -685,18 +685,64 @@ export class DaimonApi {
     } catch { return { flaky: [], threshold: 3 }; }
   }
 
-  // Full-text search (M77) — command palette's `>` search mode.
-  async search(opts: { q: string; app?: string; kind?: 'logs' | 'errors' | 'events'; limit?: number }): Promise<{ hits: SearchHit[]; fallback: boolean }> {
+  // Full-text search (M77; query syntax + unified scope M179/M180, v1.16) —
+  // command palette's `>` search mode. `scope: 'all'` opts into the M180
+  // unified surface (test runs + live error groups, plus the `facets`
+  // count object); omitted, the response stays byte-identical to v1.15.
+  //
+  // Unlike every other method here, a 400 (an M179 query-syntax error — an
+  // unknown field like `lvl:`) is surfaced rather than swallowed: the
+  // palette needs the real message to show "fix your query" instead of a
+  // silent "no results". Every OTHER failure still degrades to the old
+  // empty-result contract.
+  async search(opts: {
+    q: string;
+    app?: string;
+    kind?: 'logs' | 'errors' | 'events' | 'tests' | 'error-groups';
+    scope?: 'all';
+    limit?: number;
+  }): Promise<{ hits: SearchHit[]; fallback: boolean; facets?: Record<string, number>; error?: string; hint?: string }> {
     if (!opts.q.trim()) return { hits: [], fallback: false };
     try {
       const qs = new URLSearchParams();
       qs.set('q', opts.q);
       if (opts.app) qs.set('app', opts.app);
       if (opts.kind) qs.set('kind', opts.kind);
+      if (opts.scope) qs.set('scope', opts.scope);
       qs.set('limit', String(opts.limit ?? 30));
-      const r = await firstValueFrom(this.http.get<{ hits: SearchHit[]; fallback: boolean }>('/api/search?' + qs.toString()));
-      return { hits: Array.isArray(r?.hits) ? r.hits : [], fallback: !!r?.fallback };
-    } catch { return { hits: [], fallback: false }; }
+      const r = await firstValueFrom(
+        this.http.get<{ hits: SearchHit[]; fallback: boolean; facets?: Record<string, number> }>('/api/search?' + qs.toString()),
+      );
+      return {
+        hits: Array.isArray(r?.hits) ? r.hits : [],
+        fallback: !!r?.fallback,
+        facets: r?.facets && typeof r.facets === 'object' ? r.facets : undefined,
+      };
+    } catch (e) {
+      const parsed = parseApiError(e);
+      return parsed ? { hits: [], fallback: false, error: parsed.error, hint: parsed.hint } : { hits: [], fallback: false };
+    }
+  }
+
+  // Saved searches (M181, v1.16) — inert named query strings in state.json.
+  // Nothing here runs a search; that only happens when the caller feeds a
+  // saved entry's `query` into search() itself (the palette does this on an
+  // explicit user selection, never automatically).
+  //
+  // Only the read is wired up here: DaimonApi is eagerly loaded (the topbar
+  // depends on it), so every byte added here is on the initial-payload gate
+  // (test/bundle-budget.test.mjs, <150KB gzip — a hard, never-loosened
+  // budget the v1.15 baseline was already within ~150B of). The
+  // save/rename/delete mutations have no caller yet in this pass (the
+  // palette only lists and runs existing saved searches per M181's dashboard
+  // scope); add them alongside whatever UI first calls them, ideally as a
+  // page-local HttpClient call (the app-detail.ts/doctor-page.ts pattern) so
+  // they land in a lazy chunk instead of here.
+  async getSavedSearches(): Promise<SavedSearch[]> {
+    try {
+      const r = await firstValueFrom(this.http.get<{ searches: SavedSearch[] }>('/api/searches'));
+      return Array.isArray(r?.searches) ? r.searches : [];
+    } catch { return []; }
   }
 
   // `roster`/`contention`/`advisoryIdentity` are additive (M123/M124, v1.6 —
@@ -866,6 +912,20 @@ export class DaimonApi {
     })();
     return () => ctl.abort();
   }
+}
+
+// Every daimon 4xx/409 body is `{ error, hint }` (the M90 remedy convention).
+// `parseApiError` reads that shape defensively out of an HttpErrorResponse —
+// null for anything else (network failure, a non-JSON body, a body that
+// isn't even shaped like an error) so callers can fall back to their own
+// generic message rather than surface `undefined`.
+export interface ApiError { error: string; hint?: string }
+
+function parseApiError(e: unknown): ApiError | null {
+  if (!(e instanceof HttpErrorResponse)) return null;
+  const body = e.error;
+  if (!body || typeof body.error !== 'string') return null;
+  return { error: body.error, hint: typeof body.hint === 'string' ? body.hint : undefined };
 }
 
 export function statusBadge(s: { status: StatusKind; health?: HealthKind }): { color: string; label: string; kind: string } {

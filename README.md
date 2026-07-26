@@ -155,7 +155,7 @@ daimon search "unicor*"                      # trailing * = prefix search
 daimon search "hydration" --kind logs
 ```
 
-Hits are `{kind, app, ts, snippet, ref}`. FTS5 (built into the bundled better-sqlite3) with deferred indexing that stays off the write path; if FTS is unavailable the daemon self-warns once and search degrades to a LIKE scan (`fallback: true`) — it never blocks. The dashboard command palette gets a search mode (`>` prefix). Filtered live tails work too: `daimon logs api --grep "ERROR|refused" --stream`.
+Hits are `{kind, app, ts, snippet, ref}`. FTS5 (built into the bundled better-sqlite3) with deferred indexing that stays off the write path; if FTS is unavailable the daemon self-warns once and search degrades to a LIKE scan (`fallback: true`) — it never blocks. The dashboard command palette gets a search mode (`>` prefix). Filtered live tails work too: `daimon logs api --grep "ERROR|refused" --stream`. Since v1.16 the query itself takes a small language — see [Recall](#recall-v116).
 
 ### `daimon context` — the agent context pack
 
@@ -717,6 +717,16 @@ behaved.
 | `V` | edit the session override in $EDITOR | list, detail |
 | `l` | focus the log pane | list, detail |
 
+**search**
+
+| Key | Does | Panes |
+| --- | --- | --- |
+| `F` | search everything daimon has recorded (v1.16 query syntax: app: kind: level: before: after: "phrases") | list, detail |
+| `↑/↓` | move through results (or the saved-search list) | search |
+| `Enter` | run the query, or open the selected hit where it happened | search |
+| `Tab` | go back to the query input | search |
+| `Esc` | close the search pane (q closes it too, from the results list — the query input owns every printable key) | search |
+
 **Filter**
 
 | Key | Does | Panes |
@@ -1177,6 +1187,103 @@ Relocatable since v0.12: set `DAIMON_HOME=<dir>` to move the entire state direct
 - `secrets.json` — `${NAME}` substitutions for `overrides.env`
 - `sessions/<ts>.jsonl` — `daimon record` output
 
+## Recall (v1.16)
+
+daimon remembers everything; until now you could only ask it one word at a
+time. v1.16 gives the asking a small language, one surface that spans
+everything history records, and named searches you can keep. Zero new
+dependencies, zero new config keys, no history migration — and the
+deferred-indexing discipline underneath is untouched.
+
+### A query language, not just a term
+
+```bash
+daimon search 'app:api level:error "ECONNREFUSED" after:24h'
+daimon search 'kind:logs before:2026-07-01 hydration'
+daimon search 'app:web "chunk failed to load"'      # phrase: the words, in order
+daimon search 'level:error'                          # filters alone are a valid query
+```
+
+| Field | Meaning |
+|---|---|
+| `app:<name>` | One app. Wins over `--app` / `?app=` when both are given. |
+| `kind:<facet>` | `logs`, `errors`, `events`, and the v1.16 kinds `tests`, `error-groups`. |
+| `level:error\|warning\|lint` | Spans both stores: event type families **and** the v1.2 log-line level column. |
+| `before:` / `after:` | `2026-07-01`, `2026-07-01T14:30`, `24h` / `7d` / `30m`, or epoch ms. `after:` is the general form of `--since`. |
+| `"quoted phrase"` | The words in order. Also how you search for something that *looks* like a field — a URL (`"http://localhost:4200"`) or a Windows path (`"C:\Users\me\app"`) both begin with something that parses as `field:`. |
+| bare terms | Every term must match. A trailing `*` is a prefix search. |
+
+A field given twice takes the last value (`app:web app:api` searches `api`), and a
+field in the query overrides the equivalent flag or URL param.
+
+Everything is ANDed; there is no `OR` and there are no parentheses (deliberately
+— the closed field list ships first, and grammar growth gets its own scale
+check). An unknown field is an error that names the valid ones and tells you how
+to search for it literally:
+
+```
+error: unknown field 'lvl:' — valid fields: app, kind, level, before, after
+  hint: use one of app, kind, level, before, after, or quote the token to search for it literally: "lvl:…"
+```
+
+**The filters are WHERE clauses on real columns, never FTS tricks.** That is the
+load-bearing property: the same query returns the same rows whether it is
+answered by the FTS index or by the LIKE fallback a degraded index falls back to.
+The fallback is slower and has no ranked snippets; it is never *wrong*, and it
+still says so (`fallback: true`).
+
+### One search across everything
+
+`--all` (HTTP `?scope=all`) widens the same query to recorded test runs and live
+fingerprint-folded error groups, and adds per-kind counts:
+
+```bash
+daimon search 'renders the chunk' --all
+# → hits include kind:"tests"        ref test:41      vitest · 9/10 passed, 1 failed — suite > renders the chunk
+#              and kind:"error-groups" ref errgroup:src/a.ts:4  ×3 TS2304: Cannot find name …
+#   facets: { "logs": 12, "errors": 3, "tests": 1, "error-groups": 2 }
+```
+
+Without `--all` the response is byte-identical to v1.15 — the new kinds appear
+only when you ask for them.
+
+### Saved searches — data, and nothing else
+
+```bash
+daimon searches save today-errors 'level:error after:24h'
+daimon searches list
+daimon searches rename today-errors errors-today
+daimon searches delete errors-today
+```
+
+They live in `~/.daimon/state.json` (merge-written, so saving one can't clobber
+your port assignments), and the query is validated by the real parser at save
+time — a saved search can never be one that fails when you finally run it.
+**Nothing runs on its own.** There is no schedule, no notification, no
+search-driven webhook, and there never will be: daimon has exactly one scheduler
+(the daily digest) and this feature does not touch it. A saved search runs when
+you run it — from the CLI, the dashboard palette, or the TUI.
+
+### In the terminal
+
+Press `F` in the TUI for a search pane over the same parser: type a query, walk
+the results with `↑/↓`, `Enter` to jump to where it happened (an event lands on
+its timeline position, a log line on that app's log pane, a test run or error
+group on the app's detail pane). With an empty box it lists your saved searches
+— `↑/↓` and `Enter` runs one. A syntax error renders inline, in the daemon's own
+words.
+
+### Certified at 1M rows, on both paths
+
+The v1.10 scale harness now gates the syntax queries too — filter-heavy, phrase,
+`level:` (which spans two stores), and `scope=all` — on the FTS path **and** on
+the LIKE fallback, against a committed baseline (`bench/BASELINE-v1.16-search.json`,
+budgets derived as `baseline p95 × class headroom`, never typed in). The
+deferred-indexing rule is unchanged: no per-insert FTS trigger (now grep-gated
+across the whole `src/` tree, not just `history.ts`), the same three sync points,
+and test runs/error groups are column queries precisely so the unified scope
+costs the index nothing.
+
 ## Migrating from v0.3 (when it was `appman`)
 
 - Binary renamed: `appman` → `daimon`. `npm start` is no longer the way; use `npm i -g daimon` then `daimon daemon start`.
@@ -1195,7 +1302,7 @@ The `summary.url` field returned by the API was synthetic `http://127.0.0.1:<por
 npm test
 ```
 
-1180 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
+1216 `node:test` cases across small focused files: dependency-graph math, bundle parsing, notifier throttling, regression detectors (compile-time / bundle / error-flap), the parser fixture corpus (see `test/fixtures/parsers/`), the framework adapter test kit (one fixture per registry profile under `test/fixtures/frameworks/` — a profile without a fixture doesn't ship), `overview` budget truncation, auto-fix rule registry, `orchestrate` dry-run/cascade/try-fix paths, polyglot discovery, agent identity + lock contention, audit-log round-trips, webhook dispatch (including a real HTTP delivery and per-app scoping), error-fingerprint grouping, corrupt-history recovery, a 50-app / 100k-event perf bench with hot-path budgets, and MCP contract checks. Tests run against compiled `dist/` and never start the real daemon.
 
 ## License
 

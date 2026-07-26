@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import type Database from 'better-sqlite3';
 import type { AppEvent, HistoryConfig } from './types.js';
+import { LEVEL_EVENT_TYPES, isFilterOnly, type ParsedQuery, type SearchKind } from './searchQuery.js';
 
 const requireCjs = createRequire(import.meta.url);
 
@@ -141,30 +142,83 @@ export interface ResourceSampleRow {
 }
 
 export interface SearchHit {
-  kind: 'logs' | 'errors' | 'events';
+  // 'tests' and 'error-groups' (M180, v1.16) appear only under the unified
+  // scope — an existing call never sees them.
+  kind: 'logs' | 'errors' | 'events' | 'tests' | 'error-groups';
   app: string;
   ts: number;
   snippet: string;
-  // Stable pointer back into history: "event:<id>" or "log:<id>".
+  // Stable pointer back into history: "event:<id>", "log:<id>", "test:<id>"
+  // or "errgroup:<fingerprint>".
   ref: string;
+}
+
+export interface SearchOptions {
+  q: string;
+  app?: string;
+  since?: number;
+  kind?: SearchKind;
+  limit?: number;
+  // M179 (v1.16): the compiled query. When present its fields WIN over the
+  // equivalent legacy options (`app`/`since`/`kind`) — one rule, documented
+  // once: the query string is the more specific statement of intent. Absent =
+  // v1.15 behaviour exactly (bare terms, whole-string LIKE fallback).
+  query?: ParsedQuery;
+  // M180 (v1.16): opt in to the unified scope (test runs here; error groups
+  // are composed by the caller, which owns the live registry).
+  scope?: 'all';
+}
+
+export interface SearchResult {
+  hits: SearchHit[];
+  fallback: boolean;
+  // Present ONLY when the unified scope was requested (M180) — an existing
+  // call gets the byte-identical `{ hits, fallback }` body it always did.
+  facets?: Record<string, number>;
 }
 
 // Event types the 'errors' search kind covers (everything issue-shaped).
 const ERROR_EVENT_TYPES = ['error-new', 'error-recur', 'warning-new', 'warning-recur', 'lint-new', 'lint-recur', 'crash'];
 
+// Exported for the drift test: every type named in searchQuery's
+// LEVEL_EVENT_TYPES must be a member of this list, or `level:` and
+// `kind:errors` would disagree about what an error is.
+export function errorEventTypes(): readonly string[] { return ERROR_EVENT_TYPES; }
+
 // FTS5 MATCH has its own query syntax — quote every user token so `foo-bar`,
 // `a"b` or `NEAR` can't inject operators. A trailing `*` keeps prefix search.
-export function ftsQuery(q: string): string {
-  const terms = q.split(/\s+/).filter(Boolean).slice(0, 8);
-  return terms.map(t => {
+// A token containing spaces (a "quoted phrase", M179) becomes one quoted FTS
+// token, which is exactly FTS5's phrase syntax.
+export function ftsQueryFromTerms(tokens: string[]): string {
+  return tokens.filter(Boolean).slice(0, 8).map(t => {
     const prefix = t.length > 1 && t.endsWith('*');
     const body = (prefix ? t.slice(0, -1) : t).replace(/"/g, '""');
     return `"${body}"${prefix ? '*' : ''}`;
   }).join(' ');
 }
 
+export function ftsQuery(q: string): string {
+  return ftsQueryFromTerms(q.split(/\s+/).filter(Boolean));
+}
+
 function likePattern(q: string): string {
   return '%' + q.replace(/([%_\\])/g, '\\$1') + '%';
+}
+
+// LIKE pattern for one parsed token: a trailing `*` is a prefix marker on the
+// FTS path, so it must not become a literal `*` here.
+function likePatternForToken(t: string): string {
+  const body = t.length > 1 && t.endsWith('*') ? t.slice(0, -1) : t;
+  return likePattern(body);
+}
+
+// Per-kind counts over the hits in a response (M180). Deliberately NOT corpus
+// totals: counting the whole corpus per kind would cost a second query per
+// store on every search, and the number a user acts on is what came back.
+export function facetsOf(hits: SearchHit[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const h of hits) out[h.kind] = (out[h.kind] ?? 0) + 1;
+  return out;
 }
 
 // JS-side snippet for the LIKE fallback (FTS provides its own).
@@ -634,20 +688,90 @@ export class History {
     this.queue.push({ kind: 'log', row: { ts, app, line: line.length > 2000 ? line.slice(0, 2000) : line, level } });
   }
 
-  search(opts: { q: string; app?: string; since?: number; kind?: 'logs' | 'errors' | 'events'; limit?: number }): { hits: SearchHit[]; fallback: boolean } {
+  /**
+   * Full-text + filter search over events, log lines and (under the unified
+   * scope) test runs.
+   *
+   * COMPILATION RULE (M179, v1.16): the query syntax's filters become WHERE
+   * clauses on the real columns — `app`, `ts`, `type`, `level` — on BOTH the
+   * FTS path and the LIKE path. They are never expressed as FTS operators, so
+   * a degraded index changes speed and snippet quality, never which rows match.
+   */
+  search(opts: SearchOptions): SearchResult {
     if (!this.db || !opts.q || !opts.q.trim()) return { hits: [], fallback: !this.ftsOk };
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
-    const wantEvents = !opts.kind || opts.kind === 'events' || opts.kind === 'errors';
-    const wantLogs = !opts.kind || opts.kind === 'logs';
+    const pq = opts.query;
+    // Compiled filters. The query string wins over the legacy params (one rule,
+    // applied to every field).
+    const fApp = pq?.app ?? opts.app;
+    const fAfter = pq?.after ?? opts.since;
+    const fBefore = pq?.before;
+    const fKind = pq?.kind ?? opts.kind;
+    const fLevel = pq?.level;
+    const unified = opts.scope === 'all' || fKind === 'tests' || fKind === 'error-groups';
+    const textEmpty = pq ? isFilterOnly(pq) : !opts.q.trim();
+    const wantEvents = !fKind || fKind === 'events' || fKind === 'errors';
+    const wantLogs = !fKind || fKind === 'logs';
+    // `tests` never appears unless asked for: byte-compatibility for every
+    // pre-v1.16 call. `level:` is a severity, and a test run has none — asking
+    // for one excludes test runs rather than inventing a level for them.
+    const wantTests = (fKind === 'tests' || (unified && !fKind)) && !fLevel;
     const hits: SearchHit[] = [];
+    const withFacets = (r: SearchResult): SearchResult => {
+      if (unified) r.facets = facetsOf(r.hits);
+      return r;
+    };
+    // Text tokens, per path.
+    //   FTS  — a compiled query contributes its phrases (one quoted FTS token
+    //          each = FTS5 phrase syntax) and its bare terms; a legacy call
+    //          splits on whitespace exactly as v1.15 did.
+    //   LIKE — a compiled query ANDs one pattern per token, which is the parity
+    //          the syntax needs (same rows as FTS, just slower and without
+    //          ranked snippets); a legacy call keeps v1.15's single
+    //          whole-string pattern, so pre-v1.16 calls are unchanged.
+    const ftsTokens = pq ? [...pq.phrases, ...pq.terms] : opts.q.split(/\s+/).filter(Boolean);
+    const likeTokens = pq ? [...pq.phrases, ...pq.terms] : [opts.q.trim()];
+    const snippetNeedle = likeTokens[0] ?? '';
+    // ── the ONE filter builder, used by both paths ──────────────────────────
+    // `p` is the column prefix ('e.' when joined against the FTS shadow, ''
+    // when querying the base table directly). Same clauses, same order, both
+    // paths — that is what makes a degraded index a speed story, not a
+    // correctness one.
+    const evFilters = (p: string) => {
+      const wh: string[] = [];
+      const args: any[] = [];
+      if (fApp) { wh.push(`${p}app = ?`); args.push(fApp); }
+      if (fAfter != null) { wh.push(`${p}ts >= ?`); args.push(fAfter); }
+      if (fBefore != null) { wh.push(`${p}ts <= ?`); args.push(fBefore); }
+      if (fKind === 'errors') { wh.push(`${p}type IN (${ERROR_EVENT_TYPES.map(() => '?').join(',')})`); args.push(...ERROR_EVENT_TYPES); }
+      if (fLevel) {
+        const types = LEVEL_EVENT_TYPES[fLevel];
+        wh.push(`${p}type IN (${types.map(() => '?').join(',')})`);
+        args.push(...types);
+      }
+      return { wh, args };
+    };
+    const logFilters = (p: string) => {
+      const wh: string[] = [];
+      const args: any[] = [];
+      if (fApp) { wh.push(`${p}app = ?`); args.push(fApp); }
+      if (fAfter != null) { wh.push(`${p}ts >= ?`); args.push(fAfter); }
+      if (fBefore != null) { wh.push(`${p}ts <= ?`); args.push(fBefore); }
+      // v1.2's nullable level column: a line daimon could not classify has NULL
+      // here, so `level:` excludes it — documented, never guessed at.
+      if (fLevel) { wh.push(`${p}level = ?`); args.push(fLevel); }
+      return { wh, args };
+    };
     // Whether THIS query may use the FTS index. Distinct from `ftsOk` (is the
     // index usable at all) — an index that is merely far behind is not wrong,
-    // it is just not ready for this call.
-    let useFts = this.ftsOk;
+    // it is just not ready for this call. A filter-only query (no text at all,
+    // M179) never touches the index: it is pure column predicates, exact on any
+    // path, and `fallback` then reports only the state of the index.
+    let useFts = this.ftsOk && !textEmpty;
     try {
-      if (this.ftsOk) {
-        // Flush queued rows then index to head — search is read-your-writes.
-        this.flush();
+      // Flush queued rows — search is read-your-writes on every path.
+      this.flush();
+      if (useFts) {
         // Bounded inline catch-up (M146, v1.10).
         //
         // syncFts() used to run UNBOUNDED here. On a cold high-water mark that
@@ -666,15 +790,12 @@ export class History {
         else this.syncFts();
       }
       if (useFts && this.ftsOk) {
-        const match = ftsQuery(opts.q);
-        if (!match) return { hits: [], fallback: false };
+        const match = ftsQueryFromTerms(ftsTokens);
+        if (!match) return withFacets({ hits: [], fallback: false });
         if (wantEvents) {
-          const wh: string[] = ['events_fts MATCH ?'];
-          const args: any[] = [match];
-          if (opts.app) { wh.push('e.app = ?'); args.push(opts.app); }
-          if (opts.since != null) { wh.push('e.ts >= ?'); args.push(opts.since); }
-          if (opts.kind === 'errors') wh.push(`e.type IN (${ERROR_EVENT_TYPES.map(() => '?').join(',')})`);
-          if (opts.kind === 'errors') args.push(...ERROR_EVENT_TYPES);
+          const f = evFilters('e.');
+          const wh: string[] = ['events_fts MATCH ?', ...f.wh];
+          const args: any[] = [match, ...f.args];
           args.push(limit);
           // rowid DESC ≈ ts DESC (append-only) and lets FTS5 stream matches
           // newest-first, stopping at LIMIT instead of materializing them all.
@@ -691,10 +812,9 @@ export class History {
           }
         }
         if (wantLogs) {
-          const wh: string[] = ['log_fts MATCH ?'];
-          const args: any[] = [ftsQuery(opts.q)];
-          if (opts.app) { wh.push('l.app = ?'); args.push(opts.app); }
-          if (opts.since != null) { wh.push('l.ts >= ?'); args.push(opts.since); }
+          const f = logFilters('l.');
+          const wh: string[] = ['log_fts MATCH ?', ...f.wh];
+          const args: any[] = [match, ...f.args];
           args.push(limit);
           const rows = this.prepared(
             `SELECT l.id, l.ts, l.app, snippet(log_fts, 0, '', '', '…', 16) AS snip
@@ -705,45 +825,124 @@ export class History {
             hits.push({ kind: 'logs', app: r.app, ts: r.ts, snippet: r.snip, ref: `log:${r.id}` });
           }
         }
+        // Test runs are a COLUMN query on both paths — test_runs has no FTS
+        // shadow (adding one would mean a write-path trigger, which is
+        // forbidden), so the unified scope costs the index nothing.
+        if (wantTests) hits.push(...this.searchTestRuns(likeTokens, { app: fApp, after: fAfter, before: fBefore }, limit));
         hits.sort((a, b) => b.ts - a.ts);
-        return { hits: hits.slice(0, limit), fallback: false };
+        return withFacets({ hits: hits.slice(0, limit), fallback: false });
       }
     } catch (err: any) {
       // A MATCH-time failure (e.g. the DB was tampered with mid-flight)
-      // degrades this call to LIKE rather than erroring the endpoint.
+      // degrades this call to LIKE rather than erroring the endpoint. Anything
+      // the FTS branch had already collected is DROPPED first: the column path
+      // below re-queries the same stores, so keeping partial results would
+      // return the early rows twice.
+      hits.length = 0;
       this.ftsOk = false;
       this.ftsError = err?.message || String(err);
     }
-    // LIKE fallback — slower, but never blocks the daemon.
-    const pat = likePattern(opts.q.trim());
+    // Column path — the LIKE fallback (slower, but COMPLETE: it scans the base
+    // tables, so it never returns fewer rows than FTS would) and, for a
+    // filter-only query, the only path there is.
+    const textWhere = (col: string) => likeTokens.filter(Boolean).map(() => `${col} LIKE ? ESCAPE '\\'`);
+    const textArgs = likeTokens.filter(Boolean).map(likePatternForToken);
     if (wantEvents) {
-      const wh: string[] = [`message LIKE ? ESCAPE '\\'`];
-      const args: any[] = [pat];
-      if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
-      if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
-      if (opts.kind === 'errors') { wh.push(`type IN (${ERROR_EVENT_TYPES.map(() => '?').join(',')})`); args.push(...ERROR_EVENT_TYPES); }
+      const f = evFilters('');
+      const wh: string[] = [...textWhere('message'), ...f.wh];
+      const args: any[] = [...textArgs, ...f.args];
       args.push(limit);
-      const rows = this.prepared(`SELECT id, ts, app, type, message FROM events WHERE ${wh.join(' AND ')} ORDER BY ts DESC LIMIT ?`).all(...args) as any[];
+      const rows = this.prepared(
+        `SELECT id, ts, app, type, message FROM events${wh.length ? ' WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`,
+      ).all(...args) as any[];
       for (const r of rows) {
         hits.push({
           kind: ERROR_EVENT_TYPES.includes(r.type) ? 'errors' : 'events',
-          app: r.app, ts: r.ts, snippet: fallbackSnippet(r.message ?? '', opts.q.trim()), ref: `event:${r.id}`,
+          app: r.app, ts: r.ts, snippet: fallbackSnippet(r.message ?? '', snippetNeedle), ref: `event:${r.id}`,
         });
       }
     }
     if (wantLogs) {
-      const wh: string[] = [`line LIKE ? ESCAPE '\\'`];
-      const args: any[] = [pat];
-      if (opts.app) { wh.push('app = ?'); args.push(opts.app); }
-      if (opts.since != null) { wh.push('ts >= ?'); args.push(opts.since); }
+      const f = logFilters('');
+      const wh: string[] = [...textWhere('line'), ...f.wh];
+      const args: any[] = [...textArgs, ...f.args];
       args.push(limit);
-      const rows = this.prepared(`SELECT id, ts, app, line FROM log_lines WHERE ${wh.join(' AND ')} ORDER BY ts DESC LIMIT ?`).all(...args) as any[];
+      const rows = this.prepared(
+        `SELECT id, ts, app, line FROM log_lines${wh.length ? ' WHERE ' + wh.join(' AND ') : ''} ORDER BY ts DESC LIMIT ?`,
+      ).all(...args) as any[];
       for (const r of rows) {
-        hits.push({ kind: 'logs', app: r.app, ts: r.ts, snippet: fallbackSnippet(r.line, opts.q.trim()), ref: `log:${r.id}` });
+        hits.push({ kind: 'logs', app: r.app, ts: r.ts, snippet: fallbackSnippet(r.line, snippetNeedle), ref: `log:${r.id}` });
       }
     }
+    if (wantTests) hits.push(...this.searchTestRuns(likeTokens, { app: fApp, after: fAfter, before: fBefore }, limit));
     hits.sort((a, b) => b.ts - a.ts);
-    return { hits: hits.slice(0, limit), fallback: true };
+    // A filter-only query was answered exactly; `fallback` then describes the
+    // index's health, not this answer's quality.
+    return withFacets({ hits: hits.slice(0, limit), fallback: textEmpty ? !this.ftsOk : true });
+  }
+
+  /**
+   * Test-run hits for the unified scope (M180, v1.16).
+   *
+   * A COLUMN query by design: `test_runs` / `test_failures` have no FTS shadow
+   * and never will, because keeping one in sync would mean a per-insert trigger
+   * — the one thing the deferred-indexing rule forbids. Matching is over the
+   * runner name and the run's recorded failures (suite / test / file /
+   * message); every token must match somewhere in the run (AND), mirroring the
+   * text semantics of the other stores.
+   */
+  private searchTestRuns(tokens: string[], f: { app?: string; after?: number; before?: number }, limit: number): SearchHit[] {
+    if (!this.db) return [];
+    const out: SearchHit[] = [];
+    try {
+      const wh: string[] = [];
+      const args: any[] = [];
+      if (f.app) { wh.push('r.app = ?'); args.push(f.app); }
+      if (f.after != null) { wh.push('r.ts >= ?'); args.push(f.after); }
+      if (f.before != null) { wh.push('r.ts <= ?'); args.push(f.before); }
+      for (const t of tokens.filter(Boolean)) {
+        const p = likePatternForToken(t);
+        wh.push(`(r.runner LIKE ? ESCAPE '\\' OR EXISTS (
+                   SELECT 1 FROM test_failures tf WHERE tf.runId = r.id AND (
+                     tf.suite LIKE ? ESCAPE '\\' OR tf.test LIKE ? ESCAPE '\\'
+                     OR tf.file LIKE ? ESCAPE '\\' OR tf.message LIKE ? ESCAPE '\\')))`);
+        args.push(p, p, p, p, p);
+      }
+      args.push(limit);
+      const rows = this.prepared(
+        `SELECT r.id, r.ts, r.app, r.runner, r.total, r.passed, r.failed, r.exitCode
+         FROM test_runs r${wh.length ? ' WHERE ' + wh.join(' AND ') : ''} ORDER BY r.ts DESC LIMIT ?`,
+      ).all(...args) as any[];
+      if (!rows.length) return out;
+      // One extra query for the whole page (never one per hit) to name a
+      // failure in the snippet.
+      const ids = rows.map(r => r.id);
+      const firstFailure = new Map<number, string>();
+      const fRows = this.prepared(
+        `SELECT runId, suite, test FROM test_failures WHERE runId IN (${ids.map(() => '?').join(',')})`,
+      ).all(...ids) as any[];
+      for (const fr of fRows) {
+        if (firstFailure.has(fr.runId)) continue;
+        const name = [fr.suite, fr.test].filter(Boolean).join(' > ');
+        if (name) firstFailure.set(fr.runId, name);
+      }
+      for (const r of rows) {
+        const totals = `${r.passed ?? 0}/${r.total ?? 0} passed${r.failed ? `, ${r.failed} failed` : ''}`;
+        const fail = firstFailure.get(r.id);
+        out.push({
+          kind: 'tests',
+          app: r.app,
+          ts: r.ts,
+          snippet: `${r.runner || 'tests'} · ${totals}${fail ? ` — ${fail}` : ''}`,
+          ref: `test:${r.id}`,
+        });
+      }
+    } catch (err: any) {
+      // A unified-scope query must never fail the whole search because the
+      // test tables are unhappy — the other kinds still answer.
+      this.warnOnce(`test-run search failed: ${err?.message || err}`);
+    }
+    return out;
   }
 
   // Log-volume rollup (M99/M103): total stored lines + per-level counts.

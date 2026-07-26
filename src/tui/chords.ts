@@ -20,11 +20,11 @@
 // `grep` is a MODAL scope: it is live only while the log pane's search input is
 // open, which is why its Tab/Enter/Esc do not collide with the Tab that cycles
 // panes. Modal scopes are dispatched from their own branch, not the pane table.
-export type Pane = 'list' | 'detail' | 'log' | 'timeline' | 'attach' | 'grep';
+export type Pane = 'list' | 'detail' | 'log' | 'timeline' | 'attach' | 'grep' | 'search';
 
 // Overlay/docs grouping. `global` chords work in every main-app pane.
 export type ChordGroup =
-  | 'global' | 'nav' | 'lifecycle' | 'inspect' | 'filter' | 'log' | 'timeline' | 'attach' | 'grep';
+  | 'global' | 'nav' | 'lifecycle' | 'inspect' | 'filter' | 'log' | 'timeline' | 'attach' | 'grep' | 'search';
 
 // A physical trigger. `ch` matches ink's `input` (CASE-SENSITIVE, so 'L' ≠ 'l');
 // `special` matches one of ink's `key.<name>` booleans; `ctrl` requires Ctrl.
@@ -53,7 +53,7 @@ export type ChordId =
   // lifecycle (list + detail)
   | 'start' | 'stop' | 'restart' | 'focus' | 'tryFix' | 'test' | 'orchestrate'
   // inspect (list + detail)
-  | 'openUrl' | 'edit' | 'envFile' | 'editor' | 'logFocus'
+  | 'openUrl' | 'edit' | 'envFile' | 'editor' | 'logFocus' | 'searchOpen'
   // filter (list + detail)
   | 'filter' | 'tagFilter' | 'groupFilter' | 'wsFilter' | 'viewHint'
   // log pane
@@ -63,6 +63,8 @@ export type ChordId =
   | 'tlMove' | 'tlEdges' | 'tlDrill' | 'tlJump' | 'tlBack'
   // grep input (modal, only while the log search box is open)
   | 'grepMode' | 'grepKeep' | 'grepClear'
+  // search modal (M182, v1.16) — live only while the search pane is open
+  | 'seRun' | 'seMove' | 'seEdit' | 'seClose'
   // attach surface
   | 'atMove' | 'atToggle' | 'atStart' | 'atStop' | 'atRestart' | 'atDetach';
 
@@ -126,6 +128,8 @@ export const CHORDS: readonly ChordDef[] = [
     group: 'inspect', label: '$EDITOR', desc: 'edit the session override in $EDITOR' },
   { id: 'logFocus', key: 'l', triggers: [ch('l')], panes: ['list', 'detail'],
     group: 'inspect', label: 'log', desc: 'focus the log pane', footer: true },
+  { id: 'searchOpen', key: 'F', triggers: [ch('F')], panes: ['list', 'detail'],
+    group: 'search', label: 'find', desc: 'search everything daimon has recorded (v1.16 query syntax: app: kind: level: before: after: "phrases")' },
 
   // ── filter ──────────────────────────────────────────────────────────────────
   { id: 'filter', key: '/', triggers: [ch('/')], panes: ['list', 'detail'],
@@ -180,6 +184,19 @@ export const CHORDS: readonly ChordDef[] = [
   { id: 'grepClear', key: 'Esc', triggers: [sp('escape')], panes: ['grep'],
     group: 'grep', label: 'clear', desc: 'clear the grep pattern and restore the full stream', footer: true },
 
+  // ── search modal (M182, v1.16: live only while the search pane is open) ──────
+  // The query input owns every printable key, so these are the chords the
+  // RESULTS list answers to — which is why `q` can mean "close" here without
+  // colliding with typing a query.
+  { id: 'seMove', key: '↑/↓', triggers: [sp('upArrow'), sp('downArrow')], panes: ['search'],
+    group: 'search', label: 'move', desc: 'move through results (or the saved-search list)', footer: true },
+  { id: 'seRun', key: 'Enter', triggers: [sp('return')], panes: ['search'],
+    group: 'search', label: 'run/open', desc: 'run the query, or open the selected hit where it happened', footer: true },
+  { id: 'seEdit', key: 'Tab', triggers: [sp('tab')], panes: ['search'],
+    group: 'search', label: 'edit', desc: 'go back to the query input', footer: true },
+  { id: 'seClose', key: 'Esc', triggers: [sp('escape'), ch('q')], panes: ['search'],
+    group: 'search', label: 'close', desc: 'close the search pane (q closes it too, from the results list — the query input owns every printable key)', footer: true },
+
   // ── attach surface (`daimon attach`, HTTP client) ────────────────────────────
   { id: 'atMove', key: '↑/↓', triggers: [sp('upArrow'), sp('downArrow')], panes: ['attach'],
     group: 'attach', label: 'move', desc: 'move the selection', footer: true },
@@ -208,7 +225,7 @@ export const MAIN_CHORD_IDS = [
   'help', 'nextPane', 'maximizeLog', 'timeline', 'quit',
   'move',
   'start', 'stop', 'restart', 'focus', 'tryFix', 'test', 'orchestrate',
-  'openUrl', 'edit', 'envFile', 'editor', 'logFocus',
+  'openUrl', 'edit', 'envFile', 'editor', 'logFocus', 'searchOpen',
   'filter', 'tagFilter', 'groupFilter', 'wsFilter', 'viewHint',
   'levelCycle', 'grep', 'grepNext', 'grepPrev',
   'logTop', 'logBottom', 'logScroll', 'logPage',
@@ -254,17 +271,18 @@ export interface ChordGroupView { group: ChordGroup; title: string; chords: Chor
 const GROUP_TITLES: Record<ChordGroup, string> = {
   global: 'Global', nav: 'Navigation', lifecycle: 'Lifecycle', inspect: 'Inspect',
   filter: 'Filter', log: 'Log pane', timeline: 'Timeline', attach: 'Attach',
-  grep: 'Grep input',
+  grep: 'Grep input', search: 'Search',
 };
 
 // Which groups belong to which pane's "own" section (shown first in the overlay).
 const PANE_GROUPS: Record<Pane, ChordGroup[]> = {
-  list: ['global', 'nav', 'lifecycle', 'inspect', 'filter'],
-  detail: ['global', 'nav', 'lifecycle', 'inspect', 'filter'],
+  list: ['global', 'nav', 'lifecycle', 'inspect', 'filter', 'search'],
+  detail: ['global', 'nav', 'lifecycle', 'inspect', 'filter', 'search'],
   log: ['global', 'log', 'grep'],
   timeline: ['timeline'],
   attach: ['attach'],
   grep: ['grep', 'log'],
+  search: ['search', 'global'],
 };
 
 // Group the main-app chords for the overlay, `pane`'s own groups first, the rest

@@ -192,6 +192,7 @@ const VERB_SUBWORDS: Record<string, string[]> = {
   workspaces: ['list', 'add', 'rm', 'show'],
   plugin: ['list', 'show', 'validate'],
   env: ['diff'],
+  searches: ['list', 'save', 'rename', 'delete'],
   ci: ['start'],
   claude: ['install', 'update', 'uninstall', 'status'],
   completion: ['bash', 'zsh', 'fish', 'powershell'],

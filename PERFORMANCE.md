@@ -173,6 +173,48 @@ no longer costs a user a stalled search.
 The contract suite runs green against the 1M DB — every frozen shape is
 identical at 0 events and at 1M events.
 
+## M183 — query syntax at scale (1M-event corpus, v1.16)
+
+The v1.16 query syntax is certified on BOTH engines, because filters compile to
+WHERE clauses on real columns rather than FTS operators: whichever path answers,
+the rows are the same, so both paths must be fast enough to ship. Recorded on a
+quiet machine (`machineQuiet: true`) into `bench/BASELINE-v1.16-search.json` —
+kept separate from the v1.10 file so that release's numbers stay exactly as they
+were measured.
+
+| Path | Query | p50 | p95 | Class |
+|---|---|---|---|---|
+| search-syntax-filtered | `app:web after:<ts> ECONNREFUSED` | 1.0ms | 1.5ms | interactive |
+| search-syntax-phrase | `"Cannot resolve module"` | 0.8ms | 1.0ms | interactive |
+| search-syntax-level | `level:error ECONNREFUSED` | 1.1ms | 1.6ms | interactive |
+| search-syntax-unified | `app:web ECONNREFUSED` + `scope=all` | 1.1ms | 1.6ms | query |
+| search-like-syntax-filtered | same, no index | 0.2ms | 0.4ms | query |
+| search-like-syntax-phrase | same, no index | 1109.3ms | 1180.6ms | query |
+| search-like-syntax-level | same, no index | 1.3ms | 2.4ms | query |
+| search-like-syntax-unified | same, no index | 0.4ms | 0.7ms | query |
+
+Two things worth reading off this table:
+
+- **Filters make the degraded path FASTER, not slower.** `app:` + `after:` on the
+  LIKE path (0.4ms p95) beats the un-filtered LIKE common-term case, because the
+  predicates ride existing indexes instead of scanning. The expensive degraded
+  case is the phrase (1.2s) — a contiguous substring scan across 2M log lines
+  with no index to narrow it. That is the cost of a broken FTS index, and it is
+  reported honestly as `fallback: true`.
+- **The unified scope is nearly free.** Adding test runs costs ~0.1ms at 1M rows,
+  because `test_runs` is a column query and not an indexed store — which is
+  exactly why it must never grow an FTS shadow (that would mean a write-path
+  trigger).
+
+**Known red budget, pre-existing:** the `context` HTTP path fails its v1.10
+absolute budget on this corpus (p50 63.5ms — comfortably *inside* the 94.2ms
+baseline p95 — with a spiky p95 of ~856ms). The typical request is as fast as it
+ever was; only the tail moved, and `why` shows the same tail shape. v1.16 touches
+no code on either path (the composition is registry + `history.summary`/crashes/
+tests; the one file in the diff those routes import, `errorGroups.ts`, gained a
+pure function and type-only imports). Recorded here rather than smoothed over:
+the budget is NOT loosened, and the tail belongs on the next release's list.
+
 ## M147 — write path (1M corpus)
 
 | Metric | p50 | p95 | p99 | Load |

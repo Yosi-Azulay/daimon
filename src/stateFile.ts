@@ -22,6 +22,40 @@ export interface PersistedState {
   // help" line was shown. Present = shown once already, never show it again.
   // Additive; absent = this machine has never attached the TUI.
   tuiHintSeen?: number;
+  // Saved searches (M181, v1.16): named query strings, and NOTHING else.
+  // INERT BY CONSTRUCTION — no schedule, no notification kind, no hook: a
+  // saved search runs when a human runs it, never on a timer (the no-cron
+  // rule). Stored as a list so order is stable and a rename is a rewrite of
+  // one row. Additive; absent = none saved.
+  savedSearches?: SavedSearch[];
+}
+
+export interface SavedSearch {
+  name: string;
+  query: string;
+  createdMs: number;
+  updatedMs: number;
+}
+
+// Saved searches are user data written by another daimon version, so parsing
+// is defensive: a malformed row is DROPPED, never fabricated and never fatal
+// (the fail-soft rule that governs every other reader of user state).
+function parseSavedSearches(v: unknown): SavedSearch[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: SavedSearch[] = [];
+  for (const row of v) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r.name !== 'string' || !r.name.trim()) continue;
+    if (typeof r.query !== 'string' || !r.query.trim()) continue;
+    out.push({
+      name: r.name,
+      query: r.query,
+      createdMs: typeof r.createdMs === 'number' ? r.createdMs : 0,
+      updatedMs: typeof r.updatedMs === 'number' ? r.updatedMs : 0,
+    });
+  }
+  return out;
 }
 
 // What the last loadPersistedState() had to do to produce a usable state
@@ -52,6 +86,7 @@ function parseState(raw: string): PersistedState | null {
       ...(parsed.quarantineFirstSeen && typeof parsed.quarantineFirstSeen === 'object' ? { quarantineFirstSeen: parsed.quarantineFirstSeen } : {}),
       ...(typeof parsed.awayAck === 'number' ? { awayAck: parsed.awayAck } : {}),
       ...(typeof parsed.tuiHintSeen === 'number' ? { tuiHintSeen: parsed.tuiHintSeen } : {}),
+      ...(parsed.savedSearches ? { savedSearches: parseSavedSearches(parsed.savedSearches) ?? [] } : {}),
     };
   }
   return null;
@@ -97,6 +132,19 @@ export function loadPersistedState(): PersistedState {
   }
   current = { ports: {} };
   return { ...current };
+}
+
+/**
+ * The state this process is working from, WITHOUT re-reading the file.
+ *
+ * Callers that only need to read (the saved-searches routes, M181) must use
+ * this rather than loadPersistedState(): a reload replaces the in-memory
+ * `current` that savePersistedState merges into, so a reload racing the 500ms
+ * debounce would quietly drop the write that is still pending. Loading once,
+ * on first use, keeps the merge-write invariant intact.
+ */
+export function currentPersistedState(): PersistedState {
+  return current ? { ...current } : loadPersistedState();
 }
 
 let timer: NodeJS.Timeout | null = null;

@@ -12,7 +12,7 @@ import { startServer } from './server.js';
 import { HealthMonitor } from './health.js';
 import { UsageMonitor } from './usage.js';
 import { Restarter } from './restarter.js';
-import { loadPersistedState, savePersistedState, flushPersistedState, stateLoadDiagnostics } from './stateFile.js';
+import { loadPersistedState, savePersistedState, flushPersistedState, stateLoadDiagnostics, currentPersistedState } from './stateFile.js';
 import { scanListeningPorts } from './portDiag.js';
 import { isPidAlive } from './daemon.js';
 import { History } from './history.js';
@@ -487,9 +487,16 @@ export async function startInProcess(opts: StartOpts = {}): Promise<void> {
   const firstRunHint = persisted.tuiHintSeen == null;
   const onAckFirstRunHint = () => { try { savePersistedState({ tuiHintSeen: Date.now() }); } catch {} };
 
+  // Saved searches (M181, v1.16) for the TUI's search pane. A getter reading
+  // the live in-memory state, so a search saved from the CLI a second ago is
+  // there — and read-only: the pane runs them, nothing schedules them.
+  const getSavedSearches = () => {
+    try { return currentPersistedState().savedSearches ?? []; } catch { return []; }
+  };
+
   const inst = render(React.createElement(App, {
     registry, apiPort, onQuit: () => void shutdown(),
-    initialAway, onAckAway, firstRunHint, onAckFirstRunHint,
+    initialAway, onAckAway, firstRunHint, onAckFirstRunHint, getSavedSearches,
   }));
   await inst.waitUntilExit();
   await shutdown();

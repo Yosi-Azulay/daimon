@@ -22,6 +22,10 @@ import { findPortHolder, scanListeningPorts } from './portDiag.js';
 import { diffEnvSnapshots, resolveEnvFilePath } from './envFiles.js';
 import { isLogLevel, type LogLevel } from './frameworks.js';
 import { buildGraphView, matchesWorkspace, workspaceLabels } from './graph.js';
+import { parseSearchQuery, impliesUnifiedScope, SEARCH_KINDS } from './searchQuery.js';
+import { facetsOf } from './history.js';
+import { saveSearch, renameSearch, deleteSearch, sortSaved } from './savedSearches.js';
+import { currentPersistedState, savePersistedState } from './stateFile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1520,31 +1524,101 @@ export function startServer(registry: Registry, port: number, opts: ServerOpts =
         const h = registry.getHistory();
         if (!h) { sendJson(res, 200, { hits: [], fallback: false, note: 'history disabled' }); return; }
         const kindRaw = (url.searchParams.get('kind') || '').toLowerCase();
-        if (kindRaw && !['logs', 'errors', 'events'].includes(kindRaw)) {
-          sendJson(res, 400, { error: 'kind must be logs|errors|events' });
+        if (kindRaw && !SEARCH_KINDS.includes(kindRaw as any)) {
+          sendJson(res, 400, {
+            error: `kind must be ${SEARCH_KINDS.join('|')}`,
+            hint: "'tests' and 'error-groups' are v1.16 kinds and imply scope=all",
+          });
           return;
         }
+        // M180 (v1.16): opt-in unified scope. Absent → the pre-v1.16 kinds and
+        // the pre-v1.16 body, byte for byte.
+        const scopeRaw = (url.searchParams.get('scope') || '').toLowerCase();
+        if (scopeRaw && scopeRaw !== 'all') {
+          sendJson(res, 400, { error: "scope must be 'all'", hint: 'omit scope for logs/errors/events only' });
+          return;
+        }
+        // M179 (v1.16): the query syntax. Parse errors are 400s that NAME the
+        // valid fields — the same message the CLI and the TUI render.
+        const parsed = parseSearchQuery(q);
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error, hint: parsed.hint }); return; }
+        const pq = parsed.query;
         const sinceP = parseSinceParam(url.searchParams.get('since'));
         const since = sinceP.sinceTs ?? (sinceP.sinceMs != null ? Date.now() - sinceP.sinceMs : undefined);
         const limitRaw = Number(url.searchParams.get('limit') || 50);
         const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
+        const unified = scopeRaw === 'all' || impliesUnifiedScope(pq)
+          || kindRaw === 'tests' || kindRaw === 'error-groups';
         // ?workspace= (M177, v1.15 — experimental param): hits restricted to
         // the workspace's apps. Post-filtered over a widened fetch so the
         // result stays CORRECT (never a foreign-workspace hit); it may return
         // fewer than `limit` — honest, never wrong.
         const wsHits = resolveWorkspaceFilter(url.searchParams.get('workspace'));
         if (wsHits === null) return; // 400 already sent
+        const effLimit = wsHits ? Math.min(500, Math.max(limit * 4, limit)) : limit;
         const r = h.search({
           q,
           app: url.searchParams.get('app') || undefined,
           since,
           kind: (kindRaw || undefined) as any,
-          limit: wsHits ? Math.min(500, Math.max(limit * 4, limit)) : limit,
+          limit: effLimit,
+          query: pq,
+          ...(unified ? { scope: 'all' as const } : {}),
         });
+        // Error groups are DERIVED from the live registry (the
+        // ?group=fingerprint shape) — composed here, where the registry is, and
+        // never stored or indexed. Only ever added when the unified scope was
+        // asked for.
+        const wantGroups = unified && (!(pq.kind ?? kindRaw) || (pq.kind ?? kindRaw) === 'error-groups');
+        if (wantGroups) {
+          try {
+            const { groupErrors, searchErrorGroups } = await import('./errorGroups.js');
+            const perAppErr = registry.list().map(s => ({ app: s.name, errors: registry.errors(s.name) ?? [] }));
+            r.hits = r.hits.concat(searchErrorGroups(groupErrors(perAppErr), pq, effLimit));
+            r.hits.sort((a: any, b: any) => b.ts - a.ts);
+            r.hits = r.hits.slice(0, effLimit);
+          } catch { /* a group-fold failure never fails the whole search */ }
+        }
         if (wsHits) {
           r.hits = r.hits.filter((hit: any) => !hit.app || wsHits.has(hit.app)).slice(0, limit);
+        } else if (r.hits.length > limit) {
+          r.hits = r.hits.slice(0, limit);
         }
+        // Facets count the hits in THIS response, so they must be recomputed
+        // after the group merge and the workspace filter — never before.
+        if (unified) r.facets = facetsOf(r.hits);
         sendJson(res, 200, r);
+        return;
+      }
+
+      // Saved searches (M181, v1.16) — named query strings in state.json and
+      // nothing more. These routes STORE and RETURN data; not one of them runs
+      // a search, and no timer anywhere reads this list. Running a saved search
+      // means a human sending its query to GET /api/search.
+      if (parts[0] === 'api' && parts[1] === 'searches' && !parts[2] && method === 'GET') {
+        sendJson(res, 200, { searches: sortSaved(currentPersistedState().savedSearches ?? []) });
+        return;
+      }
+      if (parts[0] === 'api' && parts[1] === 'searches' && method === 'POST') {
+        const body = await readJsonBody(req);
+        const before = currentPersistedState().savedSearches ?? [];
+        const action = parts[2] === 'rename' ? 'rename' : 'save';
+        const r = action === 'rename'
+          ? renameSearch(before, String(body?.from ?? ''), String(body?.to ?? ''))
+          : saveSearch(before, String(body?.name ?? ''), String(body?.query ?? ''), { force: body?.force === true });
+        if (!r.ok) { sendJson(res, r.status, { error: r.error, hint: r.hint }); return; }
+        // Merge-write: this rewrites ONLY savedSearches; ports, mutes, digests
+        // and the away ack are untouched (stateFile merges into the live state).
+        savePersistedState({ savedSearches: r.searches });
+        sendJson(res, 200, { saved: r.entry, searches: sortSaved(r.searches) });
+        return;
+      }
+      if (parts[0] === 'api' && parts[1] === 'searches' && parts[2] && method === 'DELETE') {
+        const before = currentPersistedState().savedSearches ?? [];
+        const r = deleteSearch(before, decodeURIComponent(parts[2]));
+        if (!r.ok) { sendJson(res, r.status, { error: r.error, hint: r.hint }); return; }
+        savePersistedState({ savedSearches: r.searches });
+        sendJson(res, 200, { deleted: r.entry, searches: sortSaved(r.searches) });
         return;
       }
 

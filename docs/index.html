@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>daimon v1.15.0 — docs</title>
+<title>daimon v1.16.0 — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="daimon — local dev-server manager for Angular/Nx/Vite/Storybook with TUI, HTTP API, CLI, and MCP server." />
 <style>
@@ -63,7 +63,7 @@
 </head>
 <body>
 
-<h1>daimon <span class="badge">v1.15.0</span></h1>
+<h1>daimon <span class="badge">v1.16.0</span></h1>
 <p class="lede">Local dev-server manager for 20+ frameworks — Angular / Nx / Next.js / Vite / Django / Rails / .NET / Flutter and more — with a TUI, a 127.0.0.1 HTTP API, a JSON CLI, and an MCP server for Claude Code.</p>
 
 <nav class="toc">
@@ -73,6 +73,7 @@
     <li><a href="#quickstart">Quickstart (3 min)</a></li>
     <li><a href="#stability">Stability tiers</a></li>
     <li><a href="#cli">CLI reference</a></li>
+    <li><a href="#search-syntax">Search query syntax</a></li>
     <li><a href="#chords">TUI chords</a></li>
     <li><a href="#http">HTTP API reference</a></li>
     <li><a href="#mcp">MCP reference</a></li>
@@ -147,8 +148,10 @@ npx daimon init --yes</code></pre>
 <dd>Get the event log. --stream emits NDJSON until SIGINT.</dd>
 <dt><code>daimon logs &lt;name&gt; [--tail N] [--since 30s] [--level &lt;lvl&gt;] [--grep &lt;regex&gt;] [--stream] | --group &lt;group&gt;</code> <span class="tier tier-frozen" title="frozen — see STABILITY.md">frozen</span></dt>
 <dd>Recent log lines for an app. --level filters by classified level; --grep filters server-side (regex, ≤512 chars); --stream follows the live tail as NDJSON; --group merges a group's tails.</dd>
-<dt><code>daimon search &lt;query&gt; [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
+<dt><code>daimon search &lt;query&gt; [--all] [--app &lt;a&gt;] [--workspace &lt;label&gt;] [--since &lt;dur&gt;] [--kind logs|errors|events|tests|error-groups] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Full-text search over everything daimon has seen: log lines, errors, and events. Compact JSON hits {kind,app,ts,snippet,ref}.</dd>
+<dt><code>daimon searches [list|save &lt;name&gt; &lt;query&gt;|rename &lt;old&gt; &lt;new&gt;|delete &lt;name&gt;] [--force] [--json]</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Saved searches: name a query once, run it by name later. Inert data — nothing about a saved search runs on its own.</dd>
 <dt><code>daimon test-history &lt;name&gt; [--flaky] [--limit N]</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Recent test runs for an app (totals, exit codes, gitHead, failures). --flaky lists tests that flipped pass↔fail ≥3× at the same gitHead.</dd>
 <dt><code>daimon history &lt;name&gt;</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
@@ -254,6 +257,26 @@ npx daimon init --yes</code></pre>
 <dd>List loaded plug-ins: name, apiVersion, status (active|disabled|load-error), hooks, error.</dd>
 </dl>
 
+<h2 id="search-syntax">Search query syntax</h2>
+<p>One query language, four surfaces: <code>daimon search</code>, <code>GET /api/search?q=</code>, the MCP <code>daimon_search</code> tool, and the TUI's <code>F</code> pane all parse the same grammar with the same parser and return the same errors. Filters compile to WHERE clauses on real columns, so a query behaves identically whether it is answered by the FTS index or by the LIKE fallback — that difference is speed and snippet quality, never which rows match. An unknown field is an error naming the valid fields; it is never silently treated as a search term. Save a query by name with <code>daimon searches save</code> — saved searches are inert data: nothing runs one until you do.</p>
+<dl class="cli-grid">
+<dt><code>app:&lt;name&gt;</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Restrict to one app (exact name). ANDed with a --app flag or ?app= param, which it overrides. <em>e.g.</em> <code>app:web</code></dd>
+<dt><code>kind:logs|errors|events|tests|error-groups</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Restrict to one result kind. `tests` and `error-groups` are v1.16 kinds and imply the unified scope. <em>e.g.</em> <code>kind:logs</code></dd>
+<dt><code>level:error|warning|lint</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Restrict to one severity. Spans both stores: event type families (error-*/warning-*/lint-*) and the log-line level column (v1.2). Log lines daimon could not classify carry no level and are excluded. <em>e.g.</em> <code>level:error</code></dd>
+<dt><code>before:&lt;time&gt;</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Only rows at or before this time. <em>e.g.</em> <code>before:2026-07-01</code></dd>
+<dt><code>after:&lt;time&gt;</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Only rows at or after this time (the general form of --since). <em>e.g.</em> <code>after:24h</code></dd>
+<dt><code>"quoted phrase"</code></dt><dd>Matches the words in order — one FTS phrase, one contiguous substring on the LIKE fallback. Quote a token to search for it literally when it would otherwise look like a field — a URL (<code>"http://localhost:4200"</code>) or a Windows path (<code>"C:\Users\me\app"</code>) both start with something that parses as <code>field:</code>, so an unquoted one is an unknown-field error, never a silent term.</dd>
+<dt><code>bare terms</code></dt><dd>Every term must match (AND). A trailing <code>*</code> does prefix search on the indexed path.</dd>
+</dl>
+<p>Everything is ANDed; there is no <code>OR</code> and no grouping. A field given twice takes the LAST value (<code>app:web app:api</code> searches <code>api</code>), and a field in the query overrides the equivalent flag or URL param.</p>
+<p><strong>Time values</strong> (<code>before:</code> / <code>after:</code>): <code>2026-07-01 (UTC midnight)</code> · <code>2026-07-01T14:30 / …T14:30:00Z</code> · <code>24h · 30m · 7d · 90s · 2w (relative to now)</code> · <code>1751328000000 (epoch ms)</code>.</p>
+<p><strong>Kinds</strong>: <code>logs</code> · <code>errors</code> · <code>events</code> · <code>tests</code> · <code>error-groups</code> — <code>tests</code> and <code>error-groups</code> imply the unified scope (<code>--all</code> / <code>?scope=all</code>), which also returns a per-kind <code>facets</code> count. <strong>Levels</strong>: <code>error</code> · <code>warning</code> · <code>lint</code>.</p>
+
 <h2 id="chords">TUI chords</h2>
 <p>The TUI's chords are pane-scoped: the same key can mean different things in different panes. This table is generated from the same data module that powers the TUI's dispatch and the <code>?</code> overlay.</p>
 <table class="chords"><thead><tr><th>Key</th><th>Description</th><th>Panes</th></tr></thead><tbody>
@@ -279,6 +302,12 @@ npx daimon init --yes</code></pre>
 <tr><td><code>E</code></td><td>cycle the active env file</td><td>list, detail</td></tr>
 <tr><td><code>V</code></td><td>edit the session override in $EDITOR</td><td>list, detail</td></tr>
 <tr><td><code>l</code></td><td>focus the log pane</td><td>list, detail</td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Search</strong></td></tr>
+<tr><td><code>F</code></td><td>search everything daimon has recorded (v1.16 query syntax: app: kind: level: before: after: "phrases")</td><td>list, detail</td></tr>
+<tr><td><code>↑/↓</code></td><td>move through results (or the saved-search list)</td><td>search</td></tr>
+<tr><td><code>Enter</code></td><td>run the query, or open the selected hit where it happened</td><td>search</td></tr>
+<tr><td><code>Tab</code></td><td>go back to the query input</td><td>search</td></tr>
+<tr><td><code>Esc</code></td><td>close the search pane (q closes it too, from the results list — the query input owns every printable key)</td><td>search</td></tr>
 <tr class="chord-group-header"><td colspan="3"><strong>Filter</strong></td></tr>
 <tr><td><code>/</code></td><td>filter the app list by name</td><td>list, detail</td></tr>
 <tr><td><code>t</code></td><td>filter the app list by tags</td><td>list, detail</td></tr>
@@ -300,7 +329,7 @@ npx daimon init --yes</code></pre>
 <tr><td><code>Enter</code></td><td>drill a day into hours (Esc back to days)</td><td>timeline</td></tr>
 <tr><td><code>n/p</code></td><td>jump to the app’s next / prev state change</td><td>timeline</td></tr>
 <tr><td><code>q/Esc</code></td><td>exit the timeline (Esc steps hours → days first)</td><td>timeline</td></tr>
-<tr class="chord-group-header"><td colspan="3"><strong>grep</strong></td></tr>
+<tr class="chord-group-header"><td colspan="3"><strong>Grep input</strong></td></tr>
 <tr><td><code>Tab</code></td><td>toggle grep between narrowing and highlighting</td><td>grep</td></tr>
 <tr><td><code>Enter</code></td><td>keep the grep pattern and close the input</td><td>grep</td></tr>
 <tr><td><code>Esc</code></td><td>clear the grep pattern and restore the full stream</td><td>grep</td></tr>
@@ -393,7 +422,15 @@ npx daimon init --yes</code></pre>
 <dt><code>GET /api/context/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>Agent context pack (?budget= drops sections).</dd>
 <dt><code>GET /api/search</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
-<dd>FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=, ?workspace= — v1.15, experimental param).</dd>
+<dd>FTS over logs/errors/events (?q=, ?app=, ?since=, ?kind=, ?limit=, ?workspace= — v1.15, experimental param). ?q= accepts the v1.16 query syntax (app:/kind:/level:/before:/after:/"phrases"); ?scope=all adds test-run + error-group hits and a facets object (v1.16, experimental params).</dd>
+<dt><code>GET /api/searches</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Saved searches — named query strings from state.json (v1.16). Inert data: nothing here runs a search.</dd>
+<dt><code>POST /api/searches</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Save a named query ({ name, query, force }); parser-validated at save time (v1.16).</dd>
+<dt><code>POST /api/searches/rename</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Rename a saved search ({ from, to }) (v1.16).</dd>
+<dt><code>DELETE /api/searches/:name</code> <span class="tier tier-experimental" title="experimental — see STABILITY.md">experimental</span></dt>
+<dd>Delete a saved search (v1.16).</dd>
 <dt><code>GET /api/why/:name</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>
 <dd>One-shot crash forensics composition.</dd>
 <dt><code>GET /api/tests</code> <span class="tier tier-stable" title="stable — see STABILITY.md">stable</span></dt>

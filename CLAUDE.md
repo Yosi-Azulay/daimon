@@ -61,6 +61,12 @@ src/
                     # hard-coded color in a TUI component is a DEFECT.
   tui/layout.ts     # Pure pane geometry, narrow-terminal column priority, list
                     # windowing, status-bar segments (M162/M166, v1.13).
+  tui/SearchPane.tsx# The TUI search pane (M182, v1.16) + tui/searchChord.ts (its
+                    # pure logic). Runs the SAME parser and prints the SAME
+                    # error text as the daemon — searching IN-PROCESS via the
+                    # shared History, never a second grammar or a second code
+                    # path. Row formatting is width-bounded and strips control
+                    # characters (a log line may not repaint the terminal).
   logLevels.ts      # Log-level classification (M99, v1.2): registry patterns first
                     # (first match wins) chained to a conservative generic heuristic;
                     # FAIL-SOFT — any miss/throw stores level null, never drops a line.
@@ -116,6 +122,19 @@ src/
                     # fixed constant, NO config key) + report-subset extraction.
                     # REUSES the report composition — no new engine, no new
                     # timer. Dismissal acks to state.json (awayAck). Pure.
+  searchQuery.ts    # The search query language (M179, v1.16): the ONE source of
+                    # the grammar (app:/kind:/level:/before:/after:/"phrases"/
+                    # bare terms) as a PURE, IMPORT-FREE parser. It parses; it
+                    # never queries — compilation into SQL lives in history.ts,
+                    # where filters become WHERE clauses on real columns (never
+                    # FTS tricks), which is what makes the syntax behave
+                    # identically on the LIKE fallback. SEARCH_FIELDS is the
+                    # docs table too — no second copy of the grammar exists.
+  savedSearches.ts  # Saved searches (M181, v1.16): pure list transforms
+                    # (save/rename/delete + validation via the real parser).
+                    # INERT BY CONSTRUCTION — nothing here schedules, runs, or
+                    # notifies; the caller owns persistence (state.json
+                    # merge-write). test/saved-searches.test.mjs greps dist/.
   ports.ts          # PortAllocator (persisted assignments) + parsePortPool ("4200-4299").
   portDiag.ts       # Port forensics (M81): findPortHolder, one-shot scanListeningPorts
                     # (netstat -ano / ss), daimon signature probe, EADDRINUSE
@@ -192,7 +211,7 @@ scripts/demo/       # Deterministic screencast session (M114) — throwaway DAIM
 scripts/platform-smoke.sh # (M143, v1.9) ~2-min PASS/FAIL probe for a REAL Mac/Linux box.
                     # POSIX sh, zero deps, throwaway DAIMON_HOME; --dry-run runs the
                     # plumbing on any host. The human runs it before publish.
-test/               # node --test suite. 1180 test cases (v1.15); files run in parallel child processes.
+test/               # node --test suite. 1216 test cases (v1.16); files run in parallel child processes.
                     # NEVER run a bench (npm run bench) and npm test at the same
                     # time — they contend and produce spurious failures.
                     # test/helpers/platformSkip.mjs + test/fixtures/platform/<tool>/ (M141-M142).
@@ -434,6 +453,36 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   400s, `resolveWorkspaceMembers` never errors). A new read surface taking
   `?workspace=` goes through `resolveWorkspaceFilter` and gets a case in
   `test/workspace-parity.test.mjs`, the per-surface parity gate.
+- **The query language is single-sourced, the parser is pure, and LIKE parity is
+  the price of any search feature (M179–M183, v1.16).**
+  Four binding rules. (1) The grammar lives ONCE, in `src/searchQuery.ts` — a
+  pure, import-free parser (no history, no server, no node builtins) whose
+  `SEARCH_FIELDS` table IS the docs table, the CLI help text, and the
+  unknown-field error message. Adding a field means adding a row there; a second
+  hand-written copy of the grammar anywhere is a defect. (2) **Filters compile to
+  WHERE clauses on the real columns, never to FTS tricks** — `app:` → the app
+  column, `before:`/`after:` → `ts` bounds, `level:` → the `error-*`/`warning-*`/
+  `lint-*` event families AND the v1.2 `log_lines.level` column, `kind:` → the
+  store selection. That is what makes a query return the SAME rows on the FTS
+  path and on the LIKE fallback (`test/search-query.test.mjs` asserts row-for-row
+  parity for every query shape); the fallback differs in speed and snippet
+  quality, never in which rows match, and it still reports `fallback: true`. Any
+  future search feature must work on both paths or it does not ship. (3) The
+  unified scope (`?scope=all`) is **opt-in forever**: `GET /api/search` without
+  it returns the pre-v1.16 `{ hits, fallback }` body byte for byte, and the
+  `tests` / `error-groups` kinds plus the `facets` object appear only when asked
+  for. Test runs and error groups are searched with COLUMN queries precisely
+  because an FTS shadow for them would need a per-insert trigger — the one thing
+  the deferred-indexing rule forbids (that grep now scans the whole `src/` tree,
+  not just history.ts). Error groups are folded live from the registry by the
+  CALLER (server or TUI), never stored. (4) **Saved searches are inert data**:
+  named query strings in `state.json` under the merge-write rule, parser-
+  validated at save time, and wired to nothing that fires on its own — no
+  schedule, no notification kind, no hook. daimon has exactly one scheduler and
+  this is not it; `test/saved-searches.test.mjs` greps `dist/` for the whole
+  claim, including a targeted check that `main.js`'s only mention is the TUI's
+  read-only getter, nowhere near a timer.
+
 - **Groups subsume profiles additively (M93, v1.1).** The `groups` config key's shorthand form is exactly the legacy `profiles` shape; `profiles` keeps loading forever and its behavior is byte-identical. Precedence: groups resolve first on `up`/`down`; on the frozen `stop` verb an APP of the name always wins and the group resolves only where the verb previously errored. Name collisions warn ("group wins") in `daimon config validate`. Groups consume the depends graph via depends.ts — never add ordering logic outside src/groups.ts/orchestrate.ts. On `daimon errors`, bare `--group` keeps fingerprint grouping; `--group <name>` filters (value `fingerprint` reserved). Post-1.0 rule: every new surface declares a stability tier at its source of truth and ships `experimental`.
 
 - **Log-level classification is registry-declared and fail-soft (M99, v1.2).** A framework's level convention lives in its `FrameworkProfile.logLevelPatterns` row (ordered `{ pattern, level }`, first match wins, compiled once) — set ONLY where the framework documents its output format, fixture-gated like every registry field: a profile shipping patterns without covering `logLines` cases in its fixture fails `test/frameworks.test.mjs`, and so does a pattern no fixture line exercises. Profiles without documented conventions get NO patterns (the shared generic heuristic in logLevels.ts applies — never guess). Classification chains registry rows → generic heuristic → null and is FAIL-SOFT at ingest: any miss or throw stores the line with `level` null — a classifier bug may never drop or delay a log line. Storage is the additive nullable `level` column on `log_lines` (guarded ALTER; old rows read null). `--level` filters exclude unclassified lines by design.
@@ -585,7 +634,34 @@ The daemon runs on `127.0.0.1:<config.apiPort>` (default `4999`). Tests **never*
   registry's `change`/`event` events, and `test/tui-render-budget.test.mjs`
   fails if a second interval or a 1s full-tree tick reappears.
 
-## v1.15 highlights (what landed this release)
+## v1.16 highlights (what landed this release)
+
+- **Recall (M179–M184)**: search grows a query language, one unified surface,
+  and saved searches. Zero new config keys, dependencies, or history migrations;
+  no frozen shape moved; every new surface `experimental`.
+  **Query syntax (M179)**: `app:` `kind:` `level:` `before:` `after:`
+  `"phrases"` and bare terms, all ANDed, parsed by a pure `src/searchQuery.ts`
+  and compiled into the EXISTING FTS/LIKE machinery as WHERE clauses; unknown
+  field → an error naming the valid ones plus how to quote it literally; a
+  filter-only query (no text) is valid and answered by column predicates.
+  **Unified search (M180)**: `?scope=all` / `daimon search --all` adds test-run
+  (`test:<id>`) and live error-group (`errgroup:<fingerprint>`) hits plus a
+  per-kind `facets` count — opt-in, so a v1.15 call is byte-identical.
+  **Saved searches (M181)**: `daimon searches list|save|rename|delete` +
+  `GET/POST /api/searches`, `POST /api/searches/rename`,
+  `DELETE /api/searches/:name`, stored in state.json, inert by construction.
+  **TUI parity (M182)**: `F` opens a search pane on the same parser with the
+  same error text; `Enter` jumps a hit to its timeline position / log pane /
+  detail pane. **Scale (M183)**: filter-heavy, phrase, `level:` and `scope=all`
+  queries certified on the 1M corpus on BOTH paths against
+  `bench/BASELINE-v1.16-search.json`. **Two fixes**: the LIKE fallback now ANDs
+  a multi-term query's terms (the FTS path always did — a degraded index used to
+  return fewer rows), and a TUI modal's keys no longer reach the app underneath
+  it (`q` in the v1.8 timeline used to quit the whole TUI). Backend suite
+  **1216 tests**, dashboard vitest 187. New tests: `search-query`,
+  `search-surfaces`, `saved-searches`, `tui-search-chord`.
+
+## v1.15 highlights
 
 - **Atlas (M173–M178)**: workspaces and the depends graph become visible,
   navigable surfaces. Zero new config keys, dependencies, or history

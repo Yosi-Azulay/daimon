@@ -1,13 +1,26 @@
-// Pure helpers for the command palette's search mode (M77), extracted so
-// they're unit-testable under Vitest without spinning up the Angular
-// runtime. Mirrors src/history.ts's SearchHit / GET /api/search response.
+// Pure helpers for the command palette's search mode (M77, extended M180/M181
+// v1.16 "Recall"), extracted so they're unit-testable under Vitest without
+// spinning up the Angular runtime. Mirrors src/history.ts's SearchHit /
+// GET /api/search response.
 
 export interface SearchHit {
-  kind: 'logs' | 'errors' | 'events';
+  // 'tests' and 'error-groups' (M180, v1.16) appear only when the palette
+  // requests the unified `scope=all` — see DaimonApi.search.
+  kind: 'logs' | 'errors' | 'events' | 'tests' | 'error-groups';
   app: string;
   ts: number;
   snippet: string;
+  // Stable pointer: "event:<id>", "log:<id>", "test:<id>", "errgroup:<fp>".
   ref: string;
+}
+
+// A saved search (M181, v1.16) — a name and a query string, nothing more.
+// Mirrors src/stateFile.ts's SavedSearch / GET /api/searches response.
+export interface SavedSearch {
+  name: string;
+  query: string;
+  createdMs: number;
+  updatedMs: number;
 }
 
 const SEARCH_PREFIX = '>';
@@ -26,8 +39,17 @@ export function searchQueryText(raw: string): string {
   return rest.startsWith(' ') ? rest.slice(1) : rest;
 }
 
-const KIND_ORDER: SearchHit['kind'][] = ['errors', 'events', 'logs'];
-const KIND_LABEL: Record<SearchHit['kind'], string> = { errors: 'Errors', events: 'Events', logs: 'Logs' };
+// Most-actionable first; the two v1.16 kinds slot in next to their closest
+// relative (error groups beside per-app errors, tests before the noisiest
+// kind, logs).
+const KIND_ORDER: SearchHit['kind'][] = ['errors', 'error-groups', 'events', 'tests', 'logs'];
+const KIND_LABEL: Record<SearchHit['kind'], string> = {
+  errors: 'Errors',
+  'error-groups': 'Error groups',
+  events: 'Events',
+  tests: 'Tests',
+  logs: 'Logs',
+};
 
 export interface SearchHitGroup {
   kind: SearchHit['kind'];
@@ -64,13 +86,18 @@ export function flattenGroups(groups: SearchHitGroup[]): SearchHit[] {
 //    `?from=search` (M102) tells the Logs page to clear any active
 //    level/regex filter so the live buffer isn't hidden behind whatever
 //    filter happened to be set before the deep-link landed;
-//  - errors land on the app's detail page with its Errors tab preselected.
+//  - errors land on the app's detail page with its Errors tab preselected;
+//  - tests (M180, v1.16) land on the Tests page — it has no per-run deep
+//    link yet, so the ref is carried for a future one rather than guessed;
+//  - error-groups (M180) land on the global Errors panel, same reasoning.
 export function routeForHit(hit: SearchHit): string {
   // `&app=` (M137, v1.8) presets the Timeline page's app filter so a
   // palette hit lands already scoped to the app it came from, not just
   // anchored at its timestamp.
   if (hit.kind === 'events') return `/timeline?at=${hit.ts}&app=${encodeURIComponent(hit.app)}`;
   if (hit.kind === 'logs') return `/logs/${hit.app}?from=search`;
+  if (hit.kind === 'tests') return '/tests';
+  if (hit.kind === 'error-groups') return '/errors';
   return `/apps/${hit.app}?tab=errors`;
 }
 
@@ -191,4 +218,67 @@ export function parseRecents(raw: string | null): RecentEntry[] {
   } catch {
     return [];
   }
+}
+
+// ── Query syntax + unified search (M179/M180, v1.16) ─────────────────────
+
+// Shape of DaimonApi.search()'s return value — the subset these helpers act
+// on. `error`/`hint` are present ONLY when GET /api/search 400'd on a bad
+// M179 query (an unknown field like `lvl:`) — every other failure still
+// degrades to an empty, error-less result (DaimonApi's existing contract).
+export interface SearchApiResult {
+  hits: SearchHit[];
+  fallback: boolean;
+  facets?: Record<string, number>;
+  error?: string;
+  hint?: string;
+}
+
+// True when the API call returned a query-syntax error rather than (possibly
+// empty) results — the palette renders the error + hint INSTEAD OF "no
+// results" so a typo'd field reads as "fix your query", not "nothing found".
+export function isSearchSyntaxError(r: Pick<SearchApiResult, 'error'>): boolean {
+  return typeof r.error === 'string' && r.error.length > 0;
+}
+
+// Compact one-line facet summary ("3 errors · 1 test · 2 logs") for the
+// palette's search-mode header, shown only when the API returned `facets`
+// (i.e. the unified `scope=all` was requested). Zero-count kinds are
+// omitted; the order matches KIND_ORDER so the summary never disagrees with
+// the grouped results rendered below it.
+const FACET_SINGULAR: Record<string, string> = {
+  errors: 'error',
+  'error-groups': 'error group',
+  events: 'event',
+  tests: 'test',
+  logs: 'log',
+};
+
+export function formatFacetSummary(facets: Record<string, number> | null | undefined): string | null {
+  if (!facets) return null;
+  const parts = KIND_ORDER
+    .map(k => [k, facets[k] ?? 0] as const)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${n === 1 ? FACET_SINGULAR[k] : KIND_LABEL[k].toLowerCase()}`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+// ── Saved searches (M181, v1.16) ──────────────────────────────────────────
+// Saved searches are inert data (name + query string) — surfacing them in
+// the palette is display + one explicit run action, nothing auto-executes.
+// See src/savedSearches.ts's header comment for the standing rule.
+
+// Presentation order for the idle palette list: most recently updated first
+// (mirrors the server's `sortSaved`, so a re-save also floats to the top
+// here without any client-side re-sort).
+export function sortSavedSearches(searches: SavedSearch[]): SavedSearch[] {
+  return [...searches].sort((a, b) => (b.updatedMs - a.updatedMs) || a.name.localeCompare(b.name));
+}
+
+// The full palette input text produced by selecting a saved search: the `>`
+// search-mode trigger plus the saved query, so running one behaves exactly
+// like the user typing `> <query>` themselves — same debounce, same parser,
+// same errors.
+export function savedSearchQueryText(s: Pick<SavedSearch, 'query'>): string {
+  return `${SEARCH_PREFIX} ${s.query}`;
 }

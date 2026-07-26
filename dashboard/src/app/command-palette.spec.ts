@@ -10,8 +10,13 @@ import {
   rankItems,
   rememberRecent,
   parseRecents,
+  isSearchSyntaxError,
+  formatFacetSummary,
+  sortSavedSearches,
+  savedSearchQueryText,
   type RecentEntry,
   type SearchHit,
+  type SavedSearch,
 } from './command-palette-helpers';
 
 function hit(over: Partial<SearchHit> = {}): SearchHit {
@@ -157,5 +162,84 @@ describe('recents (M157)', () => {
     expect(parseRecents(JSON.stringify([{ label: 'x', route: '/x', icon: 'i' }, { bad: true }]))).toEqual([
       { label: 'x', route: '/x', icon: 'i' },
     ]);
+  });
+});
+
+describe('unified search kinds (M180, v1.16)', () => {
+  it('groupHitsByKind slots error-groups and tests in alongside their nearest relative', () => {
+    const hits = [
+      hit({ kind: 'logs', ref: 'log:1' }),
+      hit({ kind: 'error-groups', ref: 'errgroup:a' }),
+      hit({ kind: 'tests', ref: 'test:1' }),
+      hit({ kind: 'errors', ref: 'event:1' }),
+      hit({ kind: 'events', ref: 'event:2' }),
+    ];
+    const groups = groupHitsByKind(hits);
+    expect(groups.map(g => g.kind)).toEqual(['errors', 'error-groups', 'events', 'tests', 'logs']);
+  });
+
+  it('routeForHit sends tests to /tests and error-groups to /errors, without touching existing kinds', () => {
+    expect(routeForHit(hit({ kind: 'tests', app: 'web' }))).toBe('/tests');
+    expect(routeForHit(hit({ kind: 'error-groups', app: 'web' }))).toBe('/errors');
+    // Unchanged from v1.15 — the deep-link back-compat rule.
+    expect(routeForHit(hit({ kind: 'logs', app: 'web' }))).toBe('/logs/web?from=search');
+    expect(routeForHit(hit({ kind: 'errors', app: 'api' }))).toBe('/apps/api?tab=errors');
+    expect(routeForHit(hit({ kind: 'events', app: 'api', ts: 12345 }))).toBe('/timeline?at=12345&app=api');
+  });
+});
+
+describe('isSearchSyntaxError (M179, v1.16)', () => {
+  it('is true only when the API result carries a non-empty error string', () => {
+    expect(isSearchSyntaxError({ error: "unknown field 'lvl:'" })).toBe(true);
+    expect(isSearchSyntaxError({})).toBe(false);
+    expect(isSearchSyntaxError({ error: '' })).toBe(false);
+    expect(isSearchSyntaxError({ error: undefined })).toBe(false);
+  });
+});
+
+describe('formatFacetSummary (M180, v1.16)', () => {
+  it('returns null when there are no facets', () => {
+    expect(formatFacetSummary(undefined)).toBeNull();
+    expect(formatFacetSummary(null)).toBeNull();
+  });
+
+  it('returns null when every facet is zero', () => {
+    expect(formatFacetSummary({ logs: 0, errors: 0 })).toBeNull();
+  });
+
+  it('formats non-zero facets in KIND_ORDER, singular for a count of 1', () => {
+    expect(formatFacetSummary({ logs: 2, errors: 1, tests: 0, 'error-groups': 3 })).toBe(
+      '1 error · 3 error groups · 2 logs',
+    );
+  });
+
+  it('pluralizes counts above 1', () => {
+    expect(formatFacetSummary({ events: 5 })).toBe('5 events');
+  });
+});
+
+describe('saved searches (M181, v1.16)', () => {
+  const saved = (over: Partial<SavedSearch> = {}): SavedSearch => ({
+    name: 'flaky', query: 'kind:tests app:web', createdMs: 0, updatedMs: 0, ...over,
+  });
+
+  it('savedSearchQueryText prepends the > search-mode trigger', () => {
+    expect(savedSearchQueryText(saved({ query: 'level:error after:24h' }))).toBe('> level:error after:24h');
+  });
+
+  it('sortSavedSearches orders most-recently-updated first, then by name', () => {
+    const list = [
+      saved({ name: 'b', updatedMs: 100 }),
+      saved({ name: 'a', updatedMs: 200 }),
+      saved({ name: 'c', updatedMs: 200 }),
+    ];
+    expect(sortSavedSearches(list).map(s => s.name)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('does not mutate the input array', () => {
+    const list = [saved({ name: 'z', updatedMs: 1 }), saved({ name: 'a', updatedMs: 2 })];
+    const copy = [...list];
+    sortSavedSearches(list);
+    expect(list).toEqual(copy);
   });
 });
